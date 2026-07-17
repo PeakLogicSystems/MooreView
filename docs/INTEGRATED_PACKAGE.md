@@ -1,0 +1,59 @@
+# Integrated package vs standalone CMMS
+
+How MooreVIEW and TPS CMMS deploy together on the **appliance** (est-pc) vs **cloud** (mooreview-cloud) vs **standalone CMMS** (tpscmms).
+
+## Deployment modes
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Integrated appliance (est-pc)                                   │
+│  Single Node process: MooreVIEW UI + CMMS UI + shared users     │
+│  Alarms → cmmsAlarmPublisher → local MQTT (optional) → in-proc  │
+│  CMMS always on locally — no tenant entitlement                 │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│ Standalone edge + standalone CMMS                               │
+│  MooreVIEW (est-pc) ──MQTT v1──► broker ──► tpscmms subscriber  │
+│  Separate processes; shared users only if configured manually   │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│ Cloud multi-tenant (mooreview-cloud + tpscmms ingest)           │
+│  Platform admin enables CMMS per tenant (feature flag)          │
+│  Edge appliances publish MQTT with tenantId → cloud subscriber  │
+│  Tenant UI/API gated by tenants.cmms.enabled                    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## Integrated appliance (est-pc)
+
+- CMMS frontend mounted in the same Express app as MooreVIEW.
+- Default admin user seeded locally (`admin` / `admin` — change after first login).
+- Users tab in System setup; alarm recipients picked from user list.
+- `cmmsAlarmPublisher` publishes to MQTT for external subscribers if enabled.
+- **Cloud entitlement does not apply** — the appliance is single-tenant local.
+
+## Standalone (est-pc + tpscmms)
+
+- MooreVIEW publishes **MooreVIEW CMMS Integration v1** (`docs/CMMS_INTEGRATION.md`).
+- TPS CMMS runs separately; `services/mooreviewAlarmSubscriber.js` creates work orders.
+- Alarming path: tag → `alarm:transition` → MQTT → `mooreviewAlarmHandler.js` → work order + `mooreview_alarms` collection.
+
+## Cloud multi-tenant
+
+- **Platform admin** enables CMMS for an organization: `PATCH /api/admin/tenants/:id/cmms` with `PLATFORM_ADMIN_KEY`.
+- Tenant signs in at `:3100/login` → **mooreVIEW shell** with conditional **CMMS** nav module.
+- CMMS web routes under `/cmms/*` (dashboard, work orders, assets, facilities, users).
+- Edge MQTT ingest continues independently — subscriber uses `tenantId` from the v1 payload to scope work orders.
+- Full CMMS UI port is incremental; entitlement and module shell ship first.
+
+See `mooreview-cloud/docs/CMMS_ENTITLEMENT.md` and `est-pc/docs/CMMS_INTEGRATION.md`.
+
+## Recommendation
+
+| Use case | Prefer |
+|----------|--------|
+| Plant floor appliance, one site | **Integrated** est-pc package |
+| Existing TPS CMMS deployment, multiple sites | **Standalone** MQTT bridge |
+| SaaS multi-org MooreVIEW cloud | **Cloud module** + tenant gate + MQTT ingest from edge |

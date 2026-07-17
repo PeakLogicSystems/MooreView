@@ -1,0 +1,30 @@
+node_modules/
+.env
+.env.*
+!.env.example
+azure/parameters.json
+products/mv-cloud-azure/deploy/parameters.json
+
+# Nested empty GitHub Desktop repos — do not commit
+mvcloud/
+mn-cloud/
+mooreview/
+
+# Local runtime fork data
+data/drivers.json
+data/settings.json
+data/tags.json
+data/projects/
+data/.cache/
+data/*.log
+data/#Untitled-1#
+
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+dist/
+coverage/
+*.tmp
+*~

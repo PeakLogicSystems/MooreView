@@ -1,0 +1,29 @@
+{
+  "id": "lift_station_dual_duplex",
+  "label": "Lift station — dual duplex",
+  "vendor": "MooreVIEW",
+  "model": "Dual duplex alternator (ALT2, 2 pumps)",
+  "transport": "mqtt_parc",
+  "stationType": "dual_duplex",
+  "defaultProgram": "logic/36_duplex_lift_station.st",
+  "tagsFromDevice": false,
+  "ioBaseOnly": true,
+  "diCount": 8,
+  "doCount": 4,
+  "aiCount": 8,
+  "defaults": {
+    "deviceId": "lift_dd_01",
+    "reportIntervalMs": 200,
+    "scanMs": 100,
+    "remoteExecution": true,
+    "ioBaseOnly": true
+  },
+  "driver": {
+    "enabled": true,
+    "ioBaseOnly": true
+  },
+  "tags": {
+    "fixture": "tags.duplex_lift_station.json"
+  },
+  "notes": "Florida fleet profile: 2-pump duplex alternator on Opta baseboard only (I1–I6 floats/run fb, R1–R2 contactors). ST lives on device; sync Parc telemetry for live values. Do not map floats or relays to X1_ expansion tags."
+}

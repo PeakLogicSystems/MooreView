@@ -1,0 +1,31 @@
+{
+  "id": "lilygo_t_eth_parc_st",
+  "label": "LilyGO T-ETH + SM-I-010 — MQTT Parc ST",
+  "vendor": "LilyGO / Sequent Microsystems",
+  "model": "T-ETH-ELITE-A7670X + SM-I-010 (4relind) — MooreVIEW ST over MQTT Parc",
+  "transport": "mqtt_parc",
+  "driverId": "eth_parc_st_01",
+  "tagsFromDevice": true,
+  "diCount": 8,
+  "doCount": 4,
+  "aiCount": 8,
+  "defaults": {
+    "deviceId": "eth_parc_st_01",
+    "reportIntervalMs": 180000,
+    "scanMs": 100,
+    "ioHat": "SM-I-010",
+    "i2c": { "sda": 17, "scl": 18, "stack": 0 }
+  },
+  "driver": {
+    "enabled": true,
+    "type": "mqtt_parc",
+    "deviceId": "eth_parc_st_01"
+  },
+  "tags": {
+    "discrete": [{ "prefix": "I", "count": 8, "start": 0 }],
+    "coil": [{ "prefix": "R", "count": 4, "start": 0 }],
+    "input": [{ "prefix": "I", "suffix": "_RAW", "count": 8, "start": 0 }],
+    "holding": [{ "prefix": "H", "count": 8, "start": 0 }]
+  },
+  "notes": "ESP32 runs MVBC on-device. Sequent SM-I-010 (4 relays + 4 HV opto) on I2C SDA=17 SCL=18 maps to I1..I4 / R1..R4. I5..I8 remain soft. Flash cellular-parc-st; /setup for deviceId + cloud MQTT. Drivers → Sync tags from Parc device after online."
+}

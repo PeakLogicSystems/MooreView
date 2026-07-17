@@ -1,0 +1,119 @@
+{
+  "scanMs": 100,
+  "activeProgram": "logic/30_pool_controller.st",
+  "autoStartRuntime": true,
+  "remoteExecution": false,
+  "project": {
+    "name": "iot-link-pool"
+  },
+  "startup": {
+    "mode": "saved_project",
+    "projectId": "iot-link-pool",
+    "promptOnBoot": false
+  },
+  "mqttParc": {
+    "enabled": true,
+    "autoDiscoverDrivers": true,
+    "brokerUrl": "mqtt://127.0.0.1:1883",
+    "topicPrefix": "mooreview/v1",
+    "clientId": "mv-iot-link-pool"
+  },
+  "hmi": {
+    "activeScreen": "screen_1",
+    "screens": [
+      {
+        "id": "screen_1",
+        "name": "Pool",
+        "svg": "/hmi/svg/demos/demo_process.svg",
+        "tiles": [
+          {
+            "col": 0,
+            "row": 0,
+            "colSpan": 8,
+            "rowSpan": 6,
+            "compositeId": "pool_overview",
+            "layers": [
+              {
+                "kind": "staticImage",
+                "z": 0,
+                "svg": "/hmi/svg/library/pool-faceplates/mooreview/pool_overview.svg"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "screen_2",
+        "name": "Pump",
+        "svg": "/hmi/svg/demos/demo_process.svg",
+        "tiles": [
+          {
+            "col": 0,
+            "row": 0,
+            "colSpan": 4,
+            "rowSpan": 4,
+            "compositeId": "pool_pump",
+            "layers": [
+              {
+                "kind": "staticImage",
+                "z": 0,
+                "svg": "/hmi/svg/library/pool-faceplates/mooreview/pool_pump.svg"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "screen_3",
+        "name": "Chemistry",
+        "svg": "/hmi/svg/demos/demo_process.svg",
+        "tiles": [
+          {
+            "col": 0,
+            "row": 0,
+            "colSpan": 4,
+            "rowSpan": 4,
+            "compositeId": "pool_chemistry",
+            "layers": [
+              {
+                "kind": "staticImage",
+                "z": 0,
+                "svg": "/hmi/svg/library/pool-faceplates/mooreview/pool_chemistry.svg"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "screen_schedule",
+        "name": "Schedule",
+        "svg": "/hmi/svg/demos/demo_process.svg",
+        "tiles": [
+          {
+            "col": 0,
+            "row": 0,
+            "colSpan": 12,
+            "rowSpan": 8,
+            "compositeId": "pool_filter_schedule",
+            "layers": [
+              {
+                "kind": "staticImage",
+                "z": 0,
+                "svg": "/hmi/svg/library/schedules/mooreview/pool_filter_schedule.svg"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "bindings": []
+  },
+  "features": {
+    "poolController": true,
+    "pentairHeatPump": true,
+    "pentairBus": true,
+    "intellifloPump": true,
+    "optaIo": true,
+    "modbusChemistryBus": false
+  }
+}

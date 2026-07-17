@@ -1,0 +1,75 @@
+MooreVIEW Cloud — SaaS install (port 3100)
+==========================================
+
+Primary deployment for mooreview.io: multi-tenant login, Studio, CMMS.
+Uses DigitalOcean Managed MongoDB (not local mongod).
+
+Optional later: edge runtime on port 3090 for field clients / appliance API
+(see enable-runtime-3090.sh).
+
+Quick install
+-------------
+
+1. Build bundle (Windows, from est-pc):
+
+     cd C:\Users\public\data\est-pc
+     powershell -ExecutionPolicy Bypass -File scripts\create-cloud-bundle.ps1
+
+2. Upload to droplet mooreview-cloud (root SSH, file goes in /tmp/ — not /root/):
+
+     powershell -ExecutionPolicy Bypass -File scripts\upload-cloud-bundle.ps1 -DropletHost root@mooreview-cloud
+
+     rem manual:
+     scp C:\Users\public\data\est-pc\dist\mooreview-cloud-20260622.tgz root@mooreview-cloud:/tmp/
+
+3. On the droplet — verify upload, then extract (use the real filename from ls):
+
+     ssh root@mooreview-cloud
+     ls -lh /tmp/mooreview-cloud-*.tgz
+     mkdir -p /home/mooreview
+     tar xzf /tmp/mooreview-cloud-20260622.tgz -C /home/mooreview --strip-components=1
+
+     If ls shows "No such file", the upload did not finish — re-run step 2 from Windows.
+
+4. Edit SaaS secrets (DO Mongo URI, JWT, platform admin key):
+
+     nano /etc/mooreview/saas.env
+     # Or let install create the template, then edit before seeding.
+
+5. Run SaaS bootstrap (Node 20 + nginx -> 3100; no local MongoDB):
+
+     export MOOREVIEW_SOURCE=/home/mooreview
+     export MOOREVIEW_INSTALL_DIR=/home/mooreview
+     bash /home/mooreview/deploy/cloud/debian/install-saas.sh
+
+6. Allowlist droplet IP 206.189.198.96 on your DO Managed MongoDB cluster.
+
+7. Seed demo tenant (once, after secrets are set):
+
+     sudo -u mooreview bash -lc 'cd /home/mooreview && npm run seed'
+
+8. TLS:
+
+     certbot --nginx -d mooreview.io -d www.mooreview.io
+
+9. Verify:
+
+     curl -s http://127.0.0.1:3100/health
+     curl -sI https://mooreview.io/login
+     systemctl status mooreview-saas nginx
+
+Firewall: 22, 80, 443. Do not expose 27017.
+
+Demo login (after seed): tenant demo / admin@demo.test / admin123
+Platform admin: /admin/login with PLATFORM_ADMIN_KEY from saas.env
+
+Optional — port 3090 runtime (client-side / appliance hub)
+----------------------------------------------------------
+
+     sudo bash /home/mooreview/deploy/cloud/debian/enable-runtime-3090.sh
+
+Then point mooreview-client at http://<host>:3090/api or proxy a subdomain.
+
+SaaS API for tenants remains on https://mooreview.io/api (port 3100).
+
+Legacy appliance install (3090 only): deploy/cloud/debian/install.sh

@@ -1,0 +1,53 @@
+﻿{
+  "name": "mooreview-cloud",
+  "version": "2.3.7",
+  "description": "MooreVIEW multi-tenant cloud SaaS — MongoDB platform + Studio + remote sites/cameras (port 3100)",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "start:runtime": "node server.js",
+    "stop": "node scripts/stop-server.js",
+    "restart": "node scripts/stop-server.js && node src/server.js",
+    "dev": "node --watch src/server.js",
+    "indexes": "node src/db/indexes.js",
+    "migrate": "node src/db/indexes.js",
+    "seed": "node scripts/seed.js",
+    "seed:bundled-projects": "node scripts/seed-bundled-projects.js",
+    "test": "node --test test/*.test.js",
+    "test:baseline": "node --require ./test/preload-config-memory.js --test test/mqttParc.test.js test/mqttParcBootstrap.test.js test/mqttParcOptaDriver.test.js test/mqttOptaProgram.test.js test/parc.test.js test/parcTagSync.test.js test/optaTelemetryMapper.test.js test/optaRemoteDriver.test.js test/optaProtocol.test.js test/stBytecode.test.js test/stBcRunner.test.js test/scanEngineRemote.test.js",
+    "green": "node --test test/*.test.js",
+    "opta-test": "node scripts/opta-connect-test.js",
+    "mqtt:start": "node scripts/start-mqtt-broker.js",
+    "mqtt:stop": "node scripts/stop-mqtt-broker.js",
+    "go2rtc:download": "node scripts/download-go2rtc.js",
+    "three:download": "node scripts/download-three.js",
+    "go2rtc:start": "node scripts/start-go2rtc.js",
+    "go2rtc:stop": "node scripts/stop-go2rtc.js",
+    "download-opto-svgs": "node scripts/download-opto-svg-library.js",
+    "download-mblogic-svgs": "node scripts/download-mblogic-svgs.js",
+    "organize-hmi-graphics": "node scripts/organize-hmi-graphics.js",
+    "build-native": "node-gyp rebuild --directory native"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^16.4.7",
+    "ejs": "^3.1.10",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "modbus-serial": "^8.0.17",
+    "mongodb": "^6.12.0",
+    "mqtt": "^5.10.4",
+    "nodemailer": "^6.10.1",
+    "pdfkit": "^0.17.2",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "mongodb-memory-server": "^10.1.4",
+    "node-addon-api": "^8.3.0",
+    "node-gyp": "^10.2.0"
+  }
+}

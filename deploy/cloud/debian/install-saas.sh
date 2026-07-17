@@ -1,0 +1,210 @@
+#!/usr/bin/env bash
+# MooreVIEW multi-tenant SaaS — port 3100 only (login, CMMS, Studio).
+# Uses DO Managed MongoDB via MONGODB_URI in /etc/mooreview/saas.env.
+# Optional edge runtime on 3090: deploy/cloud/debian/enable-runtime-3090.sh
+#
+# Run as root:
+#   sudo MOOREVIEW_SOURCE=/home/mooreview MOOREVIEW_INSTALL_DIR=/home/mooreview \
+#     bash deploy/cloud/debian/install-saas.sh
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+
+INSTALL_DIR="${MOOREVIEW_INSTALL_DIR:-/home/mooreview}"
+SAAS_ENV="${MOOREVIEW_SAAS_ENV:-/etc/mooreview/saas.env}"
+DATA_DIR="${MOOREVIEW_DATA_DIR:-/var/lib/mooreview}"
+SERVICE_USER="${MOOREVIEW_USER:-mooreview}"
+SOURCE_DIR="${MOOREVIEW_SOURCE:-$REPO_ROOT}"
+DOMAIN="${MOOREVIEW_DOMAIN:-mooreview.io}"
+
+log() { printf '[mooreview-saas] %s\n' "$*"; }
+die() { printf '[mooreview-saas] ERROR: %s\n' "$*" >&2; exit 1; }
+
+strip_crlf() {
+  local f="$1"
+  [[ -f "$f" ]] || return 0
+  if grep -q $'\r' "$f" 2>/dev/null; then
+    log "Normalizing Windows line endings in $f"
+    sed -i 's/\r$//' "$f"
+  fi
+}
+
+if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+  die "Run as root: sudo bash $0"
+fi
+
+if [[ ! -f "$SOURCE_DIR/package.json" ]] || [[ ! -f "$SOURCE_DIR/src/server.js" ]]; then
+  die "MooreVIEW cloud source not found at $SOURCE_DIR (need src/server.js — set MOOREVIEW_SOURCE)"
+fi
+
+export DEBIAN_FRONTEND=noninteractive
+
+log "Installing base packages (Node only — no local MongoDB for SaaS)…"
+apt-get update -qq
+apt-get install -y -qq ca-certificates curl gnupg rsync nginx
+
+# --- Node.js 20 LTS ---
+if ! command -v node >/dev/null 2>&1 || [[ "$(node -p 'process.versions.node.split(".")[0]')" -lt 20 ]]; then
+  log "Installing Node.js 20 LTS…"
+  install -d -m 0755 /etc/apt/keyrings
+  curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+    | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+  echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
+    > /etc/apt/sources.list.d/nodesource.list
+  apt-get update -qq
+  apt-get install -y -qq nodejs
+else
+  log "Node.js $(node -v) already present"
+fi
+
+# --- Service user ---
+if ! id "$SERVICE_USER" >/dev/null 2>&1; then
+  log "Creating system user $SERVICE_USER…"
+  if [[ -d "$INSTALL_DIR" ]]; then
+    useradd --system --home-dir "$INSTALL_DIR" --no-create-home --shell /usr/sbin/nologin "$SERVICE_USER"
+  else
+    useradd --system --home-dir "$INSTALL_DIR" --create-home --shell /usr/sbin/nologin "$SERVICE_USER"
+  fi
+fi
+
+install -d -m 0750 -o root -g "$SERVICE_USER" /etc/mooreview
+for deploy_file in "$SCRIPT_DIR"/.env.saas.debian.example "$SCRIPT_DIR"/mooreview-saas.service \
+  "$SCRIPT_DIR"/mooreview-runtime.service "$SCRIPT_DIR"/nginx-mooreview-saas.conf \
+  "$SCRIPT_DIR"/install-saas.sh; do
+  strip_crlf "$deploy_file"
+done
+
+if [[ ! -f "$SAAS_ENV" ]]; then
+  log "Creating $SAAS_ENV — edit MONGODB_URI, JWT_SECRET, PLATFORM_ADMIN_KEY before production"
+  install -m 0640 -o root -g "$SERVICE_USER" "$SCRIPT_DIR/.env.saas.debian.example" "$SAAS_ENV"
+else
+  log "Keeping existing $SAAS_ENV"
+fi
+strip_crlf "$SAAS_ENV"
+
+# Block boot-loop from template placeholders
+if grep -qE '^MONGODB_URI=.*@(HOST|YOUR_|REPLACE|XXXXX|CHANGE_ME)' "$SAAS_ENV" 2>/dev/null \
+  || grep -qE '^MONGODB_URI=mongodb\+srv://USER:' "$SAAS_ENV" 2>/dev/null; then
+  die "Edit $SAAS_ENV — set a real MONGODB_URI from DigitalOcean Databases (Connection string). HOST/USER placeholders will not work."
+fi
+
+# --- Application tree ---
+install -d -m 0755 "$INSTALL_DIR"
+if [[ "$SOURCE_DIR" != "$INSTALL_DIR" ]]; then
+  log "Syncing app to $INSTALL_DIR…"
+  rsync -a --delete \
+    --exclude '.git/' \
+    --exclude 'node_modules/' \
+    --exclude 'data/' \
+    --exclude '.env' \
+    --exclude 'deploy/cloud/.env' \
+    --exclude 'products/' \
+    --exclude 'azure/' \
+    --exclude 'test/' \
+    "$SOURCE_DIR/" "$INSTALL_DIR/"
+else
+  log "Source and install dir are the same ($INSTALL_DIR) — skipping rsync"
+fi
+
+chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
+
+log "Installing npm production dependencies…"
+sudo -u "$SERVICE_USER" bash -lc "cd '$INSTALL_DIR' && npm ci --omit=dev"
+
+install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" "$DATA_DIR"
+install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" "$DATA_DIR/projects"
+
+# Ship bundled Studio snapshots into runtime data dir (MOOREVIEW_DATA=/var/lib/mooreview).
+# Bundle extracts them under $INSTALL_DIR/data/projects; the service does not read that path.
+BUNDLED_PROJECTS_SRC=""
+if [[ -d "$SOURCE_DIR/data/projects" ]]; then
+  BUNDLED_PROJECTS_SRC="$SOURCE_DIR/data/projects"
+elif [[ -d "$INSTALL_DIR/data/projects" ]]; then
+  BUNDLED_PROJECTS_SRC="$INSTALL_DIR/data/projects"
+fi
+if [[ -n "$BUNDLED_PROJECTS_SRC" ]]; then
+  n_src="$(find "$BUNDLED_PROJECTS_SRC" -maxdepth 1 -type f -name '*.est.json' 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ "${n_src:-0}" -gt 0 ]]; then
+    log "Installing $n_src bundled project snapshot(s) → $DATA_DIR/projects/"
+    rsync -a --include='*.est.json' --exclude='*' "$BUNDLED_PROJECTS_SRC/" "$DATA_DIR/projects/"
+    chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR/projects"
+  else
+    log "No *.est.json in $BUNDLED_PROJECTS_SRC — skipping project seed copy"
+  fi
+else
+  log "No bundled data/projects/ in source or install tree — $DATA_DIR/projects stays empty until seeded"
+fi
+
+# .env symlink for npm run seed / migrate
+ln -sf "$SAAS_ENV" "$INSTALL_DIR/.env"
+chown -h "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/.env" 2>/dev/null || true
+
+# --- systemd: SaaS on 3100 ---
+sed "s|@MOOREVIEW_INSTALL_DIR@|${INSTALL_DIR}|g" "$SCRIPT_DIR/mooreview-saas.service" \
+  > /etc/systemd/system/mooreview-saas.service
+chmod 0644 /etc/systemd/system/mooreview-saas.service
+
+# Runtime unit installed but not enabled (3090 — optional later)
+sed "s|@MOOREVIEW_INSTALL_DIR@|${INSTALL_DIR}|g" "$SCRIPT_DIR/mooreview-runtime.service" \
+  > /etc/systemd/system/mooreview-runtime.service
+chmod 0644 /etc/systemd/system/mooreview-runtime.service
+
+systemctl daemon-reload
+systemctl enable mooreview-saas.service
+
+# Retire legacy single-port appliance service if present
+if systemctl list-unit-files mooreview.service >/dev/null 2>&1; then
+  log "Disabling legacy mooreview.service (port 3090 appliance) — use mooreview-saas on 3100"
+  systemctl disable --now mooreview.service 2>/dev/null || true
+fi
+
+if systemctl is-active --quiet mooreview-saas.service 2>/dev/null; then
+  systemctl restart mooreview-saas.service
+else
+  systemctl start mooreview-saas.service
+fi
+
+# --- nginx -> 3100 ---
+# Do NOT overwrite an existing TLS-enabled site (certbot edits this file).
+NGINX_SITE="/etc/nginx/sites-available/mooreview-saas"
+if [[ -f "$NGINX_SITE" ]] && grep -qE 'ssl_certificate|listen 443' "$NGINX_SITE"; then
+  log "Keeping existing TLS nginx site $NGINX_SITE (not overwriting certbot config)"
+  # Ensure proxy still targets SaaS :3100
+  if grep -q 'proxy_pass http://127.0.0.1:3090' "$NGINX_SITE"; then
+    log "Fixing proxy_pass 3090 → 3100 in TLS site"
+    sed -i 's|proxy_pass http://127.0.0.1:3090|proxy_pass http://127.0.0.1:3100|g' "$NGINX_SITE"
+  fi
+else
+  install -m 0644 "$SCRIPT_DIR/nginx-mooreview-saas.conf" "$NGINX_SITE"
+fi
+if [[ ! -L /etc/nginx/sites-enabled/mooreview-saas ]]; then
+  ln -sf "$NGINX_SITE" /etc/nginx/sites-enabled/mooreview-saas
+fi
+# Disable legacy 3090 site if present
+[[ -L /etc/nginx/sites-enabled/mooreview ]] && rm -f /etc/nginx/sites-enabled/mooreview || true
+# Drop other default sites that may steal :80/:443
+[[ -L /etc/nginx/sites-enabled/default ]] && rm -f /etc/nginx/sites-enabled/default || true
+nginx -t
+systemctl reload nginx
+
+# --- UFW (HTTP/HTTPS only; 3090 not exposed until runtime enabled) ---
+if command -v ufw >/dev/null 2>&1; then
+  ufw allow OpenSSH >/dev/null 2>&1 || true
+  ufw allow 80/tcp >/dev/null 2>&1 || true
+  ufw allow 443/tcp >/dev/null 2>&1 || true
+  ufw --force enable >/dev/null 2>&1 || true
+fi
+
+log "Done — multi-tenant SaaS on port 3100"
+if systemctl is-active --quiet mooreview-saas.service 2>/dev/null; then
+  log "  mooreview-saas: active"
+else
+  log "  mooreview-saas: NOT running (journalctl -u mooreview-saas -n 40)"
+fi
+log "  Health:  curl -s http://127.0.0.1:3100/health"
+log "  Login:   https://${DOMAIN}/login  (after TLS: certbot --nginx -d ${DOMAIN})"
+log "  Env:     $SAAS_ENV"
+log "  Seed:    sudo -u $SERVICE_USER bash -lc 'cd $INSTALL_DIR && npm run seed'  (once, after setting secrets)"
+log "  Runtime: enable port 3090 later: sudo bash $SCRIPT_DIR/enable-runtime-3090.sh"
+log "  Logs:    journalctl -u mooreview-saas -f"

@@ -1,0 +1,11 @@
+[
+  {
+    "id": "opta_st_01",
+    "type": "mqtt_parc",
+    "enabled": true,
+    "deviceId": "opta_st_01",
+    "remoteExecution": true,
+    "scanMs": 100,
+    "reportIntervalMs": 200
+  }
+]

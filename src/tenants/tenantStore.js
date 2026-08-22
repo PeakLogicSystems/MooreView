@@ -3,6 +3,7 @@
 const { randomUUID } = require('crypto');
 const persistence = require('../persistence');
 const { hashPassword, verifyPassword, randomToken, hashToken } = require('./authCrypto');
+const { normalizeFeatures, CLOUD_ADMIN_ROLES, isCloudMatrixEditableRole } = require('../auth/featureCatalog');
 
 const FILE = 'cloud_tenants.json';
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -57,6 +58,8 @@ class TenantStore {
     const adminPass = process.env.MOOREVIEW_SEED_ADMIN_PASSWORD || 'ChangeMeAdmin!';
     const opEmail = process.env.MOOREVIEW_SEED_OPERATOR_EMAIL || 'operator@demo.local';
     const opPass = process.env.MOOREVIEW_SEED_OPERATOR_PASSWORD || 'demo';
+    const hoEmail = process.env.MOOREVIEW_SEED_HOMEOWNER_EMAIL || 'homeowner@demo.local';
+    const hoPass = process.env.MOOREVIEW_SEED_HOMEOWNER_PASSWORD || 'demo';
 
     const existingBySlug = Object.values(this._store.tenants).find((t) => t.tenantSlug === tenantSlug);
     if (!existingBySlug && !this._store.tenants[tenantSlug]) {
@@ -65,11 +68,11 @@ class TenantStore {
         tenantId,
         tenantSlug,
         name: 'Demo Organization',
-        cmms: { enabled: false, externalUrl: '' },
+        cmms: { enabled: true, externalUrl: '' },
         entitlements: {
           cameras: { remoteView: true },
           studio: true,
-          cmms: false,
+          cmms: true,
         },
         createdAt: new Date().toISOString(),
       };
@@ -100,9 +103,21 @@ class TenantStore {
         createdAt: new Date().toISOString(),
       };
     }
+    if (!Object.values(this._store.users).some((u) => u.email === hoEmail.toLowerCase())) {
+      const id = `user_${randomToken(6)}`;
+      this._store.users[id] = {
+        userId: id,
+        email: hoEmail.toLowerCase(),
+        name: 'Demo Homeowner',
+        role: 'homeowner',
+        tenantId: demoTenantId,
+        passwordHash: hashPassword(hoPass),
+        createdAt: new Date().toISOString(),
+      };
+    }
     this._store.seededAt = new Date().toISOString();
     save(this._store);
-    console.log(`[tenants] seeded org "${tenantSlug}" (${demoTenantId}) — admin ${adminEmail} / operator ${opEmail}`);
+    console.log(`[tenants] seeded org "${tenantSlug}" (${demoTenantId}) — admin ${adminEmail} / operator ${opEmail} / homeowner ${hoEmail}`);
   }
 
   listTenants() {
@@ -176,22 +191,25 @@ class TenantStore {
   publicUser(u, tenant) {
     if (!u) return null;
     const t = tenant || (u.tenantId ? this.getTenant(u.tenantId) : null);
+    const role = u.role || 'operator';
     return {
       userId: u.userId,
       email: u.email,
       name: u.name,
-      role: u.role,
+      role,
       tenantId: u.tenantId,
       tenantSlug: t ? t.tenantSlug : null,
       cmmsEnabled: !!(t && t.cmms && t.cmms.enabled),
+      features: normalizeFeatures(u.features, role),
     };
   }
 
-  createUser({ email, password, name, role, tenantId } = {}) {
+  createUser({ email, password, name, role, tenantId, features } = {}) {
     const e = String(email || '').trim().toLowerCase();
     if (!e || !password) throw Object.assign(new Error('email and password required'), { status: 400 });
     if (this.findUserByEmail(e)) throw Object.assign(new Error('user exists'), { status: 409 });
-    const r = String(role || 'operator').trim();
+    const allowed = ['operator', 'tenant_admin', 'technician', 'homeowner', 'viewer'];
+    const r = allowed.includes(role) ? role : 'operator';
     if (r !== 'platform_admin' && !this.getTenant(tenantId)) {
       throw Object.assign(new Error('valid tenantId required'), { status: 400 });
     }
@@ -203,11 +221,30 @@ class TenantStore {
       role: r,
       tenantId: r === 'platform_admin' ? null : String(tenantId),
       passwordHash: hashPassword(password),
+      features: normalizeFeatures(features, r),
       createdAt: new Date().toISOString(),
     };
     this._store.users[id] = rec;
     save(this._store);
-    return this.publicUser(rec);
+    return this.publicUser(rec, this.getTenant(rec.tenantId));
+  }
+
+  updateFeaturesMatrix(tenantId, matrix) {
+    if (!matrix || typeof matrix !== 'object') {
+      throw Object.assign(new Error('matrix required'), { status: 400 });
+    }
+    const tid = String(tenantId || '').trim();
+    if (!tid) throw Object.assign(new Error('tenantId required'), { status: 400 });
+    const updated = [];
+    for (const [userId, features] of Object.entries(matrix)) {
+      const cur = this._store.users[userId];
+      if (!cur || String(cur.tenantId) !== tid) continue;
+      if (CLOUD_ADMIN_ROLES.has(cur.role) || !isCloudMatrixEditableRole(cur.role)) continue;
+      cur.features = normalizeFeatures(features, cur.role);
+      updated.push(this.publicUser(cur, this.getTenant(tid)));
+    }
+    if (updated.length) save(this._store);
+    return updated;
   }
 
   listUsers(tenantId) {
@@ -216,15 +253,15 @@ class TenantStore {
         if (tenantId == null) return true;
         return u.tenantId === tenantId || u.role === 'platform_admin';
       })
-      .map((u) => this.publicUser(u));
+      .map((u) => this.publicUser(u, u.tenantId ? this.getTenant(u.tenantId) : null));
   }
 
-  login({ tenantId, tenantSlug, email, password } = {}) {
+  login({ tenantId, tenantSlug, organizationId, email, password } = {}) {
     const user = this.findUserByEmail(email);
     if (!user || !verifyPassword(password, user.passwordHash)) {
       throw Object.assign(new Error('Invalid credentials'), { status: 401 });
     }
-    const orgKey = String(tenantId || tenantSlug || '').trim();
+    const orgKey = String(tenantId || tenantSlug || organizationId || '').trim();
     if (user.role !== 'platform_admin') {
       const t = this.getTenant(user.tenantId);
       if (!t) throw Object.assign(new Error('User has no tenant'), { status: 403 });

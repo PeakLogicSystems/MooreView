@@ -6,9 +6,9 @@
 window.MooreviewHelp = (function () {
   /** Sidebar groups â€” defines nav order and section grouping. */
   const NAV_GROUPS = [
-    { label: 'Overview', ids: ['start', 'tutorial', 'cloud-studio', 'layout', 'projects', 'mv-draw', 'faq'] },
+    { label: 'Overview', ids: ['start', 'tutorial', 'cloud-studio', 'cloud-deploy', 'layout', 'projects', 'mv-draw', 'faq'] },
     { label: 'Program & runtime', ids: ['system-setup', 'st-editor', 'runtime', 'st-language'] },
-    { label: 'Tags & drivers', ids: ['tags', 'alarms', 'drivers', 'mqtt-parc', 'cellular-sims', 'modbus', 'nextcentury', 'remote-io', 'serial-troubleshoot'] },
+    { label: 'Tags & drivers', ids: ['tags', 'alarms', 'cmms', 'cameras', 'drivers', 'bacnet', 'mqtt-parc', 'cellular-sims', 'cloud-sims', 'modbus', 'nextcentury', 'remote-io', 'serial-troubleshoot'] },
     { label: 'Historian', ids: ['historian', 'historian-config', 'historian-logger', 'historian-report', 'mongo-logging', 'pdm-predictive', 'roi-calculator'] },
     {
       label: 'HMI',
@@ -22,7 +22,7 @@ window.MooreviewHelp = (function () {
         'hmi-troubleshoot',
       ],
     },
-    { label: 'Device guides', ids: ['waveshare', 'datexel-dat10148', 'jxct-sensors', 'seeed-sensors', 'dfrobot-sensors', 'is750-ion', 'r7c-orp', 'do3500', 'ezmeter-dds-rgb', 'scan-spectrolyser', 'scan-concube', 'opta', 'edgepoint-industrial'] },
+    { label: 'Device guides', ids: ['residential-pool-spa', 'res-pool-link', 'waveshare', 'waveshare-relay-1ch', 'datexel-dat10148', 'jxct-sensors', 'seeed-sensors', 'dfrobot-sensors', 'dfrobot-edge101', 'is750-ion', 'r7c-orp', 'do3500', 'ezmeter-dds-rgb', 'scan-spectrolyser', 'scan-concube', 'opta', 'edgepoint-industrial'] },
     { label: 'Reference', ids: ['files', 'env'] },
   ];
 
@@ -41,12 +41,12 @@ window.MooreviewHelp = (function () {
         <h4>First-time setup (appliance)</h4>
         <ol>
           <li>Install: <code>npm install</code> in the MVP Suite folder (<code>est-pc</code> or <code>mooreview-mvp-suite</code>).</li>
-          <li>Run: <code>npm start</code></li>
-          <li>Open <code>http://127.0.0.1:3090</code> in your browser (default port 3090).</li>
+          <li>Run: <code>npm start</code> (or <strong>Start MooreVIEW.bat</strong> on a portable install bundle).</li>
+          <li>Open <code>http://127.0.0.1:3090</code> — the <strong>dashboard</strong> with the live HMI panel. <strong>MV Draw</strong> (<code>/mv-draw</code>) is a separate site-plan editor under <strong>Tools ▾</strong>; it is not the default home page.</li>
           <li>Configure <strong>Drivers</strong> (Modbus, MQTT, HTTPS, or simulation), then <strong>Tags</strong> or apply a <strong>device template</strong>.</li>
           <li>Edit the <strong>ST program</strong>, click <strong>Validate</strong>, then <strong>Start</strong>.</li>
         </ol>
-        <p>Data is stored under <code>data/</code> (tags, drivers, settings). Programs live under <code>st/</code> as <code>.st</code> files.</p>
+        <p>Runtime data is stored under <code>data/</code> (tags, drivers, settings). Programs live under <code>st/</code> as <code>.st</code> files. Saved projects are portable <code>.est.zip</code> archives under <code>data/projects/</code> — see <strong>Help → Projects</strong>. MongoDB is optional (historian archive and camera snapshots only; projects do not require Mongo).</p>
         <p><strong>Arduino Opta (MQTT):</strong> press <kbd>F1</kbd> â†’ <strong>MQTT Parc hub &amp; Opta</strong>, or see <code>firmware/arduino-opta-mqtt-st/OPTa_FEATURES.md</code>, <a href="/docs/OPTa_FEATURES.pdf" target="_blank" rel="noopener">OPTa_FEATURES.pdf</a> (in-app download), <code>docs/BASELINE_TEST.md</code>, and <code>docs/MQTT_PARC.md</code>.</p>
         <h4>Commissioning workflow</h4>
         <ol>
@@ -59,12 +59,12 @@ window.MooreviewHelp = (function () {
         <h4>Help topics (sidebar)</h4>
         <table class="help-table">
           <tr><th>Group</th><th>Topics</th></tr>
-          <tr><td>Overview</td><td>Getting started, <strong>Cloud Studio</strong>, layout, projects, FAQ</td></tr>
+          <tr><td>Overview</td><td>Getting started, Cloud Studio, layout, projects, MV Draw, FAQ</td></tr>
           <tr><td>Program &amp; runtime</td><td>System setup, ST editor, Start/Pause/Stop, ST language reference</td></tr>
-          <tr><td>Tags &amp; drivers</td><td>Tag table, force I/O, Modbus/MQTT/HTTPS, <strong>MQTT Parc</strong>, serial troubleshooting</td></tr>
+          <tr><td>Tags &amp; drivers</td><td>Tag table, alarms, <strong>integrated CMMS</strong>, <strong>IP cameras</strong>, Modbus/MQTT/HTTPS, <strong>BACnet/IP</strong> (edge), MQTT Parc, cellular/cloud sims</td></tr>
           <tr><td>Historian</td><td>Trend chart, pen config, logger config, MongoDB archive, PdM (SCADA + Edge), CSV/PDF report</td></tr>
           <tr><td>HMI</td><td>Composer, bindings, pilots, gauges, composites (motor, alternator, TPO, PID), navigation</td></tr>
-          <tr><td>Device guides</td><td>Waveshare, Datexel, S::CAN, Arduino Opta, EdgePoint Industrial</td></tr>
+          <tr><td>Device guides</td><td>Residential pool &amp; spa, Res-Pool-Link, Waveshare, Datexel, S::CAN, Arduino Opta, EdgePoint Industrial</td></tr>
           <tr><td>Reference</td><td>Files &amp; folders, environment variables</td></tr>
         </table>
         <p>Press <kbd>F1</kbd> or click <strong>Help</strong> in the top bar. Each tool window also has a contextual <strong>Help</strong> button that jumps to the matching topic.</p>
@@ -79,9 +79,11 @@ window.MooreviewHelp = (function () {
         <h4>Step 1 — Create or open a project</h4>
         <ol>
           <li><strong>Project ▾ → New project…</strong> — starts a blank tag database (confirm when prompted).</li>
-          <li><strong>Project ▾ → Open project…</strong> — pick a saved project from <code>data/projects/</code>.</li>
-          <li><strong>Project ▾ → Save project</strong> / <strong>Save project as…</strong> — writes the full <code>.est.json</code> snapshot (tags, drivers, HMI, settings).</li>
-          <li><strong>Project ▾ → Save workspace</strong> — working copy to <code>data/workspace.est.json</code> without a library entry.</li>
+          <li><strong>Project ▾ → Open project…</strong> — pick a saved project from <code>data/projects/</code> (<code>*.est.zip</code>).</li>
+          <li><strong>Project ▾ → Import project file…</strong> — load a portable <code>.est.zip</code> or legacy <code>.est.json</code> from another PC, USB stick, or backup; saves to the on-disk library.</li>
+          <li><strong>Project ▾ → Save project</strong> / <strong>Save project as…</strong> — writes a portable <code>.est.zip</code> archive (tags, drivers, ST programs, HMI, MV Draw, settings).</li>
+          <li><strong>Project ▾ → Export project file…</strong> — download the current project as <code>&lt;name&gt;.est.zip</code> for another PC.</li>
+          <li><strong>Project ▾ → Save workspace</strong> — working copy to <code>data/workspace.est.zip</code> without a library entry.</li>
         </ol>
         <p><em>UI path:</em> top bar <strong>Project ▾</strong> menu. Project name appears to the right of the menu when a project is loaded.</p>
         <h4>Step 2 — Pick hardware (drivers &amp; templates)</h4>
@@ -95,7 +97,7 @@ window.MooreviewHelp = (function () {
         <p><em>Wizard vs manual:</em> both call <code>POST /devices/apply</code> with the same preset IDs from <code>src/devices/templates/</code>. The wizard filters templates by transport and collects connection fields; the manual bar also supports ConCube parameter groups and replace-tags.</p>
         <h4>Step 3 — Pick screen components (HMI)</h4>
         <ol>
-          <li>On the live HMI panel, click <strong>Setup…</strong> (or <strong>Project → System setup → HMI</strong> → <strong>Open HMI composer</strong>).</li>
+          <li>On the live HMI panel, click <strong>Setup…</strong> to open the HMI composer.</li>
           <li>In the asset browser, filter <strong>Composites</strong> — place widgets such as <strong>Motor / pump (HOA)</strong>, <strong>TPO daily schedule</strong>, <strong>PID loop</strong>, or <strong>Alarm list</strong>.</li>
           <li>Select a tile → <strong>Bindings</strong> palette — map tag names to pilot states, text, gauges, and commands.</li>
           <li>Click <strong>Apply</strong> in the composer, then <strong>Project → System setup → Apply all settings</strong> if you changed the starting screen.</li>
@@ -136,15 +138,50 @@ window.MooreviewHelp = (function () {
       id: 'cloud-studio',
       title: 'MooreVIEW Cloud Studio',
       html: `
-        <p>Hosted tenants use <strong>Studio</strong> â€” the same ST/HMI/runtime UI as the PC appliance, inside the cloud shell.</p>
+        <p>Hosted multi-tenant SaaS uses the same ST/HMI/runtime UI as the PC appliance, with organization login.</p>
+        <h4>Local development</h4>
         <ol>
-          <li>Run <code>mooreview-cloud</code>: <code>npm run seed</code> then <code>npm start</code> (port <strong>3100</strong>).</li>
-          <li>Sign in at <strong>/login</strong> (tenant slug + email + password).</li>
-          <li>Open <strong>Studio</strong> from the nav bar or go to <strong>/studio</strong>.</li>
+          <li><code>npm run start:saas</code> — port <strong>3100</strong>, <code>MOOREVIEW_DEPLOYMENT=cloud</code></li>
+          <li><code>npm run seed</code> — demo org and users (first boot)</li>
+          <li>Sign in at <strong>/login</strong> — org <code>demo</code>, <code>operator@demo.local</code> / <code>demo</code></li>
         </ol>
-        <p>Runtime API base is <code>/api/studio</code> (tenant session cookie). Workspace files are isolated per tenant under <code>data/tenants/{tenantId}/</code> (tags, drivers, HMI, Parc registry).</p>
-        <p><strong>MQTT Parc / Opta</strong> works in Studio when the hub and <code>mqtt_parc</code> drivers are configured â€” same as appliance. <strong>Modbus</strong> and other LAN field buses require an <strong>edge appliance</strong> or the cloud runtime fork (<code>npm run start:runtime</code> on port 3090), not the hosted multitenant process.</p>
-        <p>See <code>mooreview-cloud/docs/USER_GUIDE.md</code> and <code>docs/EST_PC_PARITY.md</code>.</p>
+        <h4>Production (DigitalOcean)</h4>
+        <p>Build bundle: <code>scripts/create-saas-bundle.ps1</code>. Install with <code>deploy/cloud/debian/install-saas.sh</code>. See Help → <strong>Cloud deploy (DO)</strong> and repo docs <code>docs/CLOUD_DEPLOY_DO.md</code>.</p>
+        <h4>Studio features</h4>
+        <ul>
+          <li><strong>/sites</strong> — pair edge appliances, remote cameras via site agent</li>
+          <li><strong>/sites/devices</strong> — fleet inventory</li>
+          <li><strong>/fleet</strong> — assets map</li>
+          <li><strong>/people</strong> — role defaults, user access matrix (admin edits; others read-only)</li>
+          <li><strong>/cmms</strong> — integrated work orders and PM (when tenant CMMS entitlement enabled)</li>
+        </ul>
+        <p><strong>MQTT Parc / Opta</strong> in cloud requires the optional 3090 runtime or direct Mosquitto. <strong>Modbus</strong> and LAN field buses need an <strong>edge appliance</strong>.</p>
+        <p>Full guide: <code>docs/CLOUD_USER_GUIDE.md</code>. Edge vs cloud: <code>docs/EST_PC_PARITY.md</code>.</p>
+      `,
+    },
+    {
+      id: 'cloud-deploy',
+      title: 'Cloud deploy (DigitalOcean)',
+      html: `
+        <p>Production SaaS on a DO droplet: nginx → port <strong>3100</strong>, <strong>DO Managed MongoDB</strong>, Let's Encrypt TLS.</p>
+        <h4>Build (Windows)</h4>
+        <pre>powershell -File scripts\\create-saas-bundle.ps1</pre>
+        <h4>Droplet install</h4>
+        <ol>
+          <li>Create Debian 12 droplet (≥2 GB RAM) + Managed MongoDB cluster</li>
+          <li>Upload <code>dist/mooreview-saas-*.tgz</code> to <code>/tmp/</code></li>
+          <li><code>tar xzf ... -C /home/mooreview --strip-components=1</code></li>
+          <li>Edit <code>/etc/mooreview/saas.env</code> — <code>MONGODB_URI</code>, <code>JWT_SECRET</code>, <code>PLATFORM_ADMIN_KEY</code></li>
+          <li>Allowlist droplet IP on MongoDB cluster</li>
+          <li><code>bash deploy/cloud/debian/install-saas.sh</code></li>
+          <li><code>sudo -u mooreview npm run seed</code></li>
+          <li><code>certbot --nginx -d your.domain</code></li>
+        </ol>
+        <h4>Verify</h4>
+        <pre>curl -s http://127.0.0.1:3100/health
+curl -sI https://your.domain/login</pre>
+        <p>Full runbook: <code>docs/CLOUD_DEPLOY_DO.md</code>. Quick reference: <code>deploy/cloud/debian/INSTALL-SAAS.txt</code>.</p>
+        <p>Optional MQTT Parc hub on same host: <code>enable-runtime-3090.sh</code> (port 3090).</p>
       `,
     },
     {
@@ -156,13 +193,18 @@ window.MooreviewHelp = (function () {
           <tr><th>Control</th><th>Purpose</th></tr>
           <tr><td><strong>Project â–¾</strong></td><td>Status, system setup, new/open/save project, save project as, save workspace</td></tr>
           <tr><td>Project name</td><td>Current project indicator (right of Project menu)</td></tr>
-          <tr><td><strong>Tools â–¾</strong></td><td>Vertical menu â€” Program, Tags, Alarms, Drivers, Historian, Report, Help</td></tr>
+          <tr><td><strong>Historian &#x25BE;</strong></td><td>Historian panel, logger config, PdM settings</td></tr>
+          <tr><td><strong>Reporting &#x25BE;</strong></td><td>Reports (system log, hardware history, historian export), ROI calculator — <strong>Open CMMS</strong> link in Reports panel</td></tr>
+          <tr><td><strong>Alarms</strong></td><td>Top bar button — active alarm list; red badge when unacknowledged</td></tr>
+          <tr><td><strong>CMMS</strong></td><td>Top bar link — integrated work orders and PM (<a href="/cmms">/cmms</a>) when feature enabled</td></tr>
+          <tr><td><strong>MV Draw</strong></td><td>Top bar link — scaled site-plan editor (<a href="/mv-draw">/mv-draw</a>)</td></tr>
+          <tr><td><strong>Tools &#x25BE;</strong></td><td>Program, Tags, Drivers, Cameras, MV Draw, IO map, Connectivity (cellular/cloud sims), Training</td></tr>
+          <tr><td><strong>Help â–¾</strong></td><td>Training curriculum (<kbd>F2</kbd>) and full Help browser (<kbd>F1</kbd>)</td></tr>
           <tr><td><strong>Tags</strong></td><td>Floating tag database â€” edit tags, scale/alarms, <strong>Force</strong> I/O, <strong>Live I/Oâ€¦</strong></td></tr>
-          <tr><td><strong>Alarms</strong></td><td>Active alarm list from tag limits/conditions â€” scroll, per-row <strong>Ack</strong>, badge on tab</td></tr>
           <tr><td><strong>Drivers</strong></td><td>Driver list, device templates, Modbus RTUâ†”TCP tool (modal popup)</td></tr>
           <tr><td><strong>Historian</strong></td><td>Floating trend chart â€” live buffer, MongoDB archive, or PdM (SCADA + Edge); presets/custom date range</td></tr>
           <tr><td><strong>Report</strong></td><td>Export CSV or print/PDF from live buffer, MongoDB archive, or loaded PdM view</td></tr>
-          <tr><td><strong>Help</strong></td><td>This panel (<kbd>F1</kbd>)</td></tr>
+          <tr><td><strong>Help</strong></td><td>Help browser panel (<kbd>F1</kbd>) â€” also under <strong>Help â–¾</strong></td></tr>
         </table>
         <h4>Main workspace (HMI)</h4>
         <p>Live operator display â€” composed tiles, tag-driven graphics, multi-screen navigation. Startup page: <strong>System setup â†’ General â†’ Starting HMI screen</strong>. Use <strong>Setupâ€¦</strong> on the HMI panel to open the composer. Screen tabs and <strong>Hide</strong> / <strong>Show status</strong> stack vertically on narrow screens.</p>
@@ -181,45 +223,50 @@ window.MooreviewHelp = (function () {
         <p>Every window has <strong>Front</strong> and <strong>Back</strong> in the header (first buttons in the action row). Click a window or drag it to raise it; use <strong>Front</strong> / <strong>Back</strong> to reorder overlapping panels.</p>
         <p>Keep <strong>Program</strong> and <strong>Tags</strong> open together while commissioning â€” trace logic in Program and force values in Tags.</p>
         <p>Modal popups (Drivers, Report, System setup, Help) also have <strong>Front</strong> / <strong>Back</strong> and can overlap floating panels.</p>
-        <p>Click <strong>Project â–¾</strong> or <strong>Tools â–¾</strong> to open a vertical menu; click outside or pick an item to close. On narrow screens the top bar stacks vertically.</p>
-        <p>Live data uses <strong>HTTP polling</strong> (60&nbsp;s in normal view, 10&nbsp;s with <strong>Test mode</strong> for technicians or demo projects), not WebSocket. Values refresh while the runtime is running.</p>
+        <p>Click <strong>Project &#x25BE;</strong>, <strong>Historian &#x25BE;</strong>, <strong>Reporting &#x25BE;</strong>, <strong>Tools &#x25BE;</strong>, or <strong>Help &#x25BE;</strong> to open a vertical menu; use the top-bar <strong>Alarms</strong>, <strong>CMMS</strong>, and <strong>MV Draw</strong> items directly. Click outside or pick an item to close dropdowns. On narrow screens the top bar stacks vertically.</p>
+        <p>Live tag values push over <strong>WebSocket</strong> (~250&nbsp;ms) while the dashboard is open. If the socket drops, HTTP polling takes over (2&nbsp;s normal, 500&nbsp;ms in <strong>Test mode</strong>). Historian and report views still poll for trend data when open.</p>
       `,
     },
     {
       id: 'projects',
       title: 'Projects',
       html: `
-        <p>Click <strong>Project â–¾</strong> (next to the MooreVIEW brand) to expand or collapse the project menu â€” <strong>Statusâ€¦</strong>, <strong>System setupâ€¦</strong>, <strong>New projectâ€¦</strong>, <strong>Open projectâ€¦</strong>, <strong>Export project fileâ€¦</strong>, <strong>Save projectâ€¦</strong>, <strong>Save project asâ€¦</strong>, and <strong>Save workspace</strong>. Click again, press Escape, or click outside to collapse. The active project name is shown to the right as a status indicator.</p>
-        <p><strong>System setup</strong> covers project identity, scan rate, <strong>starting HMI screen</strong>, hardware defaults, archive maintenance, <strong>PdM</strong> batch settings, HMI composer access, and saved projects in MongoDB. Trend pens and MongoDB logging are under <strong>Historian â†’ Pen configâ€¦</strong> and <strong>Logger configâ€¦</strong>. See <strong>Help â†’ System setup</strong> for each tab.</p>
-        <p><strong>Open projectâ€¦</strong> shows a picker of saved snapshots in MongoDB. Use <strong>Import fileâ€¦</strong> to load a portable <code>.est.json</code> from another PC or MooreVIEW version, or <strong>Export fileâ€¦</strong> to download the selected library project.</p>
-        <p><strong>Export project fileâ€¦</strong> downloads the current open project as <code>&lt;name&gt;.est.json</code> (tags, drivers, program, HMI, settings) for use on another machine or MooreVIEW version.</p>
-        <p><strong>Save projectâ€¦</strong> writes the full snapshot to the MongoDB project library. <strong>Save project asâ€¦</strong> prompts for a new name. <strong>Save workspace</strong> writes a working copy to <code>data/workspace.est.json</code> without adding a library entry â€” used when startup mode is <strong>Last workspace</strong>.</p>
-        <p><strong>Workspace &amp; Opta drivers:</strong> Adding or bulk-adding <code>mqtt_parc</code> drivers updates <code>workspace.est.json</code>. On restart, remote drivers in <code>drivers.json</code> are merged into the workspace snapshot so Opta drivers are not dropped.</p>
+        <p>Click <strong>Project &#x25BE;</strong> (next to the MooreVIEW brand) for <strong>Status&#x2026;</strong>, <strong>System setup&#x2026;</strong>, <strong>New project&#x2026;</strong>, <strong>Deploy project&#x2026;</strong>, <strong>Share project&#x2026;</strong>, open/import/export/save/save-as, <strong>Save workspace</strong>, and <strong>Delete project&#x2026;</strong>. The active project name is shown to the right as a status indicator.</p>
+        <p><strong>Portable project format (<code>.est.zip</code>):</strong> MooreVIEW v1 stores projects as zip archives (<code>format: "mooreview-est-archive"</code>). Each archive includes <code>project.json</code> (tags, drivers, settings), all ST programs under <code>programs/</code>, HMI user imports, optional MV Draw site plan (<code>mv-draw/</code>), and <code>meta/host-hints.json</code> for serial-port remapping on import. Host-specific values (COM ports, MQTT broker URLs) are stripped on export and reapplied when you import on a new machine.</p>
+        <p><strong>System setup</strong> covers project identity, scan rate, <strong>startup project</strong>, <strong>starting HMI screen</strong>, and HMI composer mode. RS-485 / Modbus connection settings are on each driver under <strong>Drivers</strong>. Trend pens are under <strong>Historian &#x2192; Pen config&#x2026;</strong>; MongoDB logging and <strong>PdM</strong> are under <strong>Historian &#x2192; Logger config&#x2026;</strong> / <strong>PdM&#x2026;</strong>. See <strong>Help &#x2192; System setup</strong> for each tab. MongoDB is optional and used for historian/logs only — not for the project library.</p>
+        <p><strong>Open projectâ€¦</strong> lists saved archives in <code>data/projects/*.est.zip</code>.</p>
+        <p><strong>Import project fileâ€¦</strong> opens a picker starting in <code>data/projects/</code>, listing both <code>.est.zip</code> and legacy <code>.est.json</code> files. Use <strong>Browse other locationâ€¦</strong> for a native file dialog (also defaults to <code>data/projects/</code> on Windows).</p>
+        <p><strong>Export project fileâ€¦</strong> downloads the current open project as <code>&lt;name&gt;.est.zip</code> for use on another machine, Linux droplet, or IoT-Link appliance.</p>
+        <p><strong>Save projectâ€¦</strong> writes the full archive to the on-disk project library (<code>data/projects/</code>). <strong>Save project asâ€¦</strong> prompts for a new name. <strong>Save workspace</strong> writes a working copy to <code>data/workspace.est.zip</code> â€” used when startup mode is <strong>Last workspace</strong>.</p>
+        <p><strong>Startup modes</strong> (System setup â†’ General): <strong>Blank</strong>, <strong>Last workspace</strong>, <strong>Specific saved project</strong>, or <strong>Last opened project</strong>. The server loads the selected project on boot before drivers connect.</p>
+        <p><strong>Workspace &amp; Opta drivers:</strong> Adding or bulk-adding <code>mqtt_parc</code> drivers updates the workspace archive. On restart, remote drivers in <code>drivers.json</code> are merged into the workspace snapshot so Opta drivers are not dropped.</p>
         <p>The <strong>Projects</strong> tab in System setup offers the same library plus <strong>Export fileâ€¦</strong> and <strong>Import fileâ€¦</strong>.</p>
-        <p>Accepted formats (older and newer format versions are upgraded automatically on import):</p>
+        <p>Accepted import formats (older versions are upgraded automatically):</p>
         <ul>
-          <li>Official: <code>format: "mooreview-est"</code>, <code>version: 1</code> (other format versions are migrated)</li>
-          <li>Legacy bundle: JSON with <code>tags</code>, <code>drivers</code>, and <code>program</code> arrays (no format field)</li>
+          <li>Primary: <code>.est.zip</code> (<code>mooreview-est-archive</code> v1)</li>
+          <li>Legacy: <code>.est.json</code>, <code>.mvbundle</code>, or JSON with <code>tags</code> + <code>drivers</code> + <code>program</code></li>
           <li>Tags-only JSON: array of tags or <code>{ "tags": [...] }</code></li>
         </ul>
-        <p>Exports include <code>exportedBy</code> (MooreVIEW app version). Import may show upgrade notes when the file came from an older or newer copy.</p>
+        <p>Exports include <code>exportedBy</code> (MooreVIEW app version). Import may show host-hint warnings when serial ports or MQTT settings differ from the source machine.</p>
         <p>A project import replaces tags (and drivers/program when present). Always check the tag count after opening a file.</p>
+        <p><strong>Portable install:</strong> run <code>npm run build:portable-install</code> in <code>est-pc</code> to build a self-contained folder with clean <code>data/</code>, bundled sample <code>.est.zip</code> projects, and <strong>Start MooreVIEW.bat</strong> (opens the dashboard after the server is ready).</p>
       `,
     },
     {
       id: 'mv-draw',
       title: 'MV Draw (site plans)',
       html: `
-        <p><strong>MV Draw</strong> is a scaled septic / DWTS site-plan editor. Open it from <strong>Tools → MV Draw</strong> or <a href="/mv-draw">/mv-draw</a>.</p>
+        <p><strong>MV Draw</strong> is a scaled septic / DWTS site-plan editor. Open it from <strong>Tools ▾ → MV Draw</strong> or <a href="/mv-draw">/mv-draw</a>. The dashboard home page (<code>/</code>) is the operator HMI — not MV Draw. In <strong>Plan</strong> composer mode, MV Draw can appear embedded in the live HMI panel as a site-plan preview.</p>
         <h4>What it does</h4>
         <ul>
           <li>Place tanks, lift stations, ATU trains, drip dispersal, and piping on a calibrated background</li>
           <li>Two-point scale calibration on scanned plans</li>
           <li>Drawing extents, snap/align, multi-select</li>
           <li>Save named layouts and export <strong>PDF</strong> or <strong>DXF</strong></li>
+          <li><strong>Save to MooreVIEW project…</strong> embeds the plan in the open <code>.est.zip</code> and can link the HMI composer to Plan mode</li>
         </ul>
         <h4>In MV Draw</h4>
-        <p>Press <kbd>F1</kbd> or <strong>File → Help</strong> for the full MV Draw help (tools, symbols, shortcuts). Project data uses <code>mooreview-mvdraw</code> JSON; MooreVIEW <code>.est</code> files may include an optional <code>mvDraw</code> section.</p>
+        <p>Press <kbd>F1</kbd> or <strong>File → Help</strong> for the full MV Draw help (tools, symbols, shortcuts). Layout data uses <code>mooreview-mvdraw</code> JSON; portable <code>.est.zip</code> projects include it under <code>mv-draw/doc.json</code>.</p>
         <p>See also <code>mv-draw/README.md</code> in the appliance tree for API and file format reference.</p>
       `,
     },
@@ -227,17 +274,15 @@ window.MooreviewHelp = (function () {
       id: 'system-setup',
       title: 'System setup',
       html: `
-        <p>Open <strong>Project â†’ System setupâ€¦</strong> (or the setup icon on the HMI panel). Changes are written to <code>data/settings.json</code> when you click <strong>Apply all settings</strong> at the bottom of the dialog.</p>
+        <p>Open <strong>Project &#x2192; System setup&#x2026;</strong> (or the setup icon on the HMI panel). Changes are written to <code>data/settings.json</code> when you click <strong>Apply all settings</strong> at the bottom of the dialog.</p>
         <table class="help-table">
           <tr><th>Tab</th><th>Settings</th></tr>
-          <tr><td><strong>General</strong></td><td><strong>Project name</strong>, <strong>Active ST program</strong> (dropdown from <code>st/</code>), <strong>Scan interval (ms)</strong>, <strong>Starting HMI screen</strong>, <strong>Enable MQTT Parc hub</strong>, <strong>MQTT broker URL</strong>, <strong>Remote ST execution</strong> (deploy/run ST on Opta via MQTT), <strong>Auto-run ST on Opta after power-up</strong> (sends <code>autoRunOnBoot</code> with deploy; requires NV program on device)</td></tr>
-          <tr><td><strong>Features</strong></td><td><strong>Enable Cloud Sim management</strong> and <strong>Enable Cellular SIM management</strong> — optional cloud tools on the PC appliance (no <code>.env</code> required). Apply all settings, then reload the page for <strong>Open Cloud Sims</strong> / <strong>Open Cellular SIMs</strong> links.</td></tr>
-          <tr><td><strong>Hardware</strong></td><td>Default serial port, baud, Modbus slave id, and device template for new RTU drivers</td></tr>
-          <tr><td><strong>Logging</strong></td><td>Archive demo seed and purge â€” MongoDB connection, <strong>Hist</strong> tags, and auto-start: <strong>Historian â†’ Logger configâ€¦</strong> (see <strong>Help â†’ Logger config</strong>)</td></tr>
-          <tr><td><strong>PdM</strong></td><td>Asset â†’ tag map, feature windows, failure threshold, nightly batch, motor simulation â€” see <strong>Help â†’ PdM (predictive maintenance)</strong></td></tr>
-          <tr><td><strong>HMI</strong></td><td>Summary counts and <strong>Open HMI composer</strong> â€” edit screens, tiles, and bindings in the composer; use <strong>Apply HMI settings</strong> there for layout changes</td></tr>
-          <tr><td><strong>Projects</strong></td><td><strong>New project</strong>, open/save/delete snapshots under <code>data/projects/</code> â€” same library as <strong>Project â†’ Open/Save projectâ€¦</strong></td></tr>
+          <tr><td><strong>General</strong></td><td>Project name, active ST program, scan interval, starting HMI screen, <strong>load on boot</strong> (workspace / last project / specific project / blank), auto-start runtime, <strong>MQTT Parc hub</strong> (broker, credentials, global site key, remote ST, auto-run, auto-discover Opta), <strong>cloud remote uplink</strong> (tenant/gateway/broker for site appliance telemetry)</td></tr>
+          <tr><td><strong>Features</strong></td><td>Appliance login accounts and access matrix — enable areas per user (CMMS, cameras, cellular sims, cloud sims, MV Draw, etc.). Admins always have full access. See <strong>Help &#x2192; Integrated CMMS</strong> for CMMS entitlement.</td></tr>
+          <tr><td><strong>Area configuration</strong></td><td>Assisted-living site options (bodies of water, mechanical room). RS-485 / Modbus ports are configured per driver under <strong>Drivers</strong>.</td></tr>
+          <tr><td><strong>Projects</strong></td><td>On-disk project library — new, open, save, export/import <code>.est.zip</code>, delete, <strong>Print project configuration&#x2026;</strong></td></tr>
         </table>
+        <p>Historian pens, logger, PdM, and maintenance are under <strong>Historian &#x25BE;</strong>. ROI is under <strong>Reporting &#x2192; ROI calculator&#x2026;</strong>. Alarm notification users and external CMMS MQTT publish are under <strong>Alarms &#x2192; Notification users&#x2026;</strong>.</p>
         <h4>Starting HMI screen</h4>
         <p>On <strong>General</strong>, pick any configured screen from the dropdown. After <strong>Apply all settings</strong>, the main-page live HMI opens on that screen (page refresh or next poll also picks up the change). Operators can still switch pages with the navigation bar or on-screen nav buttons.</p>
         <p>If you add or remove screens in the composer, screen ids are renumbered (<code>screen_1</code>, <code>screen_2</code>, â€¦). The starting screen setting is remapped to the same page when possible; if that screen was deleted, it falls back to <strong>Screen 1</strong>.</p>
@@ -379,8 +424,12 @@ window.MooreviewHelp = (function () {
           <li><strong>Ack</strong> on each row â€” silences annunciation while the condition remains active. Clearing the alarm (return to Normal) removes the row; a new excursion is unacknowledged again.</li>
           <li><strong>Ack all</strong> acknowledges every active alarm.</li>
           <li>Uncheck <strong>Show acknowledged</strong> to hide acked rows.</li>
-          <li>Red badge on the <strong>Alarms</strong> tab shows unacknowledged count while the window is closed.</li>
+          <li>Red badge on the top-bar <strong>Alarms</strong> button shows unacknowledged count while the window is closed.</li>
         </ul>
+        <h4>Integrated CMMS (work orders)</h4>
+        <p>When the <strong>cmms</strong> feature is enabled, top-bar <strong>CMMS</strong> opens the integrated app at <a href="/cmms">/cmms</a> — overview KPIs, work orders, and PM schedules. On alarm transition (inner/outer high/low), MooreVIEW can auto-create one open work order per tag/level (appliance default on). Assignees come from login users. See <strong>Help &#x2192; Integrated CMMS</strong> and <code>docs/CMMS_APPLIANCE.md</code>.</p>
+        <h4>Notification users &amp; external CMMS MQTT</h4>
+        <p><strong>Alarms &#x2192; Notification users&#x2026;</strong> configures email/SMS recipients and optional <strong>CMMS / MQTT integration</strong> — publishes <code>mooreview-cmms-integration-v1</code> alarm events to an external subscriber (TPS CMMS or other). This is separate from the integrated <code>/cmms</code> UI. See <code>docs/CMMS_INTEGRATION.md</code>.</p>
         <p>Runtime must be <strong>Start</strong>ed for live values and alarm state to update from I/O scans.</p>
       `,
     },
@@ -395,8 +444,9 @@ window.MooreviewHelp = (function () {
           <tr><td>hal</td><td>Built-in I/O HAL â€” on-board DI/DO/AI/AO and hardware counters (<code>DI0</code>, <code>CNT0</code>, â€¦). Use preset <strong>Built-in HAL (sim)</strong> or Linux plugin. See <strong>HAL I/O</strong> help.</td></tr>
           <tr><td>modbus_rtu</td><td>RS-485 / USB serial Modbus RTU</td></tr>
           <tr><td>modbus_tcp</td><td>Ethernet Modbus TCP</td></tr>
-          <tr><td>modbus_bridge</td><td>RTU â†” TCP gateway tool</td></tr>
-          <tr><td>mqtt</td><td>MQTT broker â€” subscribe/publish per tag <strong>topic</strong></td></tr>
+          <tr><td>modbus_bridge</td><td>RTU ↔ TCP gateway tool</td></tr>
+          <tr><td>bacnet</td><td>BACnet/IP — Who-Is discovery, object browse, present-value read/write (edge appliance)</td></tr>
+          <tr><td>mqtt</td><td>MQTT broker — subscribe/publish per tag <strong>topic</strong></td></tr>
           <tr><td>mqtt_parc</td><td>MQTT Parc / Arduino Opta â€” one driver per <strong>device ID</strong> (ATECC serial or plant <strong>position ID</strong>); broker URL in <strong>System setup</strong>; <strong>Sync tags from device</strong> and <strong>Scan expansions</strong> on the driver card. Health: <strong>OK</strong> when linked, <strong>Not linked</strong> when hub or device offline.</td></tr>
           <tr><td>https</td><td>HTTPS REST â€” GET/POST per tag <strong>URL or path</strong></td></tr>
           <tr><td>nextcentury</td><td>NextCentury Meters API â€” report <code>rt_4510</code> every 15 min; <strong>auto-syncs tags</strong> from each poll (<code>deviceId</code> + <code>totalUsage</code> / <code>temperature</code> / <code>leakActive</code>)</td></tr>
@@ -408,7 +458,8 @@ window.MooreviewHelp = (function () {
         <p><strong>Device templates</strong> (Modbus only, live reload): share one RS-485 driver per COM port. Each <strong>Apply template</strong> uses the <strong>next slave address</strong>. Tag names continue <code>DI1</code>, <code>Q1</code>, â€¦ â€” a second 16-input module adds <code>DI17</code>â€“<code>DI32</code>. JSON templates under <code>src/devices/templates/</code> hot-reload without server restart.</p>
         <p>Only <strong>one</strong> enabled <code>modbus_rtu</code> driver per COM port. <strong>Test</strong> briefly opens the port â€” avoid while runtime is scanning the same COM.</p>
         <p><strong>Refresh ports</strong> rescans USB serial. If the saved port is missing, MooreVIEW may auto-switch to an available port â€” update the driver to match.</p>
-        <p>See <strong>Help â†’ MQTT &amp; HTTPS</strong> for payload templates and REST/MQTT tag addressing.</p>
+        <p>See <strong>Help → MQTT &amp; HTTPS</strong> for payload templates and REST/MQTT tag addressing.</p>
+        <p><strong>BACnet/IP:</strong> Add driver type <code>bacnet</code> on the edge appliance. Use <strong>Discover devices</strong>, then <strong>Browse &amp; import tags</strong>. Tag address: host, device instance, object type/instance, property (default <code>presentValue</code>). See <code>docs/BACNET.md</code>.</p>
         <h4>Bulk add MQTT Parc Opta</h4>
         <p><strong>Drivers â†’ Add Opta Parc devices (bulk)</strong> â€” add one or many <code>mqtt_parc</code> drivers:</p>
         <ul>
@@ -417,7 +468,7 @@ window.MooreviewHelp = (function () {
           <li><strong>Use numeric range</strong> â€” prefix + start + count (legacy numbered fleet)</li>
           <li><strong>Add from Parc registry</strong> â€” devices already seen on MQTT (recommended â€” uses ATECC-based ids automatically)</li>
         </ul>
-        <p>Optionally <strong>Sync tags after add</strong>. Bulk add updates <code>workspace.est.json</code> so drivers survive restart.</p>
+        <p>Optionally <strong>Sync tags after add</strong>. Bulk add updates the workspace archive so drivers survive restart.</p>
         <h4>Position-based driver IDs (hardware change-outs)</h4>
         <p>For permanent plant locations, use a stable <strong>position ID</strong> as the driver id (e.g. <code>mcc1_line3</code>, <code>motor_skid_main</code>) while the underlying <strong>deviceId</strong> stays the ATECC-based MQTT id. On the driver card: <strong>Set position name</strong>, <strong>Replace hardware</strong> (records swap in hardware history), and view recent events. Commission and swap events appear under <strong>Report â†’ MongoDB logs â†’ Hardware history</strong>.</p>
         <p>See <strong>Help â†’ MQTT Parc hub &amp; Opta</strong> for broker setup and commissioning.</p>
@@ -427,9 +478,9 @@ window.MooreviewHelp = (function () {
       id: 'cellular-sims',
       title: 'Cellular SIM management',
       html: `
-        <p>Manage IoT SIM and eSIM inventory from vendor APIs (Hologram, Twilio Super SIM, AT&amp;T, Verizon ThingSpace, T-Mobile, Simetry, and extensible stubs). Open <strong>System setup → Features → Open Cellular SIMs</strong> or <code>/cellular/sims</code>.</p>
+        <p>Manage IoT SIM and eSIM inventory from vendor APIs (Hologram, Twilio Super SIM, AT&amp;T, Verizon ThingSpace, T-Mobile, Simetry, and extensible stubs). Open <strong>Tools &#x2192; Connectivity&#x2026;</strong> for email, SMS, feature toggles, and SIM inventory.</p>
         <h4>Enable</h4>
-        <p>Feature is on when <code>MOOREVIEW_DEPLOYMENT=cloud</code>, <code>MOOREVIEW_CELLULAR_SIMS=1</code> (local <code>.env</code>), or <strong>System setup → Enable Cellular SIM management</strong>.</p>
+        <p>Feature is on when enabled in <strong>System setup &#x2192; Features</strong> access matrix (<code>cellularSims</code>), <code>MOOREVIEW_DEPLOYMENT=cloud</code>, or <code>MOOREVIEW_CELLULAR_SIMS=1</code> in <code>.env</code>.</p>
         <h4>Vendor credentials</h4>
         <table class="help-table">
           <tr><th>Vendor</th><th>Status</th><th>Credentials</th><th>Signup</th></tr>
@@ -454,12 +505,94 @@ window.MooreviewHelp = (function () {
       `,
     },
     {
+      id: 'cmms',
+      title: 'Integrated CMMS',
+      html: `
+        <p>MooreVIEW ships an <strong>integrated CMMS</strong> in the same Node process — work orders and preventive maintenance without a separate TPS CMMS install on the appliance.</p>
+        <h4>Open CMMS</h4>
+        <ul>
+          <li><strong>Top bar &#x2192; CMMS</strong> or <a href="/cmms">/cmms</a></li>
+          <li><strong>Reporting &#x2192; Reports&#x2026;</strong> &#x2192; <strong>Open CMMS</strong> link</li>
+          <li>Cloud SaaS: <strong>/cmms</strong> when tenant CMMS entitlement is enabled</li>
+        </ul>
+        <h4>Tabs</h4>
+        <table class="help-table">
+          <tr><th>Tab</th><th>Purpose</th></tr>
+          <tr><td><strong>Overview</strong></td><td>Open WO count, overdue PM, alarm/PM WO counts</td></tr>
+          <tr><td><strong>Work orders</strong></td><td>Create, assign, complete; assignee from login users</td></tr>
+          <tr><td><strong>Preventive maintenance</strong></td><td>Schedules, next due, generate due work orders</td></tr>
+        </table>
+        <h4>Alarm &#x2192; work order</h4>
+        <p>On alarm transition (inner/outer high/low), the runtime can auto-create one open work order per tag and severity level. Enabled by default on the appliance.</p>
+        <h4>Alarm → work order</h4>
+        <p>When a tag alarm transitions (inner/outer high/low), MooreVIEW can auto-create one open work order per tag/level (<code>source: alarm</code>). This is the <strong>reactive</strong> last line — the condition is already out of limits.</p>
+        <h4>PdM → proactive PM work order</h4>
+        <p>When PdM failure forecast severity is <strong>warning</strong>, <strong>critical</strong>, or <strong>failed</strong>, MooreVIEW auto-creates a <strong>Proactive PM</strong> work order (<code>source: pdm</code>) — fix before breakdown, not after alarm. Configure under <strong>Historian &#x2192; Logger config&#x2026; &#x2192; PdM &#x2192; Proactive CMMS &amp; reports</strong>. One open WO per asset; priority escalates as RUL shortens. Completing the WO can append to PdM asset service history. See <code>docs/pdm/PDM_PROACTIVE_CMMS.md</code>.</p>
+        <h4>External CMMS (MQTT)</h4>
+        <p>To publish alarms to an <em>external</em> CMMS subscriber, use <strong>Alarms &#x2192; Notification users&#x2026; &#x2192; CMMS / MQTT integration</strong> — not the integrated <code>/cmms</code> app. See <code>docs/CMMS_INTEGRATION.md</code>.</p>
+        <h4>Feature gate</h4>
+        <p>Appliance: <strong>System setup &#x2192; Features</strong> access matrix (<code>cmms</code> column). Cloud: tenant CMMS entitlement. When disabled, the top-bar link is hidden and API returns 403.</p>
+        <p>Data: <code>data/cmms.json</code>. Testing checklists: <code>docs/testing/CMMS_USER_TESTING.md</code>.</p>
+      `,
+    },
+    {
+      id: 'cameras',
+      title: 'Cameras & video',
+      html: `
+        <p>IP camera integration for ONVIF cameras (Reolink and others): discovery, live viewing, snapshot archive, vision AI, and HMI operator popups. Open <strong>Tools &#x25BE; &#x2192; Cameras</strong>.</p>
+        <h4>Quick start</h4>
+        <ol>
+          <li>Enable ONVIF (port 8000) and RTSP (554) on each camera.</li>
+          <li><strong>Cameras &#x2192; Settings</strong> — default username/password.</li>
+          <li><strong>Discover</strong> tab — scan network or <strong>Add by IP</strong>; <strong>Probe</strong> fills RTSP and viewer URLs.</li>
+          <li><strong>HMI Setup</strong> — place camera button or overlay tile; bind to inventory entry.</li>
+        </ol>
+        <h4>Camera admin tabs</h4>
+        <table class="help-table">
+          <tr><th>Tab</th><th>Purpose</th></tr>
+          <tr><td><strong>Overview</strong></td><td>Summary counts and health</td></tr>
+          <tr><td><strong>Inventory</strong></td><td>Add/edit cameras; probe, test popup, capture snapshot, run AI infer</td></tr>
+          <tr><td><strong>Detail</strong></td><td>Stream preview, I/O overlays, tag bridge</td></tr>
+          <tr><td><strong>Archive</strong></td><td>GridFS snapshot history (Mongo optional)</td></tr>
+          <tr><td><strong>Events</strong></td><td>Motion / ONVIF events</td></tr>
+          <tr><td><strong>AI history</strong></td><td>Vision inference log</td></tr>
+          <tr><td><strong>Discover</strong></td><td>WS-Discovery and subnet sweep; add by IP</td></tr>
+          <tr><td><strong>System</strong></td><td>go2rtc bridge status</td></tr>
+          <tr><td><strong>Settings</strong></td><td>Credentials, go2rtc, GridFS archive, vision AI backends</td></tr>
+        </table>
+        <h4>Live streaming</h4>
+        <p><strong>go2rtc</strong> (recommended): <code>npm run go2rtc:download</code>, enable in Settings — WebRTC/MSE at <code>/api/cameras/{id}/player</code>. <strong>MJPEG</strong> fallback polls ONVIF snapshots when go2rtc is off.</p>
+        <h4>Vision AI</h4>
+        <p>Optional post-capture, live edge, or ONVIF-motion inference (stub or HTTP backend). Results in Mongo <code>edge_inference_ts</code>; PdM asset id <code>cam:{cameraId}</code>.</p>
+        <p>Full guide: <code>docs/CAMERAS.md</code>. Training lab: <strong>F2 &#x2192; M15</strong>.</p>
+      `,
+    },
+    {
+      id: 'cloud-sims',
+      title: 'Cloud Sims (virtual device lab)',
+      html: `
+        <p><strong>Cloud Sims</strong> is a virtual device lab for MQTT Parc telemetry without physical hardware. Open <strong>Tools &#x25BE; &#x2192; Connectivity&#x2026;</strong> or navigate to <a href="/cloud/sims">/cloud/sims</a>.</p>
+        <h4>Enable</h4>
+        <p>Feature gate: <strong>System setup &#x2192; Features</strong> matrix (<code>cloudSims</code> column), or cloud deployment defaults. Disabled users get 403 or hidden UI.</p>
+        <h4>Use</h4>
+        <ul>
+          <li>Create virtual Parc devices with configurable telemetry templates</li>
+          <li><strong>Seed website demo</strong> — one-click JXCT soil ×4 (<code>dragino_jxct_x4</code>) and pool chemistry (<code>dragino_pool_chem</code>) sims for sales / website demos</li>
+          <li>Types: Opta I/O, <strong>JXCT soil 7-in-1</strong>, <strong>pool chemistry (SEN0711 + SEN0712)</strong>, Modbus registers</li>
+          <li>Exercise MQTT hub, tag sync, and HMI bindings in class or cloud SaaS</li>
+          <li>Pair with Cloud Studio sites for remote uplink demos</li>
+        </ul>
+        <p>CLI: <code>node scripts/seed-website-demo-sims.js</code> · Fixture: <code>st/fixtures/cloud-sims-website-demo.json</code></p>
+        <p>Distinct from <strong>Cellular SIM management</strong> (vendor SIM inventory). See <strong>Help &#x2192; Cellular SIM management</strong>.</p>
+      `,
+    },
+    {
       id: 'mqtt-parc',
       title: 'MQTT Parc hub & Opta',
       html: `
-        <p>MooreVIEW PC is the <strong>central MQTT Parc hub</strong>. Opta firmware (<strong>MooreviewOptaMqttSt</strong>, currently <strong>v2.3.47</strong>) publishes <code>mooreview/v1/{deviceId}/telemetry</code>; the hub stores reports in <code>data/parc.json</code> for tag sync and remote ST. Integrator reference: <code>firmware/arduino-opta-mqtt-st/OPTa_FEATURES.md</code>.</p>
+        <p>MooreVIEW PC is the <strong>central MQTT Parc hub</strong>. Opta firmware (<strong>mooreVIEWOptaMqttSt</strong>, currently <strong>v2.3.69</strong>) publishes <code>mooreview/v1/{deviceId}/telemetry</code>; the hub stores reports in <code>data/parc.json</code> for tag sync and remote ST. Integrator reference: <code>firmware/arduino-opta-mqtt-st/OPTa_FEATURES.md</code>.</p>
         <h4>Firmware vs Parc deploy</h4>
-        <p><strong>Parc deploy</strong> (<code>put_program</code> over MQTT) updates the ST program and NV storage only â€” it does <strong>not</strong> flash the Arduino sketch. After pulling firmware changes from git, open Arduino IDE and <strong>Upload</strong> <code>MooreviewOptaMqttSt.ino</code> again. Verify with GET <code>http://&lt;opta-ip&gt;/api/status</code>: <code>firmwareVersion</code> should match <code>mv_version.h</code> (e.g. <strong>2.3.61</strong>).</p>
+        <p><strong>Parc deploy</strong> (<code>put_program</code> over MQTT) updates the ST program and NV storage only — it does <strong>not</strong> flash the Arduino sketch. After pulling firmware changes from git, open Arduino IDE and <strong>Upload</strong> <code>mooreVIEWOptaMqttSt.ino</code> again. Verify with GET <code>http://&lt;opta-ip&gt;/api/status</code>: <code>firmwareVersion</code> should match <code>mv_version.h</code> (e.g. <strong>2.3.69</strong>).</p>
         <h4>ATECC608 device identity</h4>
         <p>On boot, Opta firmware reads the on-board <strong>ATECC608B</strong> serial (via <strong>ArduinoECCX08</strong>) and sets <strong>deviceId</strong> to <code>opta_</code> + 18 hex digits (e.g. <code>opta_012355b52d66a109ee</code>). The serial is shown on <strong>/setup</strong> and <code>/api/status</code> but is <strong>not</strong> included in MQTT telemetry. MooreVIEW stores the serial in the Parc registry and on <code>mqtt_parc</code> drivers from first-seen telemetry, bulk-add from registry, or driver config <code>ateccSerial</code>.</p>
         <h4>Global site key (P2P globals)</h4>
@@ -518,9 +651,22 @@ window.MooreviewHelp = (function () {
         <p>MooreVIEW sends <code>sync_time</code> on <strong>Connect</strong> and daily for linked Opta drivers. Firmware uses a <strong>software wall clock</strong> (immediate) and queues HAL RTC when safe â€” <code>put_program</code> does not sync time. Serial <code>[MV â€¦]</code> timestamps show wall clock after sync; before sync, uptime format (<code>00:04:14</code> = 4 min since boot).</p>
         <h4>Serial debug</h4>
         <p>USB serial <strong>115200</strong>. Always-on milestones use <code>[MV*]</code> (boot, MQTT subscribe, cmd rx) even when verbose debug is off. Look for <code>MQTT subscribed cmd+config</code> after boot.</p>
+        <h4>Dragino RS485-NB — RS485→MQTT gateway (MV Cloud)</h4>
+        <p>Use <strong>Dragino RS485-NB</strong> as a <strong>cellular Modbus gateway</strong> (polled, not passthrough): bind any <strong>modbus_rtu</strong> device template to the gateway driver and MooreVIEW decodes Dragino <code>Payload</code> hex into the same named tags (<code>EC_US_CM</code>, etc.) as a local RS485 driver would.</p>
+        <ol>
+          <li><code>POST /api/parc/dragino-gateway/bind-preset</code> — <code>{ "deviceId": "dragino_ec_01", "presetId": "dfrobot_sen0706_ec", "slaveId": 1 }</code></li>
+          <li>JXCT soil 7-in-1: <code>{ "deviceId": "dragino_jxct_01", "presetId": "jxct_npk_jxbs3001_dragino", "slaveId": 1 }</code></li>
+          <li>JXCT Ã—4 on one Dragino: <code>{ "deviceId": "dragino_jxct_x4", "presetId": "jxct_npk_jxbs3001_dragino_x4" }</code> â€” configure probes to Modbus addresses 1â€“4 first</li>
+          <li>Pool chemistry (SEN0711 + SEN0712): <code>{ "deviceId": "dragino_pool_chem", "presetId": "dfrobot_pool_chemistry_dragino" }</code> â€” SEN0711 slave 1, SEN0712 slave 2, 4800 baud</li>
+          <li><code>POST /api/parc/dragino-gateway/plan</code> — returns AT commands + MQTT topics for the bound template</li>
+          <li>Flash Dragino via BLE with generated <code>AT+COMMAND*</code> lines (match template baud/slave)</li>
+          <li>Parc hub converts uplink → named Modbus tags on the <code>mqtt_parc</code> driver</li>
+        </ol>
+        <p><strong>Passthrough:</strong> Dragino cannot tunnel synchronous Modbus RTU to cloud (NB-IoT poll interval). Use template binding instead.</p>
+        <p>Full guide: <code>docs/DRAGINO_PARC_CLOUD.md</code>. For Opta pump control + ST, use <strong>LilyGO T-ETH cellular gateway</strong> instead.</p>
         <h4>Quick start (PC)</h4>
         <ol>
-          <li>Flash <strong>MooreviewOptaMqttSt</strong> v2.3.41+ via Arduino IDE; set broker on <code>/setup</code>.</li>
+          <li>Flash <strong>mooreVIEWOptaMqttSt</strong> v2.3.41+ via Arduino IDE; set broker on <code>/setup</code>.</li>
           <li>Start Mosquitto on the PC (<code>npm run mqtt:start</code>) â€” broker must listen on your <strong>LAN IP</strong>, not only localhost.</li>
           <li><strong>System setup â†’ General</strong> â€” enable <strong>MQTT Parc hub</strong>, set <strong>broker URL</strong>, enable <strong>Remote ST execution</strong> â†’ <strong>Apply all settings</strong>.</li>
           <li><strong>Drivers</strong> â€” template <strong>Arduino Opta â€” MQTT Parc ST runtime</strong> or <strong>Add Opta Parc devices (bulk)</strong>. <strong>deviceId</strong> must match firmware.</li>
@@ -590,6 +736,45 @@ window.MooreviewHelp = (function () {
       `,
     },
     {
+      id: 'residential-pool-spa',
+      title: 'Residential pool & spa (home Wi-Fi)',
+      html: `
+        <p>Unique MooreVIEW home-pad app: <strong>Pentair IntelliFlo + IntelliChlor on one RS-485</strong>, optional Waveshare satellites on <strong>home Wi-Fi</strong>, IOT-LINK (or a small PC) as the hub. Seed with <code>MOOREVIEW_POOL_PROFILE=residential-spa</code> and <code>deploy/iot-link/.env.residential-pool-spa.example</code>.</p>
+        <h4>Shared RS-485 (yes)</h4>
+        <p>IntelliFlo (addr 96) and IntelliChlor speak Pentair automation on the <em>same</em> twisted pair — <strong>9600 8N1</strong>. One <code>pentair_bus</code> driver; tags use <code>deviceClass</code> <code>intelliflo</code> vs <code>intellichlor</code>. Daisy-chain A/B pump ↔ cell ↔ IOT-LINK <strong>PORT B</strong>. Do <strong>not</strong> hang DFRobot SEN0711/SEN0712 on this cable (those are Modbus at 4800).</p>
+        <table class="help-table">
+          <tr><th>Device</th><th>Control</th><th>Monitor</th></tr>
+          <tr><td>IntelliFlo VS/VSF</td><td><code>PUMP_RUN_CMD</code>, <code>PUMP_RPM_CMD</code>, <code>IFLO_REMOTE_CMD</code></td><td>RPM, watts, running</td></tr>
+          <tr><td>IntelliChlor (SWG)</td><td><code>IC_PERCENT_CMD</code> (0–100%), <code>IC_TAKEOVER_CMD</code></td><td>salt ppm, water °F, low/high salt</td></tr>
+        </table>
+        <h4>Home Wi-Fi (Waveshare 1CH-U)</h4>
+        <ol>
+          <li>Join AP <code>MooreVIEW-Relay1CH</code> / <code>mooreview</code></li>
+          <li>Open <code>http://192.168.4.1:8080/setup</code></li>
+          <li>Enter <strong>home Wi-Fi name + password</strong></li>
+          <li>Hub address = IOT-LINK LAN IP (Mosquitto <code>:1883</code>)</li>
+          <li>Unique <code>deviceId</code> (<code>ws_relay_spa</code>, <code>ws_relay_lz1</code>, …) → <strong>Save &amp; join home Wi-Fi</strong></li>
+        </ol>
+        <p>Roles: <code>spa_jets</code> → <code>SPA_JETS</code>, <code>light_z1</code>…, <code>dose_acid</code>. IntelliFlo does not need a Waveshare pump pilot. Guide: <code>docs/RESIDENTIAL_POOL_SPA.md</code>.</p>
+        <p>Need four IntelliValves on the same bus? Use product <strong>Res-Pool-Link</strong> (<code>MOOREVIEW_PRODUCT=res-pool-link</code>).</p>
+      `,
+    },
+    {
+      id: 'res-pool-link',
+      title: 'Res-Pool-Link (standalone pool & spa)',
+      html: `
+        <p>Standalone ESP32 pad (no IOT-LINK): home Wi-Fi, DFRobot SEN0711/SEN0712, IntelliFlo read + setup, IntelliChlor status, and <strong>four backwash valves</strong>. Flash <code>firmware/esp32-res-pool-link</code>. Guide: <code>docs/RES_POOL_LINK.md</code>.</p>
+        <table class="help-table">
+          <tr><th>Ch</th><th>Tag</th><th>Role</th><th>Filter / BW / rinse</th></tr>
+          <tr><td>R1</td><td><code>FILT_INLET</code></td><td>Filter inlet</td><td>ON / ON / ON</td></tr>
+          <tr><td>R2</td><td><code>FILT_OUTLET</code></td><td>Filter outlet</td><td>ON / OFF / ON</td></tr>
+          <tr><td>R3</td><td><code>BW_WASTE</code></td><td>Backwash waste</td><td>OFF / ON / ON</td></tr>
+          <tr><td>R4</td><td><code>BW_SPARE</code></td><td>Spare (optional)</td><td>OFF / OFF / OFF</td></tr>
+        </table>
+        <p>Join AP <code>MooreVIEW-ResPool</code> / <code>mooreview</code> → <code>http://192.168.4.1:8080/</code> → home Wi-Fi. Pentair 9600 and DFRobot 4800 are <strong>two RS-485 pairs</strong>. MQTT is optional; the pad keeps running without it. Three valves are enough; R4 may stay unwired.</p>
+      `,
+    },
+    {
       id: 'waveshare',
       title: 'Waveshare 8 DI / 8 DO',
       html: `
@@ -602,6 +787,21 @@ window.MooreviewHelp = (function () {
           <li><strong>Start</strong></li>
         </ol>
         <p>Modbus mapping: discrete inputs 0–7 (DI), coils 0–7 (Q). IOT-LINK: wire RS-485 to terminal <strong>PORT A</strong> (pins 5–6); do not use <code>/dev/ttyLP0</code> (system console). See Waveshare wiki for hardware details.</p>
+      `,
+    },
+    {
+      id: 'waveshare-relay-1ch',
+      title: 'Waveshare ESP32-S3-Relay-1CH-U (pool satellite)',
+      html: `
+        <p>DIN-rail <strong>1-channel</strong> Wi-Fi relay. IOT-LINK runs pool ST; this board is remote I/O for <strong>one</strong> load (dose pump, heater enable, one light zone, or a pump-contactor coil). Prefer the <strong>-U</strong> SKU + SMA antenna at the pad.</p>
+        <ol>
+          <li>Flash <code>firmware/waveshare-esp32s3-relay-parc</code> (Arduino: ESP32S3 Dev Module, USB CDC on)</li>
+          <li>Join AP <code>MooreVIEW-Relay1CH</code> / <code>mooreview</code> → <code>http://192.168.4.1:8080/setup</code></li>
+          <li>Enter <strong>home Wi-Fi</strong> name + password, MQTT hub (IOT-LINK LAN IP), unique <code>deviceId</code></li>
+          <li><strong>Drivers</strong> → template <strong>Waveshare ESP32-S3-Relay-1CH-U</strong></li>
+          <li>Bind a pool tag (<code>DOSE_ACID</code>, <code>LIGHT_Z1</code>, <code>SPA_JETS</code>, …) to this driver, channel <code>R1</code> — or set <code>MOOREVIEW_POOL_WAVESHARE_RELAYS</code> and re-seed</li>
+        </ol>
+        <p><strong>Effective use:</strong> one board per load; pilot a contactor (do not switch a filter-pump motor on the 10&nbsp;A contact); fail-safe is OFF on MQTT loss (correct for dose/heater/lights). Aux DI on SH1.0 GPIO2 → <code>I1</code> / <code>POOL_FLOW_SW</code>. Guide: <code>docs/WAVESHARE_ESP32S3_RELAY_POOL.md</code>.</p>
       `,
     },
     {
@@ -653,9 +853,10 @@ window.MooreviewHelp = (function () {
         </table>
         <ol>
           <li>Power 5â€“24 VDC (12 V typical) and wire RS-485 A/B</li>
-          <li><strong>Drivers</strong> â†’ template <strong>JXCT JXBS-3001-NPK-RS â€” soil 7-in-1 sensor</strong></li>
+          <li><strong>Local RS485:</strong> <strong>Drivers</strong> â†’ template <strong>JXCT JXBS-3001-NPK-RS â€” soil 7-in-1 sensor</strong></li>
+          <li><strong>Remote (Dragino NB-IoT):</strong> bind template <strong>JXCT JXBS-3001-NPK-RS â€” soil 7-in-1 via Dragino (Modbusâ†’MQTT)</strong> (one probe) or <strong>Ã—4</strong> (four probes, slaves 1â€“4, tags <code>S1_*</code>â€¦<code>S4_*</code>)</li>
           <li>Default <strong>9600 8N1</strong>, slave <strong>1</strong></li>
-          <li><strong>Apply device template</strong> â†’ <strong>Start</strong> runtime</li>
+          <li><strong>Apply device template</strong> â†’ <strong>Start</strong> runtime (local) or wait for Dragino uplink â†’ <strong>Sync tags from device</strong> (cloud)</li>
         </ol>
       `,
     },
@@ -690,7 +891,11 @@ window.MooreviewHelp = (function () {
           <tr><td>DFRobot SEN0712 â€” RS485 residual chlorine probe</td><td>SEN0712</td><td><code>CL_MG_L</code></td></tr>
           <tr><td>DFRobot SEN0711 â€” RS485 ammonia / pH probe</td><td>SEN0711</td><td><code>NH3_MG_L</code>, <code>NH3_PH</code>, <code>NH3_TEMP_C</code></td></tr>
           <tr><td>DFRobot SEN0681 â€” RS485 dissolved oxygen probe</td><td>SEN0681</td><td><code>DO_SAT_PCT</code>, <code>DO_MG_L</code>, <code>DO_TEMP_C</code></td></tr>
+          <tr><td><strong>Pool chemistry (local RS-485)</strong> (SEN0711 + SEN0712)</td><td>SEN0711 + SEN0712</td><td><code>PH_AI</code>, <code>ORP_AI</code> (CL2 ppm), <code>WATER_TEMP_C</code>, <code>NH3_MG_L</code></td></tr>
+          <tr><td><strong>Pool chemistry via Dragino</strong> (SEN0711 + SEN0712)</td><td>SEN0711 + SEN0712</td><td><code>PH_PV</code>, <code>CL_PV</code>, <code>WATER_TEMP_C</code>, <code>NH3_MG_L</code></td></tr>
         </table>
+        <p><strong>Pool chemistry on IOT-LINK:</strong> template <strong>DFRobot pool chemistry — SEN0711 pH + SEN0712 chlorine (RS-485)</strong>, or set <code>MOOREVIEW_POOL_MODBUS_CHEM=true</code> (PORT B, 4800 8N1). SEN0711 slave <strong>1</strong> → <code>PH_AI</code>; SEN0712 slave <strong>2</strong> → <code>ORP_AI</code> (pool ST already uses ORP_* as CL2 ppm). Pair with Waveshare 1CH satellites for <code>DOSE_ACID</code> / <code>DOSE_CL</code>. Do <strong>not</strong> share this cable with Pentair IntelliFlo / IntelliChlor (9600 automation vs 4800 Modbus). Residential pool &amp; spa uses IntelliChlor on the Pentair bus and leaves these probes off unless you add a second adapter.</p>
+        <p><strong>Pool chemistry monitor (Dragino):</strong> template <strong>DFRobot pool chemistry — SEN0711 pH + SEN0712 chlorine via Dragino</strong>. Same slaves/baud. Bind with <code>presetId: "dfrobot_pool_chemistry_dragino"</code> — tags match cloud HMI (<code>PH_PV</code>, <code>CL_PV</code>).</p>
         <ol>
           <li>Wire RS-485 A/B and 10â€“30 VDC power per probe manual</li>
           <li><strong>Drivers</strong> â†’ pick the probe template â†’ set COM port and slave ID</li>
@@ -699,6 +904,30 @@ window.MooreviewHelp = (function () {
         </ol>
         <p>Integer registers store scaled integers (Ã—10 or Ã—100); tag <strong>scale</strong> converts to engineering units. SEN0681 uses IEEE <strong>float32</strong> (saturation float 1.0 = 100%, tag scale 100 â†’ percent).</p>
         <p>Several probes on one bus: assign each a unique slave ID, then add one Modbus RTU driver per probe (or one driver with per-tag slave in the <strong>Tags</strong> Addr column).</p>
+        <p><strong>DFRobot Edge101 (DFR0886):</strong> industrial ESP32 with isolated RS-485 and Ethernet. Flash <code>firmware/dfrobot-edge101-parc</code> and apply template <strong>DFRobot Edge101 — MQTT Parc</strong>. See the Edge101 device guide.</p>
+      `,
+    },
+    {
+      id: 'dfrobot-edge101',
+      title: 'DFRobot Edge101 (DFR0886)',
+      html: `
+        <p>Industrial <strong>ESP32</strong> IoT controller: isolated RS-485, isolated CAN, 10/100 Ethernet (IP101), Gravity I2C/GPIO, optional mini-PCIe 4G. Wiki: <code>https://wiki.dfrobot.com/dfr0886/</code>.</p>
+        <p>MooreVIEW firmware treats it as an <strong>MQTT Parc</strong> field controller — Ethernet WAN (Wi-Fi fallback) plus Modbus master for DFRobot water probes. It does <strong>not</strong> run on-device ST (use Opta or <code>cellular-parc-st</code> for that).</p>
+        <ol>
+          <li>Flash <code>firmware/dfrobot-edge101-parc</code> (Arduino-ESP32 3.x; board <strong>Edge101 IOT Controller</strong> or <strong>ESP32 Dev Module</strong>)</li>
+          <li>Join AP <code>MooreVIEW-Edge101</code> / <code>mooreview</code> → <code>http://192.168.4.1:8080/setup</code></li>
+          <li>Set a unique <code>deviceId</code>. Plug Ethernet <em>or</em> enter 2.4 GHz Wi-Fi</li>
+          <li>Wire SEN0711 slave <strong>1</strong> + SEN0712 slave <strong>2</strong> on the isolated RS-485 pair @ <strong>4800 8N1</strong></li>
+          <li><strong>Drivers</strong> → template <strong>DFRobot Edge101 — MQTT Parc</strong></li>
+        </ol>
+        <table class="help-table">
+          <tr><th>Tag</th><th>Source</th></tr>
+          <tr><td><code>PH_AI</code>, <code>WATER_TEMP_C</code>, <code>NH3_MG_L</code></td><td>SEN0711</td></tr>
+          <tr><td><code>ORP_AI</code></td><td>SEN0712 free chlorine ppm</td></tr>
+          <tr><td><code>I1</code> / <code>I2</code></td><td>Onboard button GPIO38 / header GPIO37</td></tr>
+          <tr><td><code>ETH_LINK</code>, <code>CHEM_OK</code></td><td>Link and probe health</td></tr>
+        </table>
+        <p>Do not reuse GPIO0 or GPIO2 (Ethernet PHY). CAN and 4G UART are on the board but unused in firmware 0.1. Guide: <code>firmware/dfrobot-edge101-parc/README.md</code>.</p>
       `,
     },
     {
@@ -773,22 +1002,27 @@ window.MooreviewHelp = (function () {
       id: 'ezmeter-dds-rgb',
       title: 'EZ Meter DDS-RGB 2.025',
       html: `
-        <p><strong>EZ Meter</strong> polyphase revenue meter <code>DDS-RGB 2.025</code> (RGB firmware v1.600): per-phase and summed energy, voltage, current, real power, frequency, and power factor on <strong>RS-485 Modbus RTU</strong> (FC03 holding registers 40001+).</p>
+        <p><strong>EZ Meter</strong> polyphase revenue meter <code>DDS-RGB 2.025</code> (RGB firmware v1.600): full Modbus RTU map — per-phase and summed energy, voltage, current, real/apparent power, frequency, power factor, plus read-only control/status registers.</p>
         <table class="help-table">
           <tr><th>Tag prefix</th><th>Registers</th><th>Notes</th></tr>
-          <tr><td><code>DDS_WH_*</code></td><td>40001â€“40022</td><td>32-bit acc. Wh / VAh (Ã—10)</td></tr>
-          <tr><td><code>DDS_V_*</code>, <code>DDS_I_*</code></td><td>40025+ per phase</td><td>V and A (Ã—0.1)</td></tr>
-          <tr><td><code>DDS_W_*</code></td><td>40027, 40033, 40039</td><td>Signed real power W (Ã—0.1)</td></tr>
-          <tr><td><code>DDS_HZ_*</code>, <code>DDS_PF_*</code></td><td>40029â€“40042</td><td>Hz (Ã—0.1), PF (Ã—0.01)</td></tr>
-          <tr><td><code>DDS_VA_*</code></td><td>40043â€“40047</td><td>Optional apparent VA (Ã—0.1)</td></tr>
+          <tr><td><code>DDS_WH_*</code>, <code>DDS_VAH_*</code></td><td>40001–40023</td><td>32-bit acc. Wh / VAh (×10)</td></tr>
+          <tr><td><code>DDS_V_*</code>, <code>DDS_I_*</code></td><td>40025–40038</td><td>Per-phase V and A (×0.1)</td></tr>
+          <tr><td><code>DDS_W_*</code>, <code>DDS_VA_*</code></td><td>40027–40047</td><td>Signed W / VA (×0.1)</td></tr>
+          <tr><td><code>DDS_HZ_*</code>, <code>DDS_PF_*</code></td><td>40029–40042</td><td>Hz (×0.1), PF (×0.01)</td></tr>
+          <tr><td><code>DDS_CTL_*</code></td><td>41011–41034</td><td>Serial, comm, model, customer ID (read-only)</td></tr>
+          <tr><td><code>MECH_PQ_*</code></td><td>derived (ST)</td><td>Facility PQ alarms — load <code>logic/ezmeter_facility_pq.st</code></td></tr>
         </table>
         <ol>
           <li>Wire RS-485 A/B to the meter comm port</li>
-          <li><strong>Drivers</strong> â†’ template <strong>EZ Meter DDS-RGB 2.025 â€” polyphase meter (Modbus RTU)</strong></li>
-          <li>Default <strong>9600 8N1</strong>, slave <strong>1</strong> â€” confirm baud and address on the meter display or full manual</li>
-          <li>Set COM port â†’ <strong>Apply device template</strong> â†’ <strong>Start</strong> runtime</li>
+          <li><strong>Drivers</strong> → template <strong>EZ Meter DDS-RGB 2.025 — polyphase meter (Modbus RTU, full map)</strong></li>
+          <li>Then apply <strong>EZ Meter — facility PQ derived measurement set</strong> (adds <code>MECH_PQ_*</code> tags + ST program)</li>
+          <li>Default <strong>9600 8N1</strong>, slave <strong>1</strong> — confirm on meter display</li>
+          <li>Set COM port → <strong>Apply device template</strong> → add ST program <code>logic/ezmeter_facility_pq.st</code> for facility PQ</li>
+          <li>Campus projects: set <code>settings.assistedLiving.facility.driver</code> to <code>ezmeter</code> and configure <code>settings.assistedLiving.ezMeter</code> thresholds</li>
+          <li>Standalone PQ project: <code>node scripts/facilities/generate-ezmeter-pq-est.js</code></li>
+          <li><strong>Start</strong> runtime</li>
         </ol>
-        <p>Driver id <code>dds_rgb</code>. One dedicated driver per meter (not a shared multi-slave bus template).</p>
+        <p>Driver id <code>dds_rgb</code>. One dedicated driver per meter. No THD/harmonic registers on RGB v1.600 — basic facility PQ only (voltage, PF, frequency, imbalance, phase loss).</p>
       `,
     },
     {
@@ -905,6 +1139,20 @@ HTTPS full:    { "url": "https://other.host/status", "payloadTemplate": "bool" }
       `,
     },
     {
+      id: 'bacnet',
+      title: 'BACnet/IP (edge)',
+      html: `
+        <p>BACnet/IP is available on the <strong>edge appliance</strong> only (MVP Suite / IoT-Link on the BMS VLAN). Cloud SaaS does not run UDP Who-Is on tenant networks — import tags on the edge, then uplink via Parc or site agent.</p>
+        <ol>
+          <li><strong>Drivers</strong> → add driver type <code>bacnet</code>.</li>
+          <li><strong>Discover devices</strong> (Who-Is on UDP 47808) — or use <strong>BACnet device builder</strong> for fleet profiles without a fixed device count.</li>
+          <li><strong>Browse &amp; import tags</strong> — single device — or builder <strong>Discover &amp; import tags</strong> for all matching devices.</li>
+          <li>Keep <strong>Allow writes</strong> off until ownership with the incumbent BAS is agreed.</li>
+        </ol>
+        <p>MS/TP serial trunks need an external BACnet/IP router — not native on the appliance RS-485 Modbus port. Full guide: <code>docs/BACNET.md</code>. Training lab: <strong>F2 → M4</strong>.</p>
+      `,
+    },
+    {
       id: 'modbus',
       title: 'Modbus tools',
       html: `
@@ -985,7 +1233,7 @@ HTTPS full:    { "url": "https://other.host/status", "payloadTemplate": "bool" }
         <p>See <strong>Help â†’ MongoDB logging</strong> for connection, seed demo data, and purge.</p>
         <h4>Load PdM view</h4>
         <ol>
-          <li>Configure assets under <strong>Historian â†’ Logger configâ€¦</strong> (PdM assets section) or <strong>System setup â†’ PdM</strong> (JSON map)</li>
+          <li>Configure assets under <strong>Historian &#x2192; PdM&#x2026;</strong> (Logger config, PdM assets section)</li>
           <li>Set <strong>Source</strong> to <strong>PdM (SCADA + Edge)</strong></li>
           <li>Pick an <strong>Asset</strong> from the dropdown</li>
           <li>Choose <strong>Range</strong> or custom <strong>From</strong> / <strong>To</strong> (same 1 hour â€“ 30 day window as archive load)</li>
@@ -1033,8 +1281,8 @@ HTTPS full:    { "url": "https://other.host/status", "payloadTemplate": "bool" }
         <h4>Auto-start runtime</h4>
         <p><strong>Auto-start runtime on boot</strong> starts driver polling and historian logging when MooreVIEW launches. When unchecked, use <strong>Program â†’ Start</strong> manually. API drivers (NextCentury, etc.) do not connect until the runtime starts or you connect them from the Drivers page.</p>
         <h4>PdM assets</h4>
-        <p>Map asset ids (e.g. <code>pump-101</code>) to one or more SCADA tag ids for combined PdM trends. Use <strong>New</strong>, pick tags in the multi-select, <strong>Save asset</strong>, or <strong>Delete</strong>. The table lists saved assets; <strong>Edit</strong> loads a row into the form. The same map is available as JSON on <strong>System setup â†’ PdM</strong>.</p>
-        <p>Archive maintenance (90-day demo seed, purge range/all) remains under <strong>Project â†’ System setup â†’ Logging</strong> â€” see <strong>Help â†’ MongoDB logging</strong>.</p>
+        <p>Map asset ids (e.g. <code>pump-101</code>) to one or more SCADA tag ids for combined PdM trends. Use <strong>New</strong>, pick tags in the multi-select, <strong>Save asset</strong>, or <strong>Delete</strong>. The table lists saved assets; <strong>Edit</strong> loads a row into the form. Open via <strong>Historian &#x2192; PdM&#x2026;</strong>.</p>
+        <p>Archive maintenance (90-day demo seed, purge range/all) is under <strong>Historian â†’ Maintenanceâ€¦</strong> â€” see <strong>Help â†’ MongoDB logging</strong>.</p>
       `,
     },
     {
@@ -1070,7 +1318,7 @@ HTTPS full:    { "url": "https://other.host/status", "payloadTemplate": "bool" }
       id: 'mongo-logging',
       title: 'MongoDB logging',
       html: `
-        <p>MongoDB stores long-term historian samples. Connection, <strong>Hist</strong> tags, sample interval, and auto-start are under <strong>Historian â†’ Logger configâ€¦</strong>. Live in-memory buffer size is in <strong>Pen configâ€¦</strong>. Open <strong>Project â†’ System setupâ€¦ â†’ Logging</strong> for archive maintenance tools.</p>
+        <p>MongoDB stores long-term historian samples. Connection, <strong>Hist</strong> tags, sample interval, and auto-start are under <strong>Historian â†’ Logger configâ€¦</strong>. Live in-memory buffer size is in <strong>Pen configâ€¦</strong>. Demo seed and archive purge are under <strong>Historian â†’ Maintenanceâ€¦</strong>.</p>
         <h4>Connection</h4>
         <p>Configure URI, database, SCADA collection, Edge AI collection, and sample interval in <strong>Logger configâ€¦</strong>, then click <strong>Save logger settings</strong>. Environment variables (<code>MONGODB_URI</code>, <code>MONGODB_DB</code>, etc.) apply when the URI field is empty on the server.</p>
         <table class="help-table">
@@ -1101,31 +1349,42 @@ HTTPS full:    { "url": "https://other.host/status", "payloadTemplate": "bool" }
           <li><strong>Purge all</strong> â€” delete all <code>pen_sample</code> and <code>pen_selection</code> documents (confirmation required)</li>
         </ul>
         <p>Purge does not clear the in-memory historian buffer â€” use <strong>Historian â†’ Clear buffer</strong> for that.</p>
+        <h4>Cloud fleet archive (7-day hot â†’ zstd)</h4>
+        <p>Production SaaS deployments may run a two-server layout: MongoDB holds <strong>0â€“7 days</strong> of hot <code>pen_sample</code> data on cloud server 1, then a scheduled job exports hourly <strong>zstd JSONL</strong> blobs to an archive server (no Mongo on server 2). Appliances and single-site MVP Suite installs use local Mongo or the in-memory buffer only â€” archive export is optional cloud infrastructure.</p>
+        <p>Full pipeline, indexes, and env vars: <code>docs/ARCHIVE_EXPORT.md</code>. Capacity planning: <code>docs/marketing/MooreVIEW-Infrastructure-Projections.md</code>.</p>
       `,
     },
     {
       id: 'pdm-predictive',
       title: 'PdM (predictive maintenance)',
       html: `
-        <p><strong>PdM</strong> combines SCADA historian tags with <strong>edge AI</strong> inference to build time-windowed features, trend health, and a <strong>failure forecast</strong> (remaining useful life estimate). Open <strong>Project â†’ System setupâ€¦ â†’ PdM</strong>.</p>
+        <p><strong>PdM</strong> combines SCADA historian tags with <strong>edge AI</strong> inference to build time-windowed features, trend health, and a <strong>failure forecast</strong> (remaining useful life estimate). When the forecast shows <strong>pending failure</strong>, MooreVIEW can auto-issue a <strong>proactive CMMS PM work order</strong> — the core premise is <strong>proactive, not reactive</strong>. Open <strong>Historian &#x2192; Logger config&#x2026; &#x2192; PdM</strong>.</p>
         <h4>Prerequisites</h4>
         <ul>
-          <li>MongoDB URI configured in <strong>Logger configâ€¦</strong> (SCADA collection + Edge AI collection)</li>
-          <li>Asset â†’ SCADA tag map in <strong>Logger configâ€¦</strong> (PdM assets) or <strong>System setup â†’ PdM</strong></li>
-          <li>SCADA samples in MongoDB (runtime with <strong>Hist</strong> tags enabled, or demo seed / motor simulation)</li>
-          <li>Edge inference documents (from Parc devices reporting <code>edgeAi</code>, or <strong>Simulate motor start / cap failure</strong>)</li>
+          <li>MongoDB URI configured in <strong>Logger config&#x2026;</strong> (SCADA collection + Edge AI collection)</li>
+          <li>Asset setup in <strong>PdM</strong> tab — motor type (pump/fan/compressor), location class, install date, service history</li>
+          <li>SCADA samples in MongoDB (runtime with <strong>Hist</strong> tags, <strong>Seed demo data</strong>, or motor simulation)</li>
+          <li>Edge inference documents (Parc <code>edgeAi</code>, or demo seed)</li>
         </ul>
+        <h4>Asset setup &amp; demo seed</h4>
+        <p>Configure each asset with motor type, application, configuration (simplex/duplex), location class, and optional service history JSON. <strong>Suggest tags</strong> maps SCADA pens from motor type. <strong>Seed demo data (selected asset)</strong> writes edge inference + pen samples for 30&#x2013;360 days, builds feature windows, and runs proactive CMMS check when forecast warrants.</p>
         <h4>PdM settings</h4>
         <table class="help-table">
           <tr><th>Field</th><th>Purpose</th></tr>
           <tr><td><strong>Window size (minutes)</strong></td><td>Align SCADA pen samples and edge scores into fixed windows (default 5)</td></tr>
-          <tr><td><strong>Health failure threshold</strong></td><td>Health index (0â€“1) below which the asset is considered failed (default 0.3)</td></tr>
+          <tr><td><strong>Health failure threshold</strong></td><td>Health index (0&#x2013;1) below which the asset is considered failed (default 0.3)</td></tr>
           <tr><td><strong>Features collection</strong></td><td>MongoDB collection for built feature rows (default <code>pdm_features</code>)</td></tr>
-          <tr><td><strong>Nightly feature batch</strong></td><td>When enabled, rebuilds features for all mapped assets on a schedule</td></tr>
-          <tr><td><strong>Batch interval (hours)</strong></td><td>Hours between automatic batch runs (default 24)</td></tr>
-          <tr><td><strong>Asset â†’ SCADA tag map</strong></td><td>JSON object on <strong>PdM</strong> tab, or add/edit/delete in <strong>Historian â†’ Logger configâ€¦</strong> â€” e.g. <code>{"pump-101":["SEED_AI1","SEED_AI2"]}</code></td></tr>
+          <tr><td><strong>Nightly feature batch</strong></td><td>Rebuilds features, runs proactive CMMS check, optional scheduled PdM PDFs</td></tr>
+          <tr><td><strong>Demo seed days</strong></td><td>30&#x2013;360 days for <strong>Seed demo data</strong></td></tr>
         </table>
-        <p><strong>Save PdM settings</strong> writes <code>pdm</code> to <code>data/settings.json</code>. <strong>Build features now</strong> aligns the last 7 days for every asset in the map. Status line shows batch enabled/disabled and asset count.</p>
+        <h4>Proactive CMMS &amp; reports</h4>
+        <ul>
+          <li><strong>Issue CMMS PM on pending PdM failure</strong> — auto WO when forecast warning/critical (<code>cmms.autoWorkOrdersFromPdm</code>)</li>
+          <li><strong>Append service history when PM WO completed</strong> — closes the PdM feedback loop</li>
+          <li><strong>Scheduled PdM PDF reports</strong> — stored in GridFS with nightly batch</li>
+          <li><strong>Run proactive CMMS check</strong> / <strong>Download PdM PDF</strong> — manual actions</li>
+        </ul>
+        <p><strong>Save PdM settings</strong> writes <code>pdm</code> and <code>cmms</code> proactive flags to <code>data/settings.json</code>.</p>
         <h4>Edge AI ingest</h4>
         <p>Parc MQTT telemetry and <code>POST /api/parc/report</code> automatically log edge results when the JSON body includes <code>edgeAi</code> â€” either a single object or an array:</p>
         <pre>{
@@ -1139,15 +1398,17 @@ HTTPS full:    { "url": "https://other.host/status", "payloadTemplate": "bool" }
   }
 }</pre>
         <p>Documents are stored in the <strong>Edge AI collection</strong> (<code>edge_inference</code> by default).</p>
-        <h4>Motor start simulation</h4>
-        <p><strong>Simulate motor start / cap failure</strong> seeds ~90 days of degrading motor start times for asset <code>motor-202</code> (model <code>single-phase-start-v1</code>): edge inference docs plus SCADA tags <code>MOTOR_START_MS</code>, <code>MOTOR_CURRENT</code>, <code>LINE_VOLTAGE</code>. The asset is added to your tag map automatically.</p>
-        <h4>View trends and forecast</h4>
+        <h4>Motor start simulation (legacy lab)</h4>
+        <p><strong>Simulate motor start / cap failure</strong> seeds degrading motor start times for asset <code>motor-202</code> (model <code>single-phase-start-v1</code>). Prefer <strong>Seed demo data</strong> for pump/fan/compressor assets with full historian context.</p>
+        <h4>View trends, forecast, and CMMS action</h4>
         <ol>
           <li>Open <strong>Historian</strong> or <strong>Report</strong></li>
-          <li>Set <strong>Source â†’ PdM (SCADA + Edge)</strong></li>
+          <li>Set <strong>Source &#x2192; PdM (SCADA + Edge)</strong></li>
           <li>Select <strong>Asset</strong>, set date range, click <strong>Load PdM</strong></li>
+          <li>Read forecast banner — warning/critical means pending failure</li>
+          <li>Open <strong>CMMS</strong> — find <strong>Proactive PM</strong> work order (<code>source: pdm</code>) if enabled</li>
         </ol>
-        <p>Chart pens: <code>HEALTH_IDX</code> (1 âˆ’ max edge score), <code>EDGE_SCORE</code>, and mapped SCADA tag averages per window. The forecast banner shows severity (ok / warning / critical / failed) and an estimated days-to-failure headline when trends support it.</p>
+        <p>Chart pens: <code>HEALTH_IDX</code>, <code>EDGE_SCORE</code>, and mapped SCADA tag averages. PDF export includes forecast and asset setup sections when enabled in report layout.</p>
         <h4>Health index</h4>
         <p>Per window: <strong>health index = 1 âˆ’ max(edge score)</strong> in that window. Lower health over time triggers the RUL estimate against the failure threshold. Motor start time trends can also shorten the forecast when <code>MOTOR_START_MS</code> is mapped.</p>
       `,
@@ -1156,7 +1417,7 @@ HTTPS full:    { "url": "https://other.host/status", "payloadTemplate": "bool" }
       id: 'roi-calculator',
       title: 'ROI calculator (assets)',
       html: `
-        <p>The <strong>ROI</strong> tab under <strong>Project â†’ System setupâ€¦</strong> estimates payback for monitored assets. Inputs are stored in <code>data/settings.json</code> under <code>roi</code> when you click <strong>Apply all settings</strong>.</p>
+        <p>Open <strong>Reporting &#x2192; ROI calculator&#x2026;</strong> to estimate payback for monitored assets. Inputs are stored in <code>data/settings.json</code> under <code>roi</code> when you click <strong>Save ROI</strong>.</p>
         <h4>Leak detection system</h4>
         <p>Models early leak alerts (e.g. NextCentury <code>_LEAK</code> tags or assisted-living bath/toilet leak inputs) against undetected water damage repair costs.</p>
         <table class="help-table">
@@ -1462,8 +1723,8 @@ HTTPS full:    { "url": "https://other.host/status", "payloadTemplate": "bool" }
         <ul>
           <li><strong>Apply HMI settings</strong> â€” writes HMI screens, tiles, and bindings to <code>data/settings.json</code></li>
           <li><strong>System setup â†’ Apply all settings</strong> â€” saves General settings (including <strong>Starting HMI screen</strong>) and includes HMI composer config if the composer is open and dirty</li>
-          <li><strong>Save projectâ€¦</strong> (top bar) or <strong>Save current as project</strong> (System setup) â€” full snapshot to <code>data/projects/</code>; includes HMI screens, bindings, and <code>activeScreen</code> when HMI settings were applied</li>
-          <li><strong>Save workspace</strong> â€” working copy at <code>data/workspace.est.json</code></li>
+          <li><strong>Save projectâ€¦</strong> (top bar) or <strong>Save current as project</strong> (System setup) â€” full snapshot to <code>data/projects/&lt;name&gt;.est.zip</code>; includes HMI screens, bindings, and <code>activeScreen</code> when HMI settings were applied</li>
+          <li><strong>Save workspace</strong> â€” working copy at <code>data/workspace.est.zip</code></li>
         </ul>
         <p>After editing bindings or layout, always <strong>Apply HMI settings</strong> before expecting the main-page live HMI to match the composer.</p>
       `,
@@ -1486,7 +1747,8 @@ HTTPS full:    { "url": "https://other.host/status", "payloadTemplate": "bool" }
           <tr><td>Composer settings hard to read</td><td>On narrow screens sections stack vertically â€” use <strong>Bindings</strong> horizontal scroll; widen the composer window so the grid pane expands</td></tr>
           <tr><td>Tag value stuck on display</td><td><strong>Tags â†’ Clear forces</strong> or uncheck <strong>Enabled</strong> on the row; confirm <strong>Start</strong> runtime; check binding tag id spelling</td></tr>
           <tr><td>Wrong screen on load</td><td><strong>System setup â†’ General â†’ Starting HMI screen</strong> â†’ <strong>Apply all settings</strong>; or <strong>Reload screen</strong> on the HMI panel after saving</td></tr>
-          <tr><td>Project not in Open list</td><td>Files must be <code>*.est.json</code> under <code>data/projects/</code>; use <strong>Save projectâ€¦</strong> or copy files there, then <strong>Open projectâ€¦</strong> again</td></tr>
+          <tr><td>Project not in Open list</td><td>Legacy <code>*.est.json</code> files are not listed — use <strong>Project ▾ → Import project file…</strong> to load and convert them to <code>.est.zip</code>, or use <strong>Save project…</strong> after opening</td></tr>
+          <tr><td>MV Draw instead of dashboard</td><td>Home is <code>/</code> (dashboard). <code>/mv-draw</code> is the site-plan editor. If Plan composer mode is active, MV Draw may appear inside the HMI panel â€” change <strong>Project â–¾ â†’ HMI composer mode</strong> to Grid or 3D</td></tr>
           <tr><td>TPO OUTPUT wrong color (orange) or TIME NOW flickers</td><td>Remove legacy <code>tmr_on_lamp</code> / <code>tmr_off_lamp</code> binding rows if present; re-place <strong>TPO daily</strong> composite or <strong>Apply HMI settings</strong>; hard refresh (<kbd>Ctrl+F5</kbd>). Only <code>status_lamp</code> should bind <code>TPO1_OUT</code> fill.</td></tr>
           <tr><td>TPO minute values wonâ€™t edit or ST SetInt fails</td><td><code>TPO1_ON_MIN</code>, <code>TPO1_OFF_MIN</code>, <code>TPO1_PULSE_REM</code> must be INT â€” use <strong>Load fixtures</strong> for <code>23_tpo_irrigation.st</code> or restart server to repair tag types</td></tr>
           <tr><td>TPO click-to-edit does nothing</td><td>Runtime must be <strong>Start</strong>ed; binding must have <strong>interaction: edit</strong>; click the underlined value text or field background</td></tr>
@@ -1659,7 +1921,11 @@ AvgReset(AVG1);</pre>
           <tr><th>Path</th><th>Content</th></tr>
           <tr><td><code>data/tags.json</code></td><td>Tag database</td></tr>
           <tr><td><code>data/drivers.json</code></td><td>Driver configs</td></tr>
-          <tr><td><code>data/settings.json</code></td><td>Scan rate, active program, historian pens, <code>mongoLogger</code> (URI, SCADA/edge collections), <code>pdm</code> asset map and batch settings, HMI screens/bindings, <code>hmi.activeScreen</code></td></tr>
+          <tr><td><code>data/settings.json</code></td><td>Scan rate, active program, startup mode, historian pens, <code>mongoLogger</code> (URI, SCADA/edge collections), <code>pdm</code> asset map and batch settings, HMI screens/bindings, <code>hmi.activeScreen</code></td></tr>
+          <tr><td><code>data/projects/*.est.zip</code></td><td>Saved project library (portable archives — tags, drivers, ST, HMI, MV Draw)</td></tr>
+          <tr><td><code>data/workspace.est.zip</code></td><td>Working workspace snapshot (startup mode <strong>Last workspace</strong>)</td></tr>
+          <tr><td><code>data/mv-draw/</code></td><td>Active MV Draw session and named layout library</td></tr>
+          <tr><td><code>data/hmi-imports/</code></td><td>User-imported HMI SVG/assets (also packed in <code>.est.zip</code>)</td></tr>
           <tr><td><code>st/**/*.st</code></td><td>ST source files</td></tr>
           <tr><td><code>st/fixtures/</code></td><td>Sample tags/drivers for test programs</td></tr>
         </table>
@@ -1681,6 +1947,8 @@ AvgReset(AVG1);</pre>
           <tr><td>MONGODB_SAMPLE_MS</td><td>5000</td><td>Pen sample write interval while runtime runs</td></tr>
           <tr><td>NEXTCENTURY_EMAIL</td><td>â€”</td><td>NextCentury API login email (used when driver config email is blank)</td></tr>
           <tr><td>NEXTCENTURY_PASSWORD</td><td>â€”</td><td>NextCentury API login password (used when driver config password is blank)</td></tr>
+          <tr><td>MOOREVIEW_POOL_PROFILE</td><td>default</td><td><code>residential-spa</code> or <code>res-pool-link</code> (home pad + 4 IntelliValves)</td></tr>
+          <tr><td>MOOREVIEW_PRODUCT</td><td>mvp-suite</td><td><code>res-pool-link</code> selects the residential pool/spa + 4-valve appliance</td></tr>
         </table>
       `,
     },
@@ -1692,7 +1960,8 @@ AvgReset(AVG1);</pre>
           <tr><th>Question</th><th>Answer</th></tr>
           <tr><td>Start says <em>Unknown tag</em>?</td><td>ST tag names must match the tag table. Use <strong>Load selected</strong> (fixtures) or open a project with tags and program together.</td></tr>
           <tr><td>Edits disappear?</td><td>Unsaved edits are protected while dirty. Save or Apply; use <strong>Revert</strong> to undo.</td></tr>
-          <tr><td><code>est</code> vs MVP Suite?</td><td><code>est</code> is embedded (LuCI, WebSocket). <strong>MVP Suite</strong> is this all-in-one Windows/Linux app with portable <code>.est</code> projects.</td></tr>
+          <tr><td><code>est</code> vs MVP Suite?</td><td><code>est</code> is embedded (LuCI, WebSocket). <strong>MVP Suite</strong> is this all-in-one Windows/Linux app with portable <code>.est.zip</code> projects.</td></tr>
+          <tr><td>MongoDB required?</td><td>No for projects or runtime. Optional for long-term historian archive, system logs, and camera GridFS snapshots.</td></tr>
           <tr><td>MQTT tag stays stale?</td><td>Check broker URL and topic spelling; runtime must be <strong>Start</strong>ed. Topics auto-subscribe from tag addresses.</td></tr>
           <tr><td>Opta driver <strong>Not linked</strong>?</td><td>Enable MQTT Parc hub in System setup; check broker LAN IP; <code>deviceId</code> must match firmware. Drivers auto-link on boot when hub is up.</td></tr>
           <tr><td>Hub OK but no ST on Opta?</td><td><strong>Download &amp; Start</strong> with Remote on â€” linking is not deploy/run.</td></tr>

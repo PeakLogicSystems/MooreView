@@ -1,6 +1,8 @@
-# MooreVIEW CMMS Integration v1
+# mooreVIEW CMMS Integration v1
 
-MooreVIEW is the **authoritative source** for alarm MQTT integration. CMMS systems (including TPS CMMS) **subscribe** to MooreVIEW-published topics; MooreVIEW does not adapt to undocumented CMMS formats.
+mooreVIEW is the **authoritative source** for alarm MQTT integration. CMMS systems (including TPS CMMS) **subscribe** to mooreVIEW-published topics; mooreVIEW does not adapt to undocumented CMMS formats.
+
+**Integrated `/cmms` (same process):** Alarm and **PdM proactive** work orders are created in `data/cmms.json` without MQTT. PdM → CMMS is documented in [pdm/PDM_PROACTIVE_CMMS.md](pdm/PDM_PROACTIVE_CMMS.md). External MQTT bridge below is optional and separate.
 
 ## Direction
 
@@ -102,13 +104,13 @@ QoS defaults to **1**. Broker URL defaults to `mqtt://127.0.0.1:1883` (same as P
 }
 ```
 
-Recipients are MooreVIEW **public user** rows, filtered by `shouldNotifyForLevel` and quiet hours (same rules as local email/SMS queue).
+Recipients are mooreVIEW **public user** rows, filtered by `shouldNotifyForLevel` and quiet hours (same rules as local email/SMS queue).
 
 ## Alarm levels
 
 `innerLow`, `innerHigh`, `outerLow`, `outerHigh`, `alarm` (BOOL), `normal` (clear — not published on transition into alarm).
 
-## MooreVIEW configuration
+## mooreVIEW configuration
 
 ### UI
 
@@ -142,7 +144,7 @@ Recipients are MooreVIEW **public user** rows, filtered by `shouldNotifyForLevel
 
 ## TPS CMMS implementer notes
 
-TPS CMMS today ingests IoT via HTTP/MongoDB rules (`routes/iot.js`). To consume MooreVIEW alarms:
+TPS CMMS today ingests IoT via HTTP/MongoDB rules (`routes/iot.js`). To consume mooreVIEW alarms:
 
 1. Subscribe to `mooreview/v1/{siteId}/alarm-notify` on your MQTT broker.
 2. On message, parse `schema === "mooreview-cmms-integration-v1"`.
@@ -151,19 +153,19 @@ TPS CMMS today ingests IoT via HTTP/MongoDB rules (`routes/iot.js`). To consume 
 
 See `C:\Users\Public\data\tpscmms\docs\MOOREVIEW_CMMS.md` for a minimal subscriber checklist.
 
-## Cloud multi-tenant (mooreview-cloud)
+## Cloud multi-tenant (est-pc Cloud SaaS)
 
-On the **cloud platform**, TPS CMMS is a first-class module enabled **per tenant** by platform administration — not bundled for every signup.
+Cloud SaaS runs from **est-pc** on port **3100** (`npm run start:saas` locally; `mooreview-saas` systemd unit in production). TPS CMMS / integrated CMMS is a first-class module enabled **per tenant** by platform administration — not bundled for every signup.
 
 | Mode | CMMS availability |
 |------|-------------------|
-| **Integrated appliance** (est-pc) | CMMS UI runs in-process; always available locally; cloud entitlement N/A |
-| **Standalone edge + cloud CMMS** | Edge publishes MQTT v1; cloud TPS CMMS subscriber ingests with `tenantId` from payload |
-| **Cloud tenant** | CMMS API/UI gated by `tenants.cmms.enabled`; platform admin enables via `PATCH /api/admin/tenants/:id/cmms` |
+| **Integrated appliance** (est-pc `:3090`) | CMMS UI runs in-process; always available locally; cloud entitlement N/A |
+| **Standalone edge + cloud CMMS** | Edge publishes MQTT v1; cloud subscriber ingests with `tenantId` from payload |
+| **Cloud tenant** (`:3100`) | CMMS routes gated by tenant entitlement; platform admin enables per org |
 
-Tenant users see CMMS routes only when `cmmsEnabled` is true on `GET /api/tenant` / `GET /api/auth/me`. MooreVIEW CMMS Integration v1 MQTT from edge appliances is unchanged — cloud ingest does not require the tenant UI flag, but product UI should respect entitlement.
+Tenant users see CMMS routes only when entitled on `GET /api/tenant` / `GET /api/auth/me`. mooreVIEW CMMS Integration v1 MQTT from edge appliances is unchanged — cloud ingest does not require the tenant UI flag, but product UI should respect entitlement.
 
-See `mooreview-cloud/docs/CMMS_ENTITLEMENT.md` for API details.
+See **`docs/CLOUD_USER_GUIDE.md`** (tenant operators) and **`docs/EST_PC_PARITY.md`** (edge vs cloud matrix). Platform admin runbook: **`docs/CLOUD_DEPLOY_DO.md`**.
 
 ## Code references (est-pc)
 

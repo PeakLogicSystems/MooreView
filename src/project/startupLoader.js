@@ -1,8 +1,10 @@
 'use strict';
 
+const fs = require('fs');
 const persistence = require('../persistence');
-const projectStore = require('../project/projectStore');
-const { apply } = require('../project/estFile');
+const projectStore = require('./projectStore');
+const { applyArchive, applyArchiveBuffer, isZipBuffer } = require('./projectArchive');
+const { applyProjectDoc } = require('./estFile');
 const { normalizeStartup } = require('../settings/startupSettings');
 
 /**
@@ -27,18 +29,33 @@ async function applyStartupOnBoot(deps) {
       return { loaded: false, mode: 'blank' };
     }
     if (startup.mode === 'workspace') {
-      const doc = persistence.readJson('workspace.est.json', null);
-      if (!doc?.project) return { loaded: false, mode: 'workspace', reason: 'no workspace file' };
-      await apply(doc, { tagStore, driverManager, scanEngine, persistence, graphHistory });
+      const zipPath = persistence.filePath('workspace.est.zip');
+      if (fs.existsSync(zipPath)) {
+        const out = await applyArchiveBuffer(
+          fs.readFileSync(zipPath),
+          { tagStore, driverManager, scanEngine, persistence, graphHistory },
+        );
+        await restoreBootStartup();
+        return { loaded: true, mode: 'workspace', name: out.project?.name };
+      }
+      const legacy = persistence.readJson('workspace.est.json', null);
+      if (!legacy?.project) return { loaded: false, mode: 'workspace', reason: 'no workspace archive' };
+      await applyProjectDoc(legacy, { tagStore, driverManager, scanEngine, persistence, graphHistory });
       await restoreBootStartup();
-      return { loaded: true, mode: 'workspace', name: doc.project?.name };
+      return { loaded: true, mode: 'workspace', name: legacy.project?.name };
     }
     if (startup.mode === 'saved_project') {
       const id = startup.projectId;
-      if (!id) return { loaded: false, mode: 'saved_project', reason: 'no startup project selected — open System setup → General, choose Specific saved project, Apply' };
-      const doc = await projectStore.loadProjectDoc(id);
-      await apply(doc, { tagStore, driverManager, scanEngine, persistence, graphHistory }, { lastOpenedProjectId: id });
-      const name = String(doc.project?.name || id).trim() || id;
+      if (!id) {
+        return {
+          loaded: false,
+          mode: 'saved_project',
+          reason: 'no startup project selected — open System setup → General, choose Specific saved project, Apply',
+        };
+      }
+      const unpacked = projectStore.loadProjectArchive(id);
+      const out = await applyArchive(unpacked, { tagStore, driverManager, scanEngine, persistence, graphHistory });
+      const name = String(out.project?.name || id).trim() || id;
       await rememberLastOpenedProject(id, name);
       await restoreBootStartup();
       return { loaded: true, mode: 'saved_project', id, name };
@@ -46,9 +63,9 @@ async function applyStartupOnBoot(deps) {
     if (startup.mode === 'last_project') {
       const id = settings.project?.lastOpenedId;
       if (!id) return { loaded: false, mode: 'last_project', reason: 'no last project' };
-      const doc = await projectStore.loadProjectDoc(id);
-      await apply(doc, { tagStore, driverManager, scanEngine, persistence, graphHistory }, { lastOpenedProjectId: id });
-      const name = String(doc.project?.name || id).trim() || id;
+      const unpacked = projectStore.loadProjectArchive(id);
+      const out = await applyArchive(unpacked, { tagStore, driverManager, scanEngine, persistence, graphHistory });
+      const name = String(out.project?.name || id).trim() || id;
       await rememberLastOpenedProject(id, name);
       await restoreBootStartup();
       return { loaded: true, mode: 'last_project', id, name };

@@ -1,5 +1,5 @@
 {
-  "description": "Sample Florida fleet lift station — Putnam County Utilities, triplex, Arduino Opta Parc",
+  "description": "Single-station sample — Putnam County Utilities, Yelvington EPI triplex (Nexus Cloud DSN 40a36bce47f3)",
   "tenant": {
     "name": "Putnam County Utilities",
     "slug": "putnam-county-utilities",
@@ -7,9 +7,9 @@
   },
   "station": {
     "owner": "Putnam County Utilities",
-    "name": "125 Yelvington Rd Triplex",
+    "name": "Master Lift Station — 125 Yelvington Rd",
     "slug": "yelvington-triplex",
-    "address": "125 Yelvington Rd, Palatka, FL 32131",
+    "address": "125 Yelvington Rd, E Palatka, FL 32131",
     "county": "putnam",
     "countyName": "Putnam",
     "region": "Northeast Florida",
@@ -19,26 +19,26 @@
     "lng": -81.5888
   },
   "device": {
-    "label": "Arduino Opta Parc (MQTT)",
-    "driverType": "mqtt_parc",
-    "deviceId": "mv_pcu_yelvington_01",
-    "deviceSlug": "dev-pcu-yelvington",
-    "templateId": "lift_station_triplex",
+    "label": "EdgePoint Industrial (Nexus MQTT)",
+    "driverType": "mqtt",
+    "deviceId": "ls_yelvington",
+    "deviceSlug": "yelvington-triplex",
+    "serialNum": "40a36bce47f3",
+    "templateId": "lift_station_epi",
+    "liftProfile": "epi_master",
     "defaultProgram": "logic/28_alternator_triplex.st",
-    "remoteExecution": true,
-    "reportIntervalMs": 200
+    "remoteExecution": false,
+    "reportIntervalMs": 5000
   },
   "fieldInstall": {
     "pumps": 3,
     "panel": "Triplex alternator (ALT3)",
-    "io": "Level floats (DI), pump runs/faults (DI), motor outputs (DO)",
-    "uplink": "Cellular MQTT to tenant Parc hub"
+    "io": "4-float ladder + CTs on EPI X1 inputs; MQTT topic /devices/<serial>/messages/events/",
+    "uplink": "nexus_mqtt"
   },
   "scadaAlarmTags": [
-    "ALT_FAULT",
-    "LVL_HIGH",
-    "LVL_LAG",
-    "LVL_LAG2",
+    "TPX_ALM",
+    "TANK_LVL",
     "MOTOR1_RUN",
     "MOTOR2_RUN",
     "MOTOR3_RUN"

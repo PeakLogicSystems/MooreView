@@ -1,7 +1,9 @@
 'use strict';
 
 const persistence = require('../persistence');
+const { stripLegacyProjectHwDefaults } = require('../settings/portableSettings');
 const { moveOnce, moveReverse } = require('../drivers/modbusMove');
+const { scheduleRemoteHmiMemoryWrite, scheduleRemoteTagForce } = require('./pushRemoteTagForce');
 
 function createApiRoutes(deps) {
   const { tagStore, driverManager, scanEngine, graphHistory, sendJson } = deps;
@@ -35,6 +37,7 @@ function createApiRoutes(deps) {
             sendJson(res, 404, { error: 'Tag not found' });
             return true;
           }
+          scheduleRemoteHmiMemoryWrite(tagStore, driverManager, scanEngine, t);
           sendJson(res, 200, { tag: t });
         } catch (e) {
           sendJson(res, e.status || 500, { error: e.message });
@@ -107,11 +110,13 @@ function createApiRoutes(deps) {
         return true;
       }
       if (pathname === '/api/settings' && req.method === 'GET') {
-        sendJson(res, 200, persistence.readJson('settings.json', { scanMs: 100, port: 3080 }));
+        sendJson(res, 200, stripLegacyProjectHwDefaults(
+          persistence.readJson('settings.json', { scanMs: 100, port: 3080 }),
+        ));
         return true;
       }
       if (pathname === '/api/settings' && req.method === 'PUT') {
-        persistence.writeJson('settings.json', body);
+        persistence.writeJson('settings.json', stripLegacyProjectHwDefaults(body));
         scanEngine.loadSettings();
         sendJson(res, 200, { ok: true });
         return true;
@@ -126,7 +131,7 @@ function createApiRoutes(deps) {
           tags: tagStore.list(),
           drivers: driverManager.list(),
           program: persistence.readText('program.st', ''),
-          settings: persistence.readJson('settings.json', {}),
+          settings: stripLegacyProjectHwDefaults(persistence.readJson('settings.json', {})),
         };
         sendJson(res, 200, bundle);
         return true;
@@ -139,7 +144,9 @@ function createApiRoutes(deps) {
           await driverManager.rebuild();
         }
         if (b.program != null) persistence.writeText('program.st', b.program);
-        if (b.settings) persistence.writeJson('settings.json', b.settings);
+        if (b.settings) {
+          persistence.writeJson('settings.json', stripLegacyProjectHwDefaults(b.settings));
+        }
         sendJson(res, 200, { ok: true });
         return true;
       }
@@ -158,6 +165,7 @@ function createApiRoutes(deps) {
           sendJson(res, 404, { error: 'Tag not found' });
           return true;
         }
+        scheduleRemoteTagForce(tagStore, driverManager, scanEngine, t);
         sendJson(res, 200, { tag: t });
         return true;
       }
@@ -165,6 +173,7 @@ function createApiRoutes(deps) {
         const tagId = url.searchParams.get('tagId');
         const which = url.searchParams.get('which') || null;
         const t = tagStore.clearForce(tagId, which);
+        if (t) scheduleRemoteTagForce(tagStore, driverManager, scanEngine, t);
         sendJson(res, 200, { tag: t });
         return true;
       }

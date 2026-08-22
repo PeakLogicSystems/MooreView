@@ -35,6 +35,10 @@ const PROGRAM_FIXTURE_OVERRIDES = {
     tagsFile: 'tags.motor_tpo_combined.json',
     driversFile: 'drivers.logic.json',
   },
+  'modbus/09_ul212nt_e_level.st': {
+    tagsFile: 'tags.ul212nt_e.json',
+    driversFile: 'drivers.ul212nt_e.json',
+  },
 };
 
 function readProgramSource(rel) {

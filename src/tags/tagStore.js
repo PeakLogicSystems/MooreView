@@ -118,10 +118,30 @@ function ensureFb(type, fb) {
   return { ...f };
 }
 
+function normalizeAckUser(user) {
+  if (!user || typeof user !== 'object') return null;
+  const id = String(user.id || user.userId || '').trim();
+  const email = String(user.email || '').trim();
+  const name = String(user.name || user.displayName || '').trim();
+  const role = String(user.role || '').trim();
+  if (!id && !email && !name) return null;
+  return {
+    id: id || null,
+    email: email || null,
+    name: name || null,
+    role: role || null,
+  };
+}
+
+function formatAckUserLabel(user) {
+  if (!user || typeof user !== 'object') return null;
+  return user.name || user.email || user.id || null;
+}
+
 class TagStore {
   constructor() {
     this.tags = new Map();
-    /** @type {Map<string, { level: string, acked: boolean, since: number, ackedAt: number|null }>} */
+    /** @type {Map<string, { level: string, acked: boolean, since: number, ackedAt: number|null, ackedBy: object|null }>} */
     this._alarmAnnunc = new Map();
     this.load();
   }
@@ -149,25 +169,29 @@ class TagStore {
         acked: false,
         since: Date.now(),
         ackedAt: null,
+        ackedBy: null,
       });
     }
   }
 
-  ackAlarm(tagId) {
+  ackAlarm(tagId, user = null) {
     const entry = this._alarmAnnunc.get(tagId);
     if (!entry) return false;
     entry.acked = true;
     entry.ackedAt = Date.now();
+    entry.ackedBy = normalizeAckUser(user);
     return true;
   }
 
-  ackAllAlarms() {
+  ackAllAlarms(user = null) {
     const now = Date.now();
+    const ackedBy = normalizeAckUser(user);
     let n = 0;
     for (const entry of this._alarmAnnunc.values()) {
       if (!entry.acked) n += 1;
       entry.acked = true;
       entry.ackedAt = now;
+      entry.ackedBy = ackedBy;
     }
     return n;
   }
@@ -367,6 +391,34 @@ class TagStore {
     return true;
   }
 
+  /** Merge Parc telemetry row (effective value + force metadata) into tag store. */
+  applyParcTelemetry(id, row = {}) {
+    const t = this.get(id);
+    if (!t) return false;
+    if (row.value !== undefined) {
+      t.value = row.value;
+      t.quality = row.quality || QUALITY.GOOD;
+      if (t.type === 'ALT') {
+        const au = Math.trunc(Number(row.value) || 0);
+        t.fb = { ...(t.fb || {}), activeUnit: au };
+      }
+    }
+    if (row.forceInput != null) t.forceInput = !!row.forceInput;
+    if (row.forceOutput != null) t.forceOutput = !!row.forceOutput;
+    const forced = t.forceInput || t.forceOutput;
+    if (forced && row.forceValue !== undefined) {
+      t.forceValue = row.type === 'BOOL' || t.type === 'BOOL' ? !!row.forceValue : row.forceValue;
+    } else if (!forced) {
+      t.forceValue = undefined;
+      t.logicValue = undefined;
+    }
+    if (forced && row.logicValue !== undefined) {
+      t.logicValue = row.type === 'BOOL' || t.type === 'BOOL' ? !!row.logicValue : row.logicValue;
+    }
+    this._refreshAlarmLevel(t);
+    return true;
+  }
+
   markDirty(id) {
     const t = this.tags.get(id);
     if (t && (t.role === 'output' || t.role === 'memory')) {
@@ -407,8 +459,11 @@ class TagStore {
       forceInput: t.forceInput,
       forceOutput: t.forceOutput,
       forceValue: t.forceValue,
+      ...(t.logicValue !== undefined ? { logicValue: t.logicValue } : {}),
       alarmLevel: t.alarmLevel,
       alarmAcked: annunc?.acked ?? false,
+      alarmAckedAt: annunc?.ackedAt ?? null,
+      alarmAckedBy: annunc?.ackedBy ?? null,
       ts: Date.now(),
     };
     if (slim) {
@@ -444,6 +499,8 @@ class TagStore {
       alarmsEnabled: t.alarmsEnabled,
       alarmCondition: t.alarmCondition,
       alarmSince: annunc?.since ?? null,
+      alarmAckedAt: annunc?.ackedAt ?? null,
+      alarmAckedBy: annunc?.ackedBy ?? null,
     };
   }
 
@@ -547,4 +604,6 @@ module.exports = {
   TagStore,
   buildDefaultMemoryTags,
   mergeDefaultMemoryTags,
+  normalizeAckUser,
+  formatAckUserLabel,
 };

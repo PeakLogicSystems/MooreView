@@ -5,6 +5,105 @@
 static MvDeviceConfig g_active;
 static bool g_loaded = false;
 
+#pragma pack(push, 1)
+struct MvDeviceConfigV1 {
+  uint32_t magic;
+  uint16_t version;
+  uint16_t crc;
+  uint8_t ethUseDhcp;
+  uint8_t wifiApEnable;
+  uint8_t reserved[2];
+  char wifiApSsid[24];
+  char wifiApPass[24];
+  uint8_t ethIp[4];
+  uint8_t ethGw[4];
+  uint8_t ethMask[4];
+  uint8_t ethDns[4];
+  uint8_t expSlotType[MV_EXP_SLOTS];
+  char mqttBrokerHost[32];
+  uint16_t mqttBrokerPort;
+  uint8_t mqttBrokerSet;
+  uint16_t globalSiteKey;
+};
+#pragma pack(pop)
+
+struct MvDeviceConfigV2 {
+  uint32_t magic;
+  uint16_t version;
+  uint16_t crc;
+  uint8_t ethUseDhcp;
+  uint8_t wifiApEnable;
+  uint8_t reserved[2];
+  char wifiApSsid[24];
+  char wifiApPass[24];
+  uint8_t ethIp[4];
+  uint8_t ethGw[4];
+  uint8_t ethMask[4];
+  uint8_t ethDns[4];
+  uint8_t expSlotType[MV_EXP_SLOTS];
+  char mqttBrokerHost[64];
+  uint16_t mqttBrokerPort;
+  uint8_t mqttBrokerSet;
+  uint8_t mqttAuthSet;
+  char mqttUsername[32];
+  char mqttPassword[48];
+  uint16_t globalSiteKey;
+};
+
+/** V3 — same layout as pre-80-byte password firmware (mqttPassword[48]). */
+struct MvDeviceConfigV3 {
+  uint32_t magic;
+  uint16_t version;
+  uint16_t crc;
+  uint8_t ethUseDhcp;
+  uint8_t wifiApEnable;
+  uint8_t reserved[2];
+  char wifiApSsid[24];
+  char wifiApPass[24];
+  uint8_t ethIp[4];
+  uint8_t ethGw[4];
+  uint8_t ethMask[4];
+  uint8_t ethDns[4];
+  uint8_t expSlotType[MV_EXP_SLOTS];
+  char mqttBrokerHost[64];
+  uint16_t mqttBrokerPort;
+  uint8_t mqttBrokerSet;
+  uint8_t mqttAuthSet;
+  char mqttUsername[32];
+  char mqttPassword[48];
+  uint16_t globalSiteKey;
+  uint8_t a0602RtdEnable;
+  uint8_t mqttUseTls;
+  uint8_t reservedPad[2];
+};
+
+/** V4 — before mqttReportMs / exception / disable fields (MV_STORE_VERSION 4). */
+struct MvDeviceConfigV4 {
+  uint32_t magic;
+  uint16_t version;
+  uint16_t crc;
+  uint8_t ethUseDhcp;
+  uint8_t wifiApEnable;
+  uint8_t reserved[2];
+  char wifiApSsid[24];
+  char wifiApPass[24];
+  uint8_t ethIp[4];
+  uint8_t ethGw[4];
+  uint8_t ethMask[4];
+  uint8_t ethDns[4];
+  uint8_t expSlotType[MV_EXP_SLOTS];
+  char mqttBrokerHost[64];
+  uint16_t mqttBrokerPort;
+  uint8_t mqttBrokerSet;
+  uint8_t mqttAuthSet;
+  char mqttUsername[32];
+  char mqttPassword[MV_MQTT_PASSWORD_SIZE];
+  uint16_t globalSiteKey;
+  uint8_t a0602RtdEnable;
+  uint8_t mqttUseTls;
+  uint8_t reservedPad[2];
+};
+
 static uint16_t mvStoreCrc(const MvDeviceConfig* cfg) {
   const uint8_t* p = (const uint8_t*)cfg;
   uint16_t crc = 0xFFFF;
@@ -16,6 +115,46 @@ static uint16_t mvStoreCrc(const MvDeviceConfig* cfg) {
     }
   }
   return crc;
+}
+
+static uint16_t mvStoreCrcV1(const MvDeviceConfigV1* cfg) {
+  const uint8_t* p = (const uint8_t*)cfg;
+  uint16_t crc = 0xFFFF;
+  size_t n = sizeof(MvDeviceConfigV1) - sizeof(cfg->crc);
+  for (size_t i = 0; i < n; i++) {
+    crc ^= p[i];
+    for (uint8_t b = 0; b < 8; b++) {
+      crc = (crc & 1) ? (uint16_t)((crc >> 1) ^ 0xA001) : (uint16_t)(crc >> 1);
+    }
+  }
+  return crc;
+}
+
+static bool mvStoreValidV1(const MvDeviceConfigV1* cfg) {
+  if (!cfg || cfg->magic != MV_STORE_MAGIC || cfg->version != 1) return false;
+  return cfg->crc == mvStoreCrcV1(cfg);
+}
+
+static void mvStoreMigrateV1(const MvDeviceConfigV1* old, MvDeviceConfig* cfg) {
+  mvStoreDefaults(cfg);
+  cfg->ethUseDhcp = old->ethUseDhcp;
+  cfg->wifiApEnable = old->wifiApEnable;
+  strncpy(cfg->wifiApSsid, old->wifiApSsid, sizeof(cfg->wifiApSsid) - 1);
+  strncpy(cfg->wifiApPass, old->wifiApPass, sizeof(cfg->wifiApPass) - 1);
+  memcpy(cfg->ethIp, old->ethIp, sizeof(cfg->ethIp));
+  memcpy(cfg->ethGw, old->ethGw, sizeof(cfg->ethGw));
+  memcpy(cfg->ethMask, old->ethMask, sizeof(cfg->ethMask));
+  memcpy(cfg->ethDns, old->ethDns, sizeof(cfg->ethDns));
+  memcpy(cfg->expSlotType, old->expSlotType, sizeof(cfg->expSlotType));
+  strncpy(cfg->mqttBrokerHost, old->mqttBrokerHost, sizeof(cfg->mqttBrokerHost) - 1);
+  cfg->mqttBrokerPort = old->mqttBrokerPort;
+  cfg->mqttBrokerSet = old->mqttBrokerSet;
+  cfg->mqttUseTls = (old->mqttBrokerPort == 8883) ? 1 : 0;
+  cfg->globalSiteKey = old->globalSiteKey;
+  cfg->mqttAuthSet = 0;
+  cfg->mqttUsername[0] = '\0';
+  cfg->mqttPassword[0] = '\0';
+  cfg->crc = mvStoreCrc(cfg);
 }
 
 void mvStoreDefaults(MvDeviceConfig* cfg) {
@@ -31,12 +170,168 @@ void mvStoreDefaults(MvDeviceConfig* cfg) {
   cfg->ethMask[0] = 255; cfg->ethMask[1] = 255; cfg->ethMask[2] = 255; cfg->ethMask[3] = 0;
   cfg->ethDns[0] = 8; cfg->ethDns[1] = 8; cfg->ethDns[2] = 8; cfg->ethDns[3] = 8;
   for (uint8_t i = 0; i < MV_EXP_SLOTS; i++) cfg->expSlotType[i] = MV_EXP_AUTO;
+  strncpy(cfg->mqttBrokerHost, MV_MQTT_SKETCH_BROKER_DEFAULT, sizeof(cfg->mqttBrokerHost) - 1);
+  cfg->mqttBrokerHost[sizeof(cfg->mqttBrokerHost) - 1] = '\0';
+  cfg->mqttBrokerPort = MV_MQTT_SKETCH_PORT_DEFAULT ? MV_MQTT_SKETCH_PORT_DEFAULT : 8883;
+  cfg->mqttBrokerSet = cfg->mqttBrokerHost[0] ? 1 : 0;
+  cfg->mqttUseTls = MV_MQTT_SKETCH_TLS_DEFAULT ? 1 : 0;
+  strncpy(cfg->mqttUsername, MV_MQTT_SKETCH_USER_DEFAULT, sizeof(cfg->mqttUsername) - 1);
+  cfg->mqttUsername[sizeof(cfg->mqttUsername) - 1] = '\0';
+  strncpy(cfg->mqttPassword, MV_MQTT_SKETCH_PASS_DEFAULT, sizeof(cfg->mqttPassword) - 1);
+  cfg->mqttPassword[sizeof(cfg->mqttPassword) - 1] = '\0';
+  cfg->mqttAuthSet = (cfg->mqttUsername[0] && cfg->mqttPassword[0]) ? 1 : 0;
+  cfg->globalSiteKey = 1;
+  cfg->a0602RtdEnable = 0;
+  cfg->mqttReportOnException = 1;
+  cfg->mqttTelemetryDisable = 0;
+  cfg->mqttReportMs = MV_MQTT_REPORT_MS_DEFAULT;
+  cfg->crc = mvStoreCrc(cfg);
+}
+
+static uint16_t mvStoreCrcV2(const MvDeviceConfigV2* cfg) {
+  const uint8_t* p = (const uint8_t*)cfg;
+  uint16_t crc = 0xFFFF;
+  size_t n = sizeof(MvDeviceConfigV2) - sizeof(cfg->crc);
+  for (size_t i = 0; i < n; i++) {
+    crc ^= p[i];
+    for (uint8_t b = 0; b < 8; b++) {
+      crc = (crc & 1) ? (uint16_t)((crc >> 1) ^ 0xA001) : (uint16_t)(crc >> 1);
+    }
+  }
+  return crc;
+}
+
+static bool mvStoreValidV2(const MvDeviceConfigV2* cfg) {
+  if (!cfg || cfg->magic != MV_STORE_MAGIC || cfg->version != 2) return false;
+  return cfg->crc == mvStoreCrcV2(cfg);
+}
+
+static void mvStoreMigrateV2(const MvDeviceConfigV2* old, MvDeviceConfig* cfg) {
+  mvStoreDefaults(cfg);
+  cfg->ethUseDhcp = old->ethUseDhcp;
+  cfg->wifiApEnable = old->wifiApEnable;
+  strncpy(cfg->wifiApSsid, old->wifiApSsid, sizeof(cfg->wifiApSsid) - 1);
+  strncpy(cfg->wifiApPass, old->wifiApPass, sizeof(cfg->wifiApPass) - 1);
+  memcpy(cfg->ethIp, old->ethIp, sizeof(cfg->ethIp));
+  memcpy(cfg->ethGw, old->ethGw, sizeof(cfg->ethGw));
+  memcpy(cfg->ethMask, old->ethMask, sizeof(cfg->ethMask));
+  memcpy(cfg->ethDns, old->ethDns, sizeof(cfg->ethDns));
+  memcpy(cfg->expSlotType, old->expSlotType, sizeof(cfg->expSlotType));
+  strncpy(cfg->mqttBrokerHost, old->mqttBrokerHost, sizeof(cfg->mqttBrokerHost) - 1);
+  cfg->mqttBrokerPort = old->mqttBrokerPort;
+  cfg->mqttBrokerSet = old->mqttBrokerSet;
+  cfg->mqttUseTls = (old->mqttBrokerPort == 8883) ? 1 : 0;
+  cfg->mqttAuthSet = old->mqttAuthSet;
+  strncpy(cfg->mqttUsername, old->mqttUsername, sizeof(cfg->mqttUsername) - 1);
+  strncpy(cfg->mqttPassword, old->mqttPassword, sizeof(cfg->mqttPassword) - 1);
+  cfg->globalSiteKey = old->globalSiteKey;
+  cfg->a0602RtdEnable = 0;
+  cfg->crc = mvStoreCrc(cfg);
+}
+
+static uint16_t mvStoreCrcV3(const MvDeviceConfigV3* cfg) {
+  const uint8_t* p = (const uint8_t*)cfg;
+  uint16_t crc = 0xFFFF;
+  size_t n = sizeof(MvDeviceConfigV3) - sizeof(cfg->crc);
+  for (size_t i = 0; i < n; i++) {
+    crc ^= p[i];
+    for (uint8_t b = 0; b < 8; b++) {
+      crc = (crc & 1) ? (uint16_t)((crc >> 1) ^ 0xA001) : (uint16_t)(crc >> 1);
+    }
+  }
+  return crc;
+}
+
+static bool mvStoreValidV3(const MvDeviceConfigV3* cfg) {
+  if (!cfg || cfg->magic != MV_STORE_MAGIC || cfg->version != 3) return false;
+  return cfg->crc == mvStoreCrcV3(cfg);
+}
+
+static void mvStoreMigrateV3(const MvDeviceConfigV3* old, MvDeviceConfig* cfg) {
+  mvStoreDefaults(cfg);
+  cfg->ethUseDhcp = old->ethUseDhcp;
+  cfg->wifiApEnable = old->wifiApEnable;
+  strncpy(cfg->wifiApSsid, old->wifiApSsid, sizeof(cfg->wifiApSsid) - 1);
+  strncpy(cfg->wifiApPass, old->wifiApPass, sizeof(cfg->wifiApPass) - 1);
+  memcpy(cfg->ethIp, old->ethIp, sizeof(cfg->ethIp));
+  memcpy(cfg->ethGw, old->ethGw, sizeof(cfg->ethGw));
+  memcpy(cfg->ethMask, old->ethMask, sizeof(cfg->ethMask));
+  memcpy(cfg->ethDns, old->ethDns, sizeof(cfg->ethDns));
+  memcpy(cfg->expSlotType, old->expSlotType, sizeof(cfg->expSlotType));
+  strncpy(cfg->mqttBrokerHost, old->mqttBrokerHost, sizeof(cfg->mqttBrokerHost) - 1);
+  cfg->mqttBrokerPort = old->mqttBrokerPort;
+  cfg->mqttBrokerSet = old->mqttBrokerSet;
+  cfg->mqttUseTls = old->mqttUseTls ? 1 : ((old->mqttBrokerPort == 8883) ? 1 : 0);
+  cfg->mqttAuthSet = old->mqttAuthSet;
+  strncpy(cfg->mqttUsername, old->mqttUsername, sizeof(cfg->mqttUsername) - 1);
+  strncpy(cfg->mqttPassword, old->mqttPassword, sizeof(cfg->mqttPassword) - 1);
+  cfg->globalSiteKey = old->globalSiteKey;
+  cfg->a0602RtdEnable = old->a0602RtdEnable;
+  cfg->crc = mvStoreCrc(cfg);
+}
+
+static uint16_t mvStoreCrcV4(const MvDeviceConfigV4* cfg) {
+  const uint8_t* p = (const uint8_t*)cfg;
+  uint16_t crc = 0xFFFF;
+  size_t n = sizeof(MvDeviceConfigV4) - sizeof(cfg->crc);
+  for (size_t i = 0; i < n; i++) {
+    crc ^= p[i];
+    for (uint8_t b = 0; b < 8; b++) {
+      crc = (crc & 1) ? (uint16_t)((crc >> 1) ^ 0xA001) : (uint16_t)(crc >> 1);
+    }
+  }
+  return crc;
+}
+
+static bool mvStoreValidV4(const MvDeviceConfigV4* cfg) {
+  if (!cfg || cfg->magic != MV_STORE_MAGIC || cfg->version != 4) return false;
+  return cfg->crc == mvStoreCrcV4(cfg);
+}
+
+static void mvStoreMigrateV4(const MvDeviceConfigV4* old, MvDeviceConfig* cfg) {
+  mvStoreDefaults(cfg);
+  cfg->ethUseDhcp = old->ethUseDhcp;
+  cfg->wifiApEnable = old->wifiApEnable;
+  strncpy(cfg->wifiApSsid, old->wifiApSsid, sizeof(cfg->wifiApSsid) - 1);
+  strncpy(cfg->wifiApPass, old->wifiApPass, sizeof(cfg->wifiApPass) - 1);
+  memcpy(cfg->ethIp, old->ethIp, sizeof(cfg->ethIp));
+  memcpy(cfg->ethGw, old->ethGw, sizeof(cfg->ethGw));
+  memcpy(cfg->ethMask, old->ethMask, sizeof(cfg->ethMask));
+  memcpy(cfg->ethDns, old->ethDns, sizeof(cfg->ethDns));
+  memcpy(cfg->expSlotType, old->expSlotType, sizeof(cfg->expSlotType));
+  strncpy(cfg->mqttBrokerHost, old->mqttBrokerHost, sizeof(cfg->mqttBrokerHost) - 1);
+  cfg->mqttBrokerPort = old->mqttBrokerPort;
+  cfg->mqttBrokerSet = old->mqttBrokerSet;
+  cfg->mqttUseTls = old->mqttUseTls ? 1 : ((old->mqttBrokerPort == 8883) ? 1 : 0);
+  cfg->mqttAuthSet = old->mqttAuthSet;
+  strncpy(cfg->mqttUsername, old->mqttUsername, sizeof(cfg->mqttUsername) - 1);
+  strncpy(cfg->mqttPassword, old->mqttPassword, sizeof(cfg->mqttPassword) - 1);
+  cfg->globalSiteKey = old->globalSiteKey;
+  cfg->a0602RtdEnable = old->a0602RtdEnable;
   cfg->crc = mvStoreCrc(cfg);
 }
 
 static bool mvStoreValid(const MvDeviceConfig* cfg) {
   if (!cfg || cfg->magic != MV_STORE_MAGIC || cfg->version != MV_STORE_VERSION) return false;
   return cfg->crc == mvStoreCrc(cfg);
+}
+
+static void mvStoreApplyCloudMqtt(MvDeviceConfig* cfg) {
+  if (!cfg) return;
+  strncpy(cfg->mqttBrokerHost, MV_MQTT_SKETCH_BROKER_DEFAULT, sizeof(cfg->mqttBrokerHost) - 1);
+  cfg->mqttBrokerHost[sizeof(cfg->mqttBrokerHost) - 1] = '\0';
+  cfg->mqttBrokerPort = MV_MQTT_SKETCH_PORT_DEFAULT ? MV_MQTT_SKETCH_PORT_DEFAULT : 8883;
+  cfg->mqttBrokerSet = cfg->mqttBrokerHost[0] ? 1 : 0;
+  cfg->mqttUseTls = MV_MQTT_SKETCH_TLS_DEFAULT ? 1 : 0;
+  strncpy(cfg->mqttUsername, MV_MQTT_SKETCH_USER_DEFAULT, sizeof(cfg->mqttUsername) - 1);
+  cfg->mqttUsername[sizeof(cfg->mqttUsername) - 1] = '\0';
+  strncpy(cfg->mqttPassword, MV_MQTT_SKETCH_PASS_DEFAULT, sizeof(cfg->mqttPassword) - 1);
+  cfg->mqttPassword[sizeof(cfg->mqttPassword) - 1] = '\0';
+  cfg->mqttAuthSet = (cfg->mqttUsername[0] && cfg->mqttPassword[0]) ? 1 : 0;
+}
+
+static bool mvStoreMqttUnconfigured(const MvDeviceConfig* cfg) {
+  return !cfg || !cfg->mqttBrokerSet || !cfg->mqttBrokerHost[0];
 }
 
 #if defined(ARDUINO_OPTA) && __has_include(<kvstore_global_api.h>)
@@ -47,16 +342,50 @@ static const char* MV_KV_KEY = "/kv/mv_setup";
 
 bool mvStoreLoad(MvDeviceConfig* cfg) {
   mvStoreDefaults(cfg);
+  bool fromNv = false;
 #ifdef MV_HAS_KV
-  MvDeviceConfig tmp;
-  size_t actual = 0;
-  if (kv_get(MV_KV_KEY, &tmp, sizeof(tmp), &actual) == 0 && actual == sizeof(tmp) && mvStoreValid(&tmp)) {
-    memcpy(cfg, &tmp, sizeof(tmp));
-    g_loaded = true;
-    memcpy(&g_active, cfg, sizeof(g_active));
-    return true;
+  {
+    uint8_t buf[sizeof(MvDeviceConfig)];
+    size_t actual = 0;
+    if (kv_get(MV_KV_KEY, buf, sizeof(buf), &actual) == 0 && actual > 0) {
+      if (actual == sizeof(MvDeviceConfig)) {
+        MvDeviceConfig* tmp = (MvDeviceConfig*)buf;
+        if (mvStoreValid(tmp)) {
+          memcpy(cfg, tmp, sizeof(MvDeviceConfig));
+          fromNv = true;
+        }
+      } else if (actual == sizeof(MvDeviceConfigV4)) {
+        MvDeviceConfigV4* old = (MvDeviceConfigV4*)buf;
+        if (mvStoreValidV4(old)) {
+          mvStoreMigrateV4(old, cfg);
+          fromNv = true;
+        }
+      } else if (actual == sizeof(MvDeviceConfigV3)) {
+        MvDeviceConfigV3* old = (MvDeviceConfigV3*)buf;
+        if (mvStoreValidV3(old)) {
+          mvStoreMigrateV3(old, cfg);
+          fromNv = true;
+        }
+      } else if (actual == sizeof(MvDeviceConfigV2)) {
+        MvDeviceConfigV2* old = (MvDeviceConfigV2*)buf;
+        if (mvStoreValidV2(old)) {
+          mvStoreMigrateV2(old, cfg);
+          fromNv = true;
+        }
+      } else if (actual == sizeof(MvDeviceConfigV1)) {
+        MvDeviceConfigV1* old = (MvDeviceConfigV1*)buf;
+        if (mvStoreValidV1(old)) {
+          mvStoreMigrateV1(old, cfg);
+          fromNv = true;
+        }
+      }
+    }
   }
 #endif
+  if (!fromNv || mvStoreMqttUnconfigured(cfg)) {
+    if (mvStoreMqttUnconfigured(cfg)) mvStoreApplyCloudMqtt(cfg);
+    mvStoreSave(cfg);
+  }
   g_loaded = true;
   memcpy(&g_active, cfg, sizeof(g_active));
   return true;
@@ -81,4 +410,22 @@ bool mvStoreSave(const MvDeviceConfig* cfg) {
 const MvDeviceConfig* mvStoreActive() {
   if (!g_loaded) mvStoreLoad(&g_active);
   return &g_active;
+}
+
+const char* mvDeviceModeString(uint8_t mode) {
+  (void)mode;
+  return "standalone";
+}
+
+uint8_t mvDeviceModeActive() {
+  return MV_DEVICE_STANDALONE;
+}
+
+bool mvDeviceModeRemoteIo() {
+  return false;
+}
+
+bool mvDeviceModeSet(uint8_t mode) {
+  (void)mode;
+  return true;
 }

@@ -18,6 +18,7 @@
     <div class="standalone-meta popup-header-actions">
       <span id="cloud-sims-status" class="muted cell-mono" aria-live="polite">Loading…</span>
       <span class="topbar-version muted cell-mono" title="MooreVIEW release">v<%= appVersion %></span>
+      <button type="button" class="btn" id="btn-standalone-sign-out" title="Sign out">Sign out</button>
       <a href="/" class="btn popup-close page-close" title="Return to dashboard">Close</a>
     </div>
   </header>
@@ -26,13 +27,21 @@
     <% if (!cloudSimsEnabled) { %>
     <section class="cloud-sims-disabled panel" role="alert">
       <h2>Cloud Sim management is disabled</h2>
-      <p>Enable it in <a href="/">System setup</a> → <strong>Features</strong> → check <strong>Enable Cloud Sim management</strong> → <strong>Apply all settings</strong>, then reload this page.</p>
+      <p>Enable it on the <a href="/cellular/sims">Connectivity</a> page under <strong>Platform features</strong>, then reload this page.</p>
       <p class="muted">Or set <code>MOOREVIEW_CLOUD_SIMS=1</code> in <code>.env</code> and restart the server, or run with <code>MOOREVIEW_DEPLOYMENT=cloud</code>.</p>
     </section>
     <% } else { %>
     <p class="panel-hint cloud-sims-hint">
-      Create virtual Opta / Modbus devices that publish tenant-scoped MQTT telemetry into the cloud Parc hub.
+      Create virtual Parc / Dragino gateway devices that publish tenant-scoped MQTT telemetry into the cloud Parc hub.
+      Use <strong>Seed website demo</strong> for JXCT soil ×4 and pool chemistry simulators while hardware is in transit.
     </p>
+
+    <section class="cloud-sims-seed panel">
+      <h2>Website demo presets</h2>
+      <p class="panel-hint">Creates <code>dragino_jxct_x4</code> (28 soil tags) and <code>dragino_pool_chem</code> (pH + chlorine) on tenant <code>demo-tenant</code>, then starts both sims.</p>
+      <button type="button" class="btn btn-primary" id="cloud-sims-seed-website">Seed website demo sims</button>
+      <p id="cloud-sims-seed-msg" class="cloud-sims-msg muted" aria-live="polite"></p>
+    </section>
 
     <section class="cloud-sims-create panel">
       <h2>Create sim</h2>
@@ -42,8 +51,16 @@
         <label>Type
           <select id="sim-type">
             <option value="opta">Opta (virtual Parc telemetry)</option>
+            <option value="jxct_soil">JXCT soil 7-in-1 (Dragino profile)</option>
+            <option value="pool_chemistry">Pool chemistry — SEN0711 + SEN0712</option>
             <option value="modbus">Modbus (register tags)</option>
             <option value="mixed">Mixed (Opta + Modbus)</option>
+          </select>
+        </label>
+        <label id="sim-sensor-count-wrap" class="view-hidden">JXCT probe count
+          <select id="sim-sensor-count">
+            <option value="4" selected>4 probes (S1_…S4_ tags)</option>
+            <option value="1">1 probe (SOIL_* tags)</option>
           </select>
         </label>
         <label>MQTT device ID <input type="text" id="sim-device-id" maxlength="64" placeholder="auto-generated if blank"></label>
@@ -67,7 +84,9 @@
 
   <script>window.MOOREVIEW_DEPLOYMENT = '<%= deployment %>';</script>
   <script>window.MOOREVIEW_CLOUD_SIMS_ENABLED = <%= cloudSimsEnabled ? 'true' : 'false' %>;</script>
-  <script src="/js/api.js?v=<%= assetV %>"></script>
-  <script src="/js/cloudSimsPage.js?v=<%= assetV %>"></script>
+  <script src="/js/api.js?v=<%= assetV %>-conn"></script>
+  <script src="/js/signOut.js?v=<%= assetV %>"></script>
+  <script src="/js/cloudSimsPage.js?v=<%= assetV %>-conn"></script>
+  <script>MooreviewSignOut.bind('btn-standalone-sign-out');</script>
 </body>
 </html>

@@ -6,8 +6,10 @@ const { ensureMotorTags } = require('../../programs/motorTags');
 const { ensureTpoTags } = require('../../programs/tpoTags');
 const { ensureProgramTags } = require('../../programs/ensureProgramTags');
 
+const { scheduleRemoteHmiMemoryWrite } = require('../pushRemoteTagForce');
+
 function createTagRoutes(deps) {
-  const { tagStore } = deps;
+  const { tagStore, driverManager, scanEngine } = deps;
   const router = require('express').Router();
 
   router.get('/tags', (req, res) => {
@@ -51,6 +53,7 @@ function createTagRoutes(deps) {
       if (!t) {
         return res.status(404).json({ error: 'Tag not found' });
       }
+      scheduleRemoteHmiMemoryWrite(tagStore, driverManager, scanEngine, t);
       res.json({ tag: t });
     } catch (e) {
       res.status(e.status || 500).json({ error: e.message });

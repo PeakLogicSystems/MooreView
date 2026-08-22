@@ -701,6 +701,15 @@ async function close() {
   featuresCollectionHandle = null;
 }
 
+function resolveEdgeAssetId(item, body) {
+  if (item?.assetId) return String(item.assetId);
+  const pumpIndex = item?.pumpIndex ?? item?.pump ?? body?.pumpIndex;
+  if (pumpIndex != null && Number.isFinite(Number(pumpIndex))) {
+    return `pump-${Math.trunc(Number(pumpIndex))}`;
+  }
+  return body?.assetId || body?.deviceId || null;
+}
+
 function normalizeEdgeInference(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const score = raw.score ?? raw.inference?.score;
@@ -734,10 +743,11 @@ function extractEdgePayloads(body) {
   for (const item of list) {
     const norm = normalizeEdgeInference(item);
     if (!norm) continue;
+    const assetId = resolveEdgeAssetId(item, body);
     docs.push({
       event: 'edge_inference',
       deviceId,
-      assetId: norm.assetId || item.assetId || body.assetId || deviceId,
+      assetId: assetId || item.assetId || body.assetId || deviceId,
       modelId: norm.modelId,
       inference: norm.inference,
       features: norm.features,
@@ -884,6 +894,7 @@ module.exports = {
   setConfig: async (cfg) => {
     override = cfg && typeof cfg === 'object' ? { ...cfg } : null;
     await close();
+    if (enabled()) await connect().catch(() => {});
   },
   clearConfig: async () => {
     override = null;

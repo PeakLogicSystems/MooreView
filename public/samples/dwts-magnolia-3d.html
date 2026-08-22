@@ -74,6 +74,7 @@
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
     import { buildLiftStation, applyLiftStationLevel, LIFT_STATION_TYPES } from './lift-station-3d.js';
     import { buildDwtsPlant } from './dwts-plant-3d.js';
+    import { mountNorthIndicator } from './mv-north-indicator.js';
 
     const STATIONS = [
   {
@@ -1227,7 +1228,8 @@
 
     setInterval(refreshParc, 3000);
     refreshParc();
-    function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
+    const north = mountNorthIndicator();
+    function animate() { requestAnimationFrame(animate); controls.update(); north.update(camera); renderer.render(scene, camera); }
     animate();
     addEventListener('resize', () => {
       camera.aspect = innerWidth / innerHeight;

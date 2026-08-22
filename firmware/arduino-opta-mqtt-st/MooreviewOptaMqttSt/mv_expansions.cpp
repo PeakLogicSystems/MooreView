@@ -1,5 +1,6 @@
 #include "mv_expansions.h"
 #include "mv_tags.h"
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -12,6 +13,25 @@ using namespace Opta;
 static MvExpDetected g_detected[MV_EXP_SLOTS];
 static uint8_t g_detectedCount = 0;
 static const MvDeviceConfig* g_cfg = nullptr;
+
+static const float MV_A0602_RTD_CURRENT_MA = 0.8f;
+static const uint16_t MV_A0602_RTD_UPDATE_MS = 1000;
+
+static bool a0602RtdModeActive() {
+  return g_cfg && g_cfg->a0602RtdEnable;
+}
+
+/** IEC 60751 PT100: Blueprint getRtd() returns ohms; tags are °C. */
+static float pt100OhmsToC(float ohms) {
+  if (ohms <= 0.0f) return ohms;
+  const float R0 = 100.0f;
+  const float A = 3.9083e-3f;
+  const float B = -5.775e-7f;
+  const float r = ohms / R0;
+  const float disc = A * A - 4.0f * B * (1.0f - r);
+  if (disc < 0.0f) return (ohms - R0) / 0.385f;
+  return (-A + sqrtf(disc)) / (2.0f * B);
+}
 
 static const char* expTypeName(uint8_t t) {
   switch (t) {
@@ -110,8 +130,15 @@ void mvExpApplyConfig(const MvDeviceConfig* cfg) {
     if (d->type == MV_EXP_A0602) {
       AnalogExpansion exp = OptaController.getExpansion(d->slot);
       if (!exp) continue;
-      for (uint8_t ch = 0; ch < MV_EXP_A0602_CH; ch++) {
-        exp.beginChannelAsVoltageAdc(ch);
+      if (a0602RtdModeActive()) {
+        for (uint8_t ch = 0; ch < MV_EXP_A0602_CH; ch++) {
+          exp.beginChannelAsRtd(ch, false, MV_A0602_RTD_CURRENT_MA);
+        }
+        exp.beginRtdUpdateTime(MV_A0602_RTD_UPDATE_MS);
+      } else {
+        for (uint8_t ch = 0; ch < MV_EXP_A0602_CH; ch++) {
+          exp.beginChannelAsVoltageAdc(ch);
+        }
       }
     }
   }
@@ -218,10 +245,11 @@ void mvExpReadInputs() {
       AnalogExpansion exp = OptaController.getExpansion(d->slot);
       if (!exp) continue;
       exp.updateAnalogInputs();
+      const bool rtd = a0602RtdModeActive();
       for (uint8_t ch = 0; ch < MV_EXP_A0602_CH; ch++) {
         char id[16];
         snprintf(id, sizeof(id), "%s_AI%u", pfx, ch + 1);
-        mvSetReal(id, exp.pinVoltage(ch));
+        mvSetReal(id, rtd ? pt100OhmsToC(exp.getRtd(ch)) : exp.pinVoltage(ch));
       }
     }
   }
@@ -238,11 +266,13 @@ void mvExpWriteOutputs() {
     if (d->type == MV_EXP_A0602) {
       AnalogExpansion exp = OptaController.getExpansion(d->slot);
       if (!exp) continue;
-      for (uint8_t ch = 0; ch < 2; ch++) {
-        char id[16];
-        snprintf(id, sizeof(id), "%s_AI%u", pfx, ch + 1);
-        MvTag* t = mvFindTag(id);
-        if (t && t->kind == MV_REAL) exp.pinVoltage(ch, t->r, true);
+      if (!a0602RtdModeActive()) {
+        for (uint8_t ch = 0; ch < 2; ch++) {
+          char id[16];
+          snprintf(id, sizeof(id), "%s_AI%u", pfx, ch + 1);
+          MvTag* t = mvFindTag(id);
+          if (t && t->kind == MV_REAL) exp.pinVoltage(ch, t->r, true);
+        }
       }
       for (uint8_t p = 0; p < MV_EXP_A0602_PWM; p++) {
         char id[16];

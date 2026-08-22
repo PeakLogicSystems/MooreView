@@ -5,6 +5,12 @@ const {
   isPlaceholderNcPropertyIds,
   propertyIdListsEqual,
 } = require('./nextcenturyPropertyIds');
+const {
+  isEzMeterFacility,
+  syncEzMeterSemanticTags,
+  mergedEzMeterSemanticMap,
+  pqThresholds,
+} = require('../facilities/ezmeterPq');
 
 /** Main pool vs shared-plumbing bodies with independent circulation targets. */
 const WATER_BODY_KINDS = {
@@ -207,6 +213,10 @@ function normalizeAssistedLiving(raw, prev = {}) {
 
 function setTagBool(tagStore, tagId, value) {
   if (tagStore.get(tagId)) tagStore.setValue(tagId, !!value);
+}
+
+function setTagReal(tagStore, tagId, value) {
+  if (tagStore.get(tagId)) tagStore.setValue(tagId, Number(value));
 }
 
 function defaultNextcenturySemanticMap() {
@@ -450,8 +460,21 @@ function syncAssistedLivingTags(tagStore, assistedLiving) {
 
   const ncMap = mergedSemanticMap(assistedLiving);
   const tagIds = new Set(tagStore.list().map((t) => t.id));
-  if (ncMap.some((m) => tagIds.has(m.tagId))) {
+  if (ncMap.some((m) => tagIds.has(m.tagId)) && isNextcenturyFacility(assistedLiving)) {
     syncNextcenturySemanticTags(tagStore, assistedLiving);
+  }
+  const ezMap = mergedEzMeterSemanticMap(assistedLiving);
+  if (isEzMeterFacility(assistedLiving) && ezMap.some((m) => tagIds.has(m.tagId))) {
+    syncEzMeterSemanticTags(tagStore, assistedLiving);
+    const th = pqThresholds(assistedLiving);
+    setTagReal(tagStore, 'MECH_PQ_CFG_NOM_V', th.nominalV);
+    setTagReal(tagStore, 'MECH_PQ_CFG_UV_V', th.undervoltV);
+    setTagReal(tagStore, 'MECH_PQ_CFG_OV_V', th.overvoltV);
+    setTagReal(tagStore, 'MECH_PQ_CFG_LOW_PF', th.lowPf);
+    setTagReal(tagStore, 'MECH_PQ_CFG_FREQ_MIN', th.freqMinHz);
+    setTagReal(tagStore, 'MECH_PQ_CFG_FREQ_MAX', th.freqMaxHz);
+    setTagReal(tagStore, 'MECH_PQ_CFG_IMBAL_PCT', th.vImbalPct);
+    setTagReal(tagStore, 'MECH_PQ_CFG_LOAD_I', th.loadedIA);
   }
   const halowMap = mergedHalowSemanticMap(assistedLiving);
   const poolRollup = Array.isArray(assistedLiving?.halow?.poolRollupMap)
@@ -493,4 +516,7 @@ module.exports = {
   syncNextcenturyDriverPropertyIds,
   patchNextcenturyDriverPropertyIds,
   isPlaceholderNcPropertyIds,
+  isEzMeterFacility,
+  syncEzMeterSemanticTags,
+  mergedEzMeterSemanticMap,
 };

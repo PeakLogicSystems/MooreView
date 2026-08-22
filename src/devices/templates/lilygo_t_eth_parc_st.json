@@ -27,5 +27,16 @@
     "input": [{ "prefix": "I", "suffix": "_RAW", "count": 8, "start": 0 }],
     "holding": [{ "prefix": "H", "count": 8, "start": 0 }]
   },
-  "notes": "ESP32 runs MVBC on-device. Sequent SM-I-010 (4 relays + 4 HV opto) on I2C SDA=17 SCL=18 maps to I1..I4 / R1..R4. I5..I8 remain soft. Flash cellular-parc-st; /setup for deviceId + cloud MQTT. Drivers → Sync tags from Parc device after online."
+  "notes": "ESP32 runs MVBC on-device. SM-I-010: I1=OFF float, I2=LEAD, I3=LAG, I4=HIGH alarm; R1/R2 pumps, R3 alarm. CT 0–1 V on GPIO 32–38 → I1_RAW..I7_RAW (AI1..AI7). Program: logic/37_duplex_lift_station_parc_st.st. Flash cellular-parc-st; /setup for deviceId + cloud MQTT.",
+  "pdm": {
+    "motorType": "pump",
+    "application": "lift_station",
+    "configuration": "duplex",
+    "locationClass": "strip_mall",
+    "floatLadder": "pull_down",
+    "assets": [
+      { "assetId": "pump-1", "pumpIndex": 1, "pumpRole": "lead" },
+      { "assetId": "pump-2", "pumpIndex": 2, "pumpRole": "lag" }
+    ]
+  }
 }

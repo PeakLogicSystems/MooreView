@@ -1,4 +1,10 @@
-# MooreVIEW USPTO trademark materials
+# mooreVIEW USPTO trademark materials
+
+**Display form (all customer-facing docs):** **mooreVIEW** — lowercase *moore*, uppercase *VIEW*.
+
+**Legal mark (USPTO filing):** **MOOREVIEW** — standard character mark.
+
+See also [PURPLE_STANDARD.md](../PURPLE_STANDARD.md) § Wordmark.
 
 | File | Purpose |
 |------|---------|

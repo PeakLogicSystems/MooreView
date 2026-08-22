@@ -21,7 +21,7 @@ const cameraDropdown = `    <details class="topbar-camera-details topbar-project
         <span class="topbar-project-caret" aria-hidden="true">&#x25BE;</span>
       </summary>
       <div class="topbar-camera-dropdown topbar-project-dropdown" id="camera-menu" role="menu" aria-label="Cameras">
-        <p class="topbar-camera-empty muted" id="camera-menu-empty">No cameras yet — open <strong>Tools → Cameras</strong> to add one.</p>
+        <p class="topbar-camera-empty muted" id="camera-menu-empty">No cameras yet — open <strong>Administration…</strong> to add one.</p>
       </div>
     </details>
 `;

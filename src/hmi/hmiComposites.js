@@ -54,6 +54,12 @@ function normalizeBindingDef(raw) {
   if (raw.offValue != null) out.offValue = raw.offValue;
   if (raw.tagField != null) out.tagField = String(raw.tagField).trim();
   if (raw.interaction != null) out.interaction = String(raw.interaction).trim();
+  if (raw.hoaValue != null && Number.isFinite(Number(raw.hoaValue))) {
+    out.hoaValue = Math.max(0, Math.min(2, Math.trunc(Number(raw.hoaValue))));
+  }
+  if (raw.pumpIndex != null && Number.isFinite(Number(raw.pumpIndex))) {
+    out.pumpIndex = Math.max(1, Math.min(4, Math.trunc(Number(raw.pumpIndex))));
+  }
   if (raw.colors && Array.isArray(raw.colors)) out.colors = raw.colors.slice();
   if (raw.flashStates && Array.isArray(raw.flashStates)) out.flashStates = raw.flashStates.slice();
   return out;
@@ -78,6 +84,7 @@ function normalizeManifest(raw, id, publicRoot) {
     subgroup: String(raw.subgroup || 'composites').trim(),
     preview: raw.preview ? (publicRoot ? require('./hmiConfig').resolveAssetPath(publicRoot, String(raw.preview)) : String(raw.preview)) : parts[0].svg,
     defaultTagId: String(raw.defaultTagId || '').trim(),
+    defaultInstancePrefix: String(raw.defaultInstancePrefix || raw.instanceTagPrefix || '').trim(),
     tagRoles: raw.tagRoles && typeof raw.tagRoles === 'object' ? raw.tagRoles : { pv: { pick: 'firstNumeric', types: ['REAL', 'INT'] } },
     parts,
     defaultBindings,
@@ -135,6 +142,40 @@ function compositeBindingElementId(col, row, manifest, bindingDef) {
   return `t${Number(col) + 1}_${Number(row) + 1}_z${z}__${role}`;
 }
 
+/**
+ * Explode a composite manifest into an HMI tile (all part layers).
+ * Matches HMI Setup composite placement so layers stay editable in composer.
+ * @param {HmiCompositeManifest} manifest
+ * @param {number} col
+ * @param {number} row
+ * @param {object} [options]
+ * @param {number} [options.colSpan]
+ * @param {number} [options.rowSpan]
+ * @param {string} [options.compositeTagPrefix]
+ * @param {string} [options.tagPrefix]
+ * @param {string} [options.label]
+ */
+function explodeCompositeToEdit(manifest, col, row, options = {}) {
+  const compositeId = String(manifest?.id || options.compositeId || '').trim();
+  if (!compositeId || !Array.isArray(manifest?.parts) || !manifest.parts.length) return null;
+  const tile = {
+    col: Number(col),
+    row: Number(row),
+    colSpan: Math.max(1, Number(options.colSpan) || 1),
+    rowSpan: Math.max(1, Number(options.rowSpan) || 1),
+    compositeId,
+    layers: manifest.parts.map((part) => ({
+      kind: String(part.kind || 'staticImage').trim() || 'staticImage',
+      z: part.z ?? 0,
+      svg: part.svg,
+    })),
+  };
+  const tagPrefix = String(options.compositeTagPrefix || options.tagPrefix || '').trim();
+  if (tagPrefix) tile.compositeTagPrefix = tagPrefix;
+  if (options.label) tile.label = String(options.label);
+  return tile;
+}
+
 function tagIdForCompositeRole(manifest, role) {
   const spec = manifest.tagRoles?.[role] || manifest.tagRoles?.pv || {};
   if (spec.pick === 'tagId' && spec.tagId) return String(spec.tagId);
@@ -164,7 +205,7 @@ function buildCompositeInstancePrefixMap(screen, manifestForCompositeId) {
     const manifest = typeof manifestForCompositeId === 'function'
       ? manifestForCompositeId(compositeId)
       : null;
-    const base = String(manifest?.instanceTagPrefix || manifest?.defaultInstancePrefix || '').trim();
+    const base = String(manifest?.defaultInstancePrefix || manifest?.instanceTagPrefix || '').trim();
     if (!base) continue;
     if (!grouped.has(compositeId)) grouped.set(compositeId, []);
     grouped.get(compositeId).push({
@@ -291,6 +332,8 @@ function repairCompositeBindings(hmi, publicRoot) {
           };
           if (def.tagField) binding.tagField = def.tagField;
           if (def.interaction) binding.interaction = def.interaction;
+          if (def.hoaValue != null) binding.hoaValue = def.hoaValue;
+          if (def.pumpIndex != null) binding.pumpIndex = def.pumpIndex;
           if (def.colors) binding.colors = def.colors.slice();
           if (def.flashStates) binding.flashStates = def.flashStates.slice();
           hmi.bindings.push(binding);
@@ -301,12 +344,21 @@ function repairCompositeBindings(hmi, publicRoot) {
         if (def.format) binding.format = def.format;
         if (def.tagField) binding.tagField = def.tagField;
         if (def.interaction) binding.interaction = def.interaction;
+        if (def.hoaValue != null) binding.hoaValue = def.hoaValue;
+        if (def.pumpIndex != null) binding.pumpIndex = def.pumpIndex;
         if (def.min != null) binding.min = def.min;
         if (def.max != null) binding.max = def.max;
         backfillBindingPaint(binding, def);
       }
 
       const suffixes = new Set(manifest.defaultBindings.map((d) => d.elementId));
+      const manifestPropsBySuffix = new Map();
+      for (const def of manifest.defaultBindings) {
+        if (!manifestPropsBySuffix.has(def.elementId)) {
+          manifestPropsBySuffix.set(def.elementId, new Set());
+        }
+        manifestPropsBySuffix.get(def.elementId).add(def.property);
+      }
       hmi.bindings = hmi.bindings.filter((b) => {
         if (b.screenId !== screenId) return true;
         const suf = bindingSuffix(b.elementId);
@@ -316,6 +368,9 @@ function repairCompositeBindings(hmi, publicRoot) {
         const bCol = Number(parsed[1]) - 1;
         const bRow = Number(parsed[2]) - 1;
         if (bCol !== col || bRow !== row) return true;
+        const manifestProps = manifestPropsBySuffix.get(suf);
+        // Keep custom property overrides (e.g. visibility to hide 4-pump alternator chrome).
+        if (manifestProps && !manifestProps.has(b.property)) return true;
         return validKeys.has(`${b.elementId}|${b.property}`);
       });
     }
@@ -330,6 +385,7 @@ module.exports = {
   compositePathFromId,
   compositeIdFromPath,
   compositeBindingElementId,
+  explodeCompositeToEdit,
   compositeInstanceTagPrefix,
   numberedInstancePrefix,
   buildCompositeInstancePrefixMap,

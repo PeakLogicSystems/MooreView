@@ -6,7 +6,15 @@
 #include "mv_ota.h"
 #include "mv_expansions.h"
 #include "mv_wifi.h"
+#include "mv_http.h"
 #include "mv_mqtt.h"
+#include "mv_global_key.h"
+#include "mv_watchdog.h"
+#include "mv_identity.h"
+#include "mv_ct_cal.h"
+#include "mv_ahu_env_cal.h"
+#include "mv_mcsa_m7.h"
+#include "mv_mcsa_mon.h"
 #include <Ethernet.h>
 
 static void mvAppendProgramStats(JsonObject root) {
@@ -30,6 +38,8 @@ extern uint32_t g_lastCycleUs;
 void mvFillDeviceStatus(JsonObject root) {
   root["ok"] = true;
   root["device"] = "mooreview-opta-mqtt-st";
+  root["deviceId"] = mvIdentityDeviceId();
+  root["ateccStatus"] = mvIdentityAteccStatus();
   root["running"] = g_runtimeRunning;
   root["scanMs"] = g_scanMs;
   root["cycles"] = g_cycles;
@@ -46,12 +56,37 @@ void mvFillDeviceStatus(JsonObject root) {
   }
   root["ethIp"] = Ethernet.localIP().toString();
   root["mqttConnected"] = mvMqttConnected();
+  {
+    char brokerHost[64];
+    uint16_t brokerPort = 1883;
+    mvMqttGetBroker(brokerHost, sizeof(brokerHost), &brokerPort);
+    root["mqttBroker"] = brokerHost;
+    root["mqttBrokerPort"] = brokerPort;
+  }
+  root["mqttAuthSet"] = mvMqttAuthConfigured();
+  if (mvMqttAuthFailed()) root["mqttAuthFailed"] = true;
+  root["mqttReportMs"] = mvMqttReportMs();
+  root["mqttReportOnException"] = mvMqttReportOnException();
+  root["mqttTelemetryDisable"] = mvMqttTelemetryDisabled();
+  root["globalSiteKey"] = mvGlobalSiteKey();
+  {
+    char addrKey[5];
+    mvGlobalAddrKey(addrKey);
+    root["globalAddrKey"] = addrKey;
+  }
   root["wifiAp"] = mvWifiApActive();
   root["wifiApIp"] = mvWifiApIp().toString();
+  root["wifiCapable"] = mvWifiCapable();
+  root["httpRoutes"] = mvHttpRouteCount();
   root["expansions"] = mvExpDetectedCount();
   root["expansionBlueprint"] = mvExpBlueprintEnabled();
   root["programMaxBytes"] = MV_BC_MAX;
   mvAppendProgramStats(root);
   mvVersionAppendStatus(root);
   mvOtaAppendStatus(root);
+  mvWatchdogAppendStatus(root);
+  mvCtCalAppendStatus(root);
+  mvAhuEnvCalAppendStatus(root);
+  mvMcsaM7AppendStatus(root);
+  mvMcsaMonAppendStatus(root);
 }

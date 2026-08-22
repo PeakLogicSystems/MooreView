@@ -112,6 +112,39 @@ async function shutdown() {
   await simStore.close();
 }
 
+async function seedWebsiteDemoSims(options = {}) {
+  const { WEBSITE_DEMO_SIMS } = require('./simPresets');
+  const start = options.start !== false;
+  const results = [];
+  const existing = await simStore.list();
+
+  for (const preset of WEBSITE_DEMO_SIMS) {
+    let sim = existing.find(
+      (row) => row.mqttDeviceId === preset.mqttDeviceId && row.tenantId === preset.tenantId,
+    );
+    if (sim) {
+      sim = await simStore.update(sim.id, {
+        name: preset.name,
+        type: preset.type,
+        config: preset.config,
+      });
+      results.push({ action: 'updated', sim });
+    } else {
+      sim = await simStore.create(preset);
+      results.push({ action: 'created', sim });
+    }
+    if (start && sim.status !== 'running') {
+      try {
+        const started = await startSim(sim.id);
+        results[results.length - 1].started = started?.started === true;
+      } catch (err) {
+        results[results.length - 1].startError = err.message || String(err);
+      }
+    }
+  }
+  return { ok: true, results };
+}
+
 function managerStatus() {
   return {
     enabled: isCloudSimsEnabled(),
@@ -131,6 +164,7 @@ module.exports = {
   startSim,
   stopSim,
   shutdown,
+  seedWebsiteDemoSims,
   managerStatus,
   _runners: runners,
 };

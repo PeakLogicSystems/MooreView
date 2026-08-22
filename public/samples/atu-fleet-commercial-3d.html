@@ -46,6 +46,7 @@
   <script type="module">
     import * as THREE from 'three';
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { mountNorthIndicator } from './mv-north-indicator.js';
     const STATIONS = [
   {
     "name": "Harbor Quad ATU-1",
@@ -441,7 +442,8 @@
         el.appendChild(ul);
       });
     }
-    function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
+    const north = mountNorthIndicator();
+    function animate() { requestAnimationFrame(animate); controls.update(); north.update(camera); renderer.render(scene, camera); }
     animate();
     addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
   </script>

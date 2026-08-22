@@ -2,9 +2,19 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
+  <meta name="mobile-web-app-capable" content="yes">
+  <script>
+    (function () {
+      var s = Math.min(window.innerWidth, window.innerHeight);
+      var coarse = false;
+      try { coarse = window.matchMedia('(pointer: coarse)').matches; } catch (e) {}
+      if (s <= 520 || (coarse && s <= 640)) document.documentElement.classList.add('mv-mobile');
+    })();
+  </script>
   <title><%= title %> · <%= appVersion %></title>
   <link rel="stylesheet" href="/css/cloud-studio.css?v=<%= assetV %>">
+  <link rel="stylesheet" href="/css/mobile-layout.css?v=<%= assetV %>">
 </head>
 <body>
   <div class="cs-shell" id="cs-app"
@@ -16,15 +26,18 @@
     <header class="cs-top">
       <a class="cs-brand" href="/">Moore<span>VIEW</span></a>
       <span class="topbar-cloud-badge" title="Cloud Studio" style="margin-left:-0.35rem;padding:0.12rem 0.45rem;border-radius:999px;font-size:0.65rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;background:rgba(147,197,253,0.2);color:#93c5fd;border:1px solid rgba(147,197,253,0.45)">Cloud</span>
-      <nav class="cs-nav" aria-label="Cloud Studio">
-        <a href="/">Studio</a>
-        <a href="/sites" data-nav="sites">Sites</a>
-        <a href="/sites/devices" data-nav="devices">Devices</a>
-        <a href="/fleet" data-nav="fleet">Assets</a>
-        <a href="/people" data-nav="people">People</a>
-        <a href="/cmms" data-nav="cmms">CMMS</a>
-        <a href="/admin/tenants" data-nav="admin" id="nav-admin" class="view-hidden">Admin</a>
-      </nav>
+      <details class="cs-nav-menu">
+        <summary class="cs-nav-toggle">Menu</summary>
+        <nav class="cs-nav" aria-label="Cloud Studio">
+          <a href="/">Studio</a>
+          <a href="/sites" data-nav="sites">Sites</a>
+          <a href="/sites/devices" data-nav="devices">Devices</a>
+          <a href="/fleet" data-nav="fleet">Assets</a>
+          <a href="/people" data-nav="people">People</a>
+          <a href="/cmms" data-nav="cmms">CMMS</a>
+          <a href="/admin/tenants" data-nav="admin" id="nav-admin" class="view-hidden">Admin</a>
+        </nav>
+      </details>
       <div class="cs-meta">
         <span id="cs-user-label"><%= tenant && tenant.tenantSlug ? tenant.tenantSlug : '' %></span>
         <button type="button" class="btn" id="cs-logout" style="margin-left:0.5rem">Sign out</button>
@@ -35,6 +48,7 @@
     </main>
   </div>
   <script src="/js/api.js?v=<%= assetV %>"></script>
+  <script src="/js/mobileViewport.js?v=<%= assetV %>"></script>
   <script src="/js/cloudStudioUi.js?v=<%= assetV %>"></script>
 </body>
 </html>

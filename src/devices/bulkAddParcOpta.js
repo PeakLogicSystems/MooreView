@@ -12,9 +12,38 @@ const {
 function isParcRegistryNoiseId(deviceId) {
   const id = String(deviceId || '').trim();
   if (!id) return true;
-  return /^(test|dbg)[-_]/i.test(id)
-    || /^opta_(bulk|sync)_/i.test(id)
+  return /^(test|dbg|off|rec)[-_]/i.test(id)
+    || /^mv_test[_-]/i.test(id)
+    || /_test_/i.test(id)
+    || /^opta_(bulk|sync|force|wait|remote_trace)_/i.test(id)
+    || /^opta_remote_trace/i.test(id)
+    || /^opta_wait_/i.test(id)
     || /^opta_st_\d+$/i.test(id);
+}
+
+/**
+ * Only commission real Opta ATECC identities that still look alive.
+ * Avoids turning every stale parc.json test row into an mqtt_parc driver (UI Connect freezes).
+ */
+function isEligibleParcReconcileDevice(dev) {
+  const deviceId = String(dev?.deviceId || '').trim();
+  if (!deviceId || isParcRegistryNoiseId(deviceId)) return false;
+  const { isAteccDeviceId, normalizeAteccSerialHex, mvDeviceIdFromAteccSerial, legacyOptaDeviceIdFromAteccSerial } = require('../parc/optaSerial');
+  if (!isAteccDeviceId(deviceId)) return false;
+  const serial = normalizeAteccSerialHex(dev?.meta?.ateccSerial || dev?.ateccSerial || '');
+  if (!serial) return false;
+  try {
+    const expectedMv = mvDeviceIdFromAteccSerial(serial);
+    const expectedLegacy = legacyOptaDeviceIdFromAteccSerial(serial);
+    if (deviceId !== expectedMv && deviceId !== expectedLegacy) return false;
+  } catch {
+    return false;
+  }
+  if (dev.stale === true) return false;
+  if (dev.ageSec != null && Number(dev.ageSec) > 600) return false;
+  const last = Date.parse(dev.lastReportAt || '');
+  if (Number.isFinite(last) && Date.now() - last > 7 * 24 * 3600 * 1000) return false;
+  return true;
 }
 
 /** Remove mqtt_parc/opta_remote drivers whose deviceId is registry noise (test/debug/template IDs). */
@@ -143,7 +172,10 @@ function buildParcOptaDriver(deviceId, opts = {}, registryDev = null) {
 function registryDevMap(registry) {
   const map = new Map();
   for (const d of registry.listDevices()) {
-    map.set(d.deviceId, d);
+    const full = typeof registry.getDevice === 'function'
+      ? (registry.getDevice(d.deviceId) || d)
+      : d;
+    map.set(d.deviceId, full);
   }
   return map;
 }
@@ -349,10 +381,30 @@ function reconcileMqttParcDriversFromRegistry(drivers, registry) {
   const next = [...list];
   const added = [];
   let index = 0;
-  for (const dev of registry.listDevices()) {
-    const deviceId = dev.deviceId;
-    if (!deviceId || isParcRegistryNoiseId(deviceId)) continue;
+  for (const summary of registry.listDevices()) {
+    const deviceId = summary.deviceId;
+    const dev = typeof registry.getDevice === 'function'
+      ? (registry.getDevice(deviceId) || summary)
+      : summary;
+    if (!isEligibleParcReconcileDevice(dev)) continue;
     if (existingDeviceIds.has(deviceId)) continue;
+    // Prefer mv_* identity — skip adding a second driver for the legacy opta_* sibling.
+    const serial = String(dev?.meta?.ateccSerial || dev?.ateccSerial || '').trim();
+    if (serial && /^opta_/i.test(deviceId)) {
+      try {
+        const { mvDeviceIdFromAteccSerial } = require('../parc/optaSerial');
+        const mvId = mvDeviceIdFromAteccSerial(serial);
+        if (existingDeviceIds.has(mvId)) continue;
+        const mvDev = typeof registry.getDevice === 'function' ? registry.getDevice(mvId) : null;
+        if (
+          mvDev
+          && String(mvDev.deviceId || '').trim() === mvId
+          && isEligibleParcReconcileDevice(mvDev)
+        ) {
+          continue;
+        }
+      } catch { /* fall through */ }
+    }
     const positionId = resolvePositionId(deviceId, { usePositionIds: true }, dev, index, existingPositionIds);
     index += 1;
     if (existingPositionIds.has(positionId)) continue;
@@ -379,5 +431,6 @@ module.exports = {
   replaceParcOptaHardware,
   renameParcOptaPosition,
   reconcileMqttParcDriversFromRegistry,
+  isEligibleParcReconcileDevice,
   isSnBasedPositionId,
 };

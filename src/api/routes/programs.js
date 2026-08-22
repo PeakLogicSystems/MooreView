@@ -6,7 +6,11 @@ const { loadFixtureBundle } = require('../../programs/programFixtures');
 const { ensureMotorTags, isMotorProgramPath } = require('../../programs/motorTags');
 const { parseProgram, collectProgramTagRefs } = require('../../engine/parser');
 const { estimateOptaDeploy } = require('../../parc/mqttOptaProgram');
-const { OPTA_PROGRAM_MAX_BYTES, clientDeployMeta } = require('../../drivers/optaProtocol');
+const {
+  OPTA_PROGRAM_MAX_BYTES,
+  OPTA_PROGRAM_MAX_WIRE_BYTES,
+  optaDeployLimitsFromDeviceStatus,
+} = require('../../drivers/optaProtocol');
 
 function unknownTagsFromErrors(errors) {
   return [...new Set((errors || [])
@@ -22,12 +26,13 @@ function findRemoteOptaDriverId(driverManager) {
   return cfg?.id || null;
 }
 
-function optaProgramLimitBytes(driverManager, driverId) {
+function optaProgramDeployLimits(driverManager, driverId) {
   const id = driverId || findRemoteOptaDriverId(driverManager);
-  if (!id) return OPTA_PROGRAM_MAX_BYTES;
+  if (!id) {
+    return { bcLimit: OPTA_PROGRAM_MAX_BYTES, wireLimit: OPTA_PROGRAM_MAX_WIRE_BYTES };
+  }
   const inst = driverManager.instances.get(id);
-  const fromDevice = Number(inst?._deviceStatus?.programMaxBytes);
-  return fromDevice > 0 ? fromDevice : OPTA_PROGRAM_MAX_BYTES;
+  return optaDeployLimitsFromDeviceStatus(inst?._deviceStatus);
 }
 
 function createProgramRoutes(deps) {
@@ -183,18 +188,23 @@ function createProgramRoutes(deps) {
   });
 
   router.put('/program', (req, res) => {
-    programStore.writeActive(req.body.source || '');
-    const r = scanEngine.loadProgram();
-    const active = programStore.activeRel();
-    const errors = r.errors || [];
-    res.json({
-      ok: true,
-      programOk: r.ok,
-      errors,
-      unknownTags: unknownTagsFromErrors(errors),
-      active,
-      source: programStore.readActive(),
-    });
+    try {
+      const raw = req.body?.source ?? req.body?.program ?? '';
+      programStore.writeActive(raw);
+      const r = scanEngine.loadProgram();
+      const active = programStore.activeRel();
+      const errors = r.errors || [];
+      res.json({
+        ok: true,
+        programOk: r.ok,
+        errors,
+        unknownTags: unknownTagsFromErrors(errors),
+        active,
+        source: programStore.readActive(),
+      });
+    } catch (e) {
+      res.status(e.status || 400).json({ error: e.message || String(e) });
+    }
   });
 
   router.post('/programs/save', (req, res) => {
@@ -265,14 +275,17 @@ function createProgramRoutes(deps) {
         astBytes: 0,
         tagCount: 0,
         limit: OPTA_PROGRAM_MAX_BYTES,
+        wireLimit: OPTA_PROGRAM_MAX_WIRE_BYTES,
         overLimit: false,
         headroom: OPTA_PROGRAM_MAX_BYTES,
+        wireHeadroom: OPTA_PROGRAM_MAX_WIRE_BYTES,
         pct: 0,
       });
     }
-    const limit = optaProgramLimitBytes(driverManager, driverId);
+    const { bcLimit, wireLimit } = optaProgramDeployLimits(driverManager, driverId);
     const est = estimateOptaDeploy(src, tagStore, driverId, {
-      limitBytes: limit,
+      bcLimitBytes: bcLimit,
+      wireLimitBytes: wireLimit,
       programName: programStore.activeRel() || '',
     });
     if (!est.ok) {
@@ -282,7 +295,8 @@ function createProgramRoutes(deps) {
         remoteApplicable: true,
         errors,
         error: errors.join('; '),
-        limit,
+        limit: bcLimit,
+        wireLimit,
       });
     }
     res.json({ ...est, remoteApplicable: true, driverId });

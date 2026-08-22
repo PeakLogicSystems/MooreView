@@ -2,7 +2,14 @@
 
 const {
   diTags, doTags, holdingRegTags, inputRegTags, explicitModbusTags, explicitVgreenTags, scanConcubeParameterTags,
-  optaExpansionTags, edgepointGatewayTags, edgepointEventsTopic,
+  optaExpansionTags,   optaParcModbusDraginoTags, edgepointGatewayTags, edgepointLiftStationTags,
+  liftStationLogicTagsFromFixture,
+  optaParcEzmeterTags,
+  edgepointEventsTopic,
+  normalizeEdgepointSerial,
+  mqttJsonInboundTags,
+  jxctSoil7in1Tags,
+  dfrobotPoolChemistryDraginoTags,
 } = require('./tagBuilders');
 
 /** Shared RS-485 bus (multi-slave DI/Q) vs dedicated driver row (explicit register map). */
@@ -45,6 +52,10 @@ function buildPresetFromJson(spec) {
     aiCount: spec.aiCount,
     hrCount: spec.hrCount,
     tagsFromDevice: spec.tagsFromDevice === true,
+    stationType: spec.stationType || null,
+    defaultProgram: spec.defaultProgram || null,
+    pdm: spec.pdm && typeof spec.pdm === 'object' ? spec.pdm : null,
+    dragino: spec.dragino && typeof spec.dragino === 'object' ? spec.dragino : null,
     defaults: spec.defaults || {},
     driver: (opts) => {
       const id = opts.driverId || driverIdDefault;
@@ -60,6 +71,24 @@ function buildPresetFromJson(spec) {
           timeoutMs: d.timeoutMs ?? 1000,
         };
       }
+      if (spec.transport === 'pentair_rs485') {
+        const defs = spec.defaults || {};
+        return {
+          id,
+          type: 'pentair_rs485',
+          enabled: d.enabled !== false,
+          serialPort: opts.serialPort || d.serialPort || defs.serialPort || 'COM4',
+          baud: opts.baud ?? d.baud ?? defs.baud ?? 9600,
+          deviceAddr: opts.deviceAddr ?? d.deviceAddr ?? defs.deviceAddr,
+          deviceClass: opts.deviceClass || d.deviceClass || defs.deviceClass,
+          parity: opts.parity || d.parity || defs.parity || 'none',
+          stopBits: opts.stopBits ?? d.stopBits ?? defs.stopBits ?? 1,
+          timeoutMs: d.timeoutMs ?? 2000,
+          frameDelayMs: d.frameDelayMs ?? 30,
+          busGapMs: opts.busGapMs ?? d.busGapMs ?? defs.busGapMs ?? 120,
+          pollIntervalMs: opts.pollIntervalMs ?? d.pollIntervalMs ?? defs.pollIntervalMs ?? 60000,
+        };
+      }
       if (spec.transport === 'vgreen_epc') {
         return {
           id,
@@ -73,14 +102,21 @@ function buildPresetFromJson(spec) {
           timeoutMs: d.timeoutMs ?? 2000,
         };
       }
-      if (spec.transport === 'opta_remote' || spec.transport === 'mqtt_parc') {
+      if (spec.transport === 'opta_remote' || spec.transport === 'mqtt_parc' || spec.transport === 'mqtt_parc_telemetry') {
         const defs = spec.defaults || {};
+        const telemetryOnly = spec.transport === 'mqtt_parc_telemetry'
+          || d.telemetryOnly === true
+          || defs.telemetryOnly === true;
         return {
           id,
           type: 'mqtt_parc',
           enabled: d.enabled !== false,
           deviceId: opts.deviceId || d.deviceId || defs.deviceId || id,
-          remoteExecution: opts.remoteExecution ?? d.remoteExecution ?? defs.remoteExecution !== false,
+          platform: d.platform || defs.platform,
+          remoteExecution: telemetryOnly
+            ? false
+            : (opts.remoteExecution ?? d.remoteExecution ?? defs.remoteExecution !== false),
+          telemetryOnly: telemetryOnly || undefined,
           scanMs: opts.scanMs ?? d.scanMs ?? defs.scanMs ?? 100,
           reportIntervalMs: opts.reportIntervalMs
             ?? d.reportIntervalMs
@@ -106,7 +142,8 @@ function buildPresetFromJson(spec) {
       }
       if (spec.transport === 'mqtt') {
         const defs = spec.defaults || {};
-        const serialNum = opts.serialNum || d.serialNum || defs.serialNum || '';
+        const serialRaw = opts.serialNum || d.serialNum || defs.serialNum || '';
+        const serialNum = serialRaw ? normalizeEdgepointSerial(serialRaw) : '';
         const eventsTopic = serialNum ? edgepointEventsTopic(serialNum) : null;
         const subscriptions = opts.subscriptions || d.subscriptions || defs.subscriptions;
         return {
@@ -206,6 +243,60 @@ function buildTagsFromSpec(driverId, tagsSpec, applyOpts = {}) {
   if (tagsSpec.edgepoint) {
     const serialNum = applyOpts.serialNum || tagsSpec.edgepoint.serialNum;
     out.push(...edgepointGatewayTags(driverId, serialNum, tagsSpec.edgepoint));
+  }
+  if (tagsSpec.edgepointLift) {
+    const serialNum = applyOpts.serialNum || tagsSpec.edgepointLift.serialNum;
+    const profile = applyOpts.liftProfile || tagsSpec.edgepointLift.profile || 'epi_master';
+    out.push(...edgepointLiftStationTags(driverId, serialNum, {
+      ...tagsSpec.edgepointLift,
+      profile,
+    }));
+  }
+  if (tagsSpec.mqttJson) {
+    const cfg = typeof tagsSpec.mqttJson === 'object' ? tagsSpec.mqttJson : {};
+    const serialRaw = applyOpts.serialNum || cfg.serialNum || '';
+    const serialNum = serialRaw ? normalizeEdgepointSerial(serialRaw) : '';
+    const topicTpl = cfg.topicTemplate || '/devices/{serial}/messages/events/';
+    const topic = cfg.topic
+      || (serialNum ? topicTpl.replace(/\{serial\}/gi, serialNum) : topicTpl.replace(/\{serial\}/gi, 'REPLACE_SERIAL'));
+    out.push(...mqttJsonInboundTags(driverId, topic, cfg));
+  }
+  if (tagsSpec.logicFixture) {
+    out.push(...liftStationLogicTagsFromFixture(tagsSpec.logicFixture));
+  }
+  if (tagsSpec.optaParcDragino) {
+    const cfg = typeof tagsSpec.optaParcDragino === 'object' ? tagsSpec.optaParcDragino : {};
+    out.push(...optaParcModbusDraginoTags(driverId, cfg));
+  }
+  if (tagsSpec.optaParcEzmeter) {
+    const cfg = typeof tagsSpec.optaParcEzmeter === 'object' ? tagsSpec.optaParcEzmeter : {};
+    out.push(...optaParcEzmeterTags(driverId, cfg));
+  }
+  if (tagsSpec.jxctSoil7in1) {
+    const cfg = typeof tagsSpec.jxctSoil7in1 === 'object' ? tagsSpec.jxctSoil7in1 : {};
+    out.push(...jxctSoil7in1Tags(driverId, cfg));
+  }
+  if (Array.isArray(tagsSpec.pentair)) {
+    for (const t of tagsSpec.pentair) {
+      out.push({
+        id: t.id,
+        type: t.type || 'INT',
+        role: t.role || 'input',
+        value: t.value ?? (t.type === 'BOOL' ? false : 0),
+        wordWidth: t.type === 'INT' ? 16 : undefined,
+        driverId,
+        driverAddress: {
+          pentair: t.point,
+          deviceClass: t.deviceClass,
+          ...(t.deviceAddr != null ? { deviceAddr: t.deviceAddr } : {}),
+        },
+        comment: t.comment,
+      });
+    }
+  }
+  if (tagsSpec.dfrobotPoolChemistry) {
+    const cfg = typeof tagsSpec.dfrobotPoolChemistry === 'object' ? tagsSpec.dfrobotPoolChemistry : {};
+    out.push(...dfrobotPoolChemistryDraginoTags(driverId, cfg));
   }
   return out;
 }

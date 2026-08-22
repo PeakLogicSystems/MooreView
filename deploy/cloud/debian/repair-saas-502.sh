@@ -25,36 +25,9 @@ curl -sf "http://127.0.0.1:3090/health" && log ":3090 OK" || warn ":3090 not res
 
 # --- nginx -> 3100 ---
 NGINX_SITE="/etc/nginx/sites-available/mooreview-saas"
-if [[ -f "${SCRIPT_DIR}/nginx-mooreview-saas.conf" ]]; then
-  cp "${SCRIPT_DIR}/nginx-mooreview-saas.conf" "$NGINX_SITE"
-elif [[ -f "${SCRIPT_DIR}/nginx-mooreview-domain.conf" ]]; then
-  cp "${SCRIPT_DIR}/nginx-mooreview-domain.conf" "$NGINX_SITE"
-  sed -i 's|127.0.0.1:3090|127.0.0.1:3100|g' "$NGINX_SITE"
-else
-  cat > "$NGINX_SITE" <<'EOF'
-server {
-    listen 80;
-    listen [::]:80;
-    server_name mooreview.io www.mooreview.io;
-    client_max_body_size 50m;
-    location / {
-        proxy_pass http://127.0.0.1:3100;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_read_timeout 86400;
-    }
-}
-EOF
-fi
-
-rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-enabled/mooreview 2>/dev/null || true
-ln -sf "$NGINX_SITE" /etc/nginx/sites-enabled/mooreview-saas
-nginx -t
+DOMAIN="${MOOREVIEW_DOMAIN:-mooreview.io}"
+MOOREVIEW_DOMAIN="$DOMAIN" MOOREVIEW_SAAS_PORT="$PORT" NGINX_SITE="$NGINX_SITE" \
+  bash "${SCRIPT_DIR}/write-nginx-saas-site.sh"
 systemctl restart nginx
 log "nginx now proxies to :${PORT}"
 

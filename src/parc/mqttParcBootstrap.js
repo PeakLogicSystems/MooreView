@@ -16,6 +16,8 @@ function mqttParcHubConnectionKey(cfg = {}) {
     clientId: n.clientId,
     username: n.username,
     password: n.password,
+    dragino: n.dragino,
+    cloudTenantIngest: !!n.cloudTenantIngest,
   });
 }
 
@@ -40,6 +42,19 @@ function defaultMqttParcSettings(prev = {}) {
     globalSiteKey: resolveGlobalSiteKey(prev),
     cloudTenantIngest: prev.cloudTenantIngest === true
       || process.env.MOOREVIEW_DEPLOYMENT === 'cloud',
+    dragino: {
+      enabled: prev.dragino?.enabled !== false,
+      topicPrefix: String(prev.dragino?.topicPrefix || 'dragino').replace(/\/+$/, '') || 'dragino',
+      topicSuffix: String(prev.dragino?.topicSuffix || 'uplink').replace(/^\/+/, '') || 'uplink',
+      deviceIdPrefix: String(prev.dragino?.deviceIdPrefix || 'dragino_').trim() || 'dragino_',
+      cloudTenantId: String(prev.dragino?.cloudTenantId || '').trim(),
+    },
+    ezMeter: {
+      nominalVoltage: Number(prev.ezMeter?.nominalVoltage) || 120,
+      undervoltV: Number(prev.ezMeter?.undervoltV) || 108,
+      overvoltV: Number(prev.ezMeter?.overvoltV) || 132,
+      thdAlarmPct: Number(prev.ezMeter?.thdAlarmPct) || 8,
+    },
   };
 }
 

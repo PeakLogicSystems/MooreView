@@ -2,55 +2,88 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
   <title>Sign in · MooreVIEW Cloud Studio</title>
   <style>
-    /* Site color standard — same tokens as public/css/pc.css */
+    /* Purple Standard — matches public/css/pc.css topbar + docs/PURPLE_STANDARD.md */
     :root {
-      --bg: #f1f5f9;
-      --sidebar: #1e293b;
-      --accent: #2563eb;
-      --text: #0f172a;
-      --muted: #64748b;
-      --border: #cbd5e1;
-      --brand-cyan: #93c5fd;
+      --ps-purple: #49104F;
+      --ps-purple-dark: #3a0d3f;
+      --ps-purple-deep: #2c0930;
+      --ps-purple-light: #efd9f2;
+      --ps-gradient-start: rgba(73, 16, 79, 0.92);
+      --ps-gradient-end: rgba(44, 9, 48, 0.96);
+      --bg: #f8f9fa;
+      --text: #212529;
+      --muted: #6c757d;
+      --border: #dee2e6;
     }
     * { box-sizing: border-box; }
     html, body {
       margin: 0;
       min-height: 100%;
-      font-family: "Segoe UI", system-ui, sans-serif;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
       background: var(--bg);
       color: var(--text);
     }
-    .login-top {
-      background: var(--sidebar);
-      color: #e2e8f0;
-      padding: 0.75rem 1.25rem;
-      font-size: 1.25rem;
+    .login-shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+    }
+    @media (max-width: 860px) {
+      .login-shell { grid-template-columns: 1fr; }
+      .login-hero { min-height: 12rem; }
+    }
+    .login-hero {
+      position: relative;
+      background:
+        linear-gradient(135deg, var(--ps-gradient-start), var(--ps-gradient-end)),
+        radial-gradient(circle at 20% 80%, rgba(239, 217, 242, 0.15), transparent 55%);
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 2.5rem 2rem;
+    }
+    .login-hero .brand {
+      font-size: 2rem;
       font-weight: 700;
       letter-spacing: 0.02em;
+      margin-bottom: 0.75rem;
     }
-    .login-top span { color: var(--brand-cyan); font-weight: 600; }
-    .login-wrap {
-      min-height: calc(100vh - 3rem);
+    .login-hero .brand span { color: var(--ps-purple-light); font-weight: 600; }
+    .login-hero .tagline {
+      max-width: 22rem;
+      font-size: 1.05rem;
+      line-height: 1.5;
+      color: rgba(255, 255, 255, 0.92);
+    }
+    .login-hero .byline {
+      margin-top: auto;
+      padding-top: 2rem;
+      font-size: 0.8rem;
+      color: rgba(255, 255, 255, 0.65);
+    }
+    .login-panel {
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 1.5rem;
+      padding: 2rem 1.5rem;
     }
     .login-card {
       width: 100%;
       max-width: 420px;
       background: #fff;
       border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 1.5rem;
-      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+      border-radius: 8px;
+      padding: 1.75rem;
+      box-shadow: 0 4px 24px rgba(73, 16, 79, 0.08);
     }
     .login-card h1 {
       margin: 0 0 0.35rem;
       font-size: 1.35rem;
+      font-weight: 700;
       color: var(--text);
     }
     .login-card .lead {
@@ -75,25 +108,30 @@
       font-size: 0.95rem;
     }
     .login-card input:focus {
-      outline: 2px solid var(--accent);
+      outline: 2px solid var(--ps-purple);
       outline-offset: 1px;
-      border-color: var(--accent);
+      border-color: var(--ps-purple);
     }
     .login-card button {
       width: 100%;
       margin-top: 1.25rem;
-      padding: 0.55rem 0.9rem;
-      border: 1px solid var(--accent);
+      padding: 0.6rem 0.9rem;
+      border: 1px solid var(--ps-purple);
       border-radius: 6px;
-      background: var(--accent);
+      background: var(--ps-purple);
       color: #fff;
       font-size: 0.95rem;
       font-weight: 600;
       cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
     }
-    .login-card button:hover { background: #1d4ed8; border-color: #1d4ed8; }
+    .login-card button:hover {
+      background: var(--ps-purple-dark);
+      border-color: var(--ps-purple-dark);
+      box-shadow: 0 4px 12px rgba(73, 16, 79, 0.25);
+    }
     .login-err {
-      color: #dc2626;
+      color: #dc3545;
       font-size: 0.9rem;
       min-height: 1.25em;
       margin-top: 0.75rem;
@@ -105,7 +143,7 @@
       line-height: 1.45;
     }
     .login-hint code {
-      background: #f1f5f9;
+      background: #f8f9fa;
       border: 1px solid var(--border);
       border-radius: 4px;
       padding: 0.05rem 0.3rem;
@@ -114,24 +152,32 @@
   </style>
 </head>
 <body>
-  <header class="login-top">Moore<span>VIEW</span></header>
-  <div class="login-wrap">
-    <form class="login-card" id="login-form" autocomplete="on">
-      <h1>Cloud Studio</h1>
-      <p class="lead">Sign in with your organization ID</p>
-      <label for="organizationId">Organization ID</label>
-      <input id="organizationId" name="organizationId" autocomplete="organization" placeholder="demo" required value="demo">
-      <label for="email">Email</label>
-      <input id="email" name="email" type="email" autocomplete="username" required placeholder="operator@demo.local">
-      <label for="password">Password</label>
-      <input id="password" name="password" type="password" autocomplete="current-password" required>
-      <button type="submit">Sign in</button>
-      <div class="login-err" id="login-err" role="alert"></div>
-      <p class="login-hint">
-        Demo: org <code>demo</code>, <code>operator@demo.local</code> / <code>demo</code><br>
-        Admin: <code>admin@demo.local</code> / <code>ChangeMeAdmin!</code>
-      </p>
-    </form>
+  <div class="login-shell">
+    <aside class="login-hero" aria-hidden="true">
+      <div class="brand">Moore<span>VIEW</span></div>
+      <p class="tagline">Cloud Studio — multi-tenant SCADA, historian, CMMS, and site fleet management.</p>
+      <p class="byline">Purple Standard</p>
+    </aside>
+    <main class="login-panel">
+      <form class="login-card" id="login-form" autocomplete="on">
+        <h1>Sign in</h1>
+        <p class="lead">Organization ID, email, and password</p>
+        <label for="organizationId">Organization ID</label>
+        <input id="organizationId" name="organizationId" autocomplete="organization" placeholder="your-org-id" required<% if (!showDemoLogin) { %> value=""<% } else { %> value="demo"<% } %>>
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" autocomplete="username" required placeholder="you@company.com">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <button type="submit">Sign in</button>
+        <div class="login-err" id="login-err" role="alert"></div>
+        <% if (showDemoLogin) { %>
+        <p class="login-hint">
+          Demo: org <code>demo</code>, <code>operator@demo.local</code> / <code>demo</code><br>
+          Admin: <code>admin@demo.local</code> / <code>ChangeMeAdmin!</code>
+        </p>
+        <% } %>
+      </form>
+    </main>
   </div>
   <script>
     const next = new URLSearchParams(location.search).get('next') || '/';

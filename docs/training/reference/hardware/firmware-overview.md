@@ -1,11 +1,11 @@
-# MooreVIEW Arduino ST Runtime
+# mooreVIEW Arduino ST Runtime
 
-On-device **Structured Text interpreter** for Arduino Opta (and compatible Portenta H7 targets). MooreVIEW PC parses `.st` into a JSON AST; firmware loads and executes that AST on every scan cycle.
+On-device **Structured Text interpreter** for Arduino Opta (and compatible Portenta H7 targets). mooreVIEW PC parses `.st` into a JSON AST; firmware loads and executes that AST on every scan cycle.
 
 ## Architecture
 
 ```
-MooreVIEW PC                          Arduino Opta
+mooreVIEW PC                          Arduino Opta
 ─────────────                         ────────────
 .st source  ──parse──►  AST JSON  ──HTTP/MQTT──►  mvProgramLoad()
 tag metadata                              │      mvExecuteScan(dtMs)
@@ -28,6 +28,7 @@ tag metadata                              │      mvExecuteScan(dtMs)
 |--------|-----------|----------|
 | `arduino-opta-st/` | Ethernet HTTP | Single Opta, `opta_remote` driver |
 | `arduino-opta-mqtt-st/` | MQTT + optional HTTP | Parc deploy via `mqtt_parc_opta` |
+| `arduino-t-eth-a7670-modem-test/` | USB Serial AT | LilyGO T-ETH-ELITE-A7670X modem bring-up |
 
 Both share the same `mv_st.cpp` interpreter (keep copies in sync when editing).
 
@@ -50,7 +51,7 @@ Both share the same `mv_st.cpp` interpreter (keep copies in sync when editing).
 
 ## Deploy ST program
 
-**HTTP:** MooreVIEW `OptaRemoteDriver.deployProgram()` → `PUT /api/program`.
+**HTTP:** mooreVIEW `OptaRemoteDriver.deployProgram()` → `PUT /api/program`.
 
 **MQTT:** `put_program` command with same JSON body (`src/parc/mqttOptaProgram.js`).
 

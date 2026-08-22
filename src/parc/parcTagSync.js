@@ -1,7 +1,48 @@
 'use strict';
 
 const { applyDefaultLabel } = require('../tags/tagLabels');
+const { rawToEngineering } = require('../tags/tagAnalog');
 const { inferTagType, inferTagRole } = require('./optaTagMeta');
+
+function normalizeParcRole(row) {
+  let role = row?.role || inferTagRole(row?.id, row?.type);
+  if (role === 'in') role = 'input';
+  if (role === 'out') role = 'output';
+  if (role === 'mem') role = 'memory';
+  return role;
+}
+
+const PARC_ROLE_RANK = { input: 0, output: 1, memory: 2, fb: 3 };
+
+/** Collapse duplicate tag ids — prefer hardware input/output rows over memory copies. */
+function dedupeParcTags(tags) {
+  const byId = new Map();
+  for (const row of tags || []) {
+    const id = String(row?.id || '').trim();
+    if (!id) continue;
+    const existing = byId.get(id);
+    if (!existing) {
+      byId.set(id, row);
+      continue;
+    }
+    const rankNew = PARC_ROLE_RANK[normalizeParcRole(row)] ?? 9;
+    const rankOld = PARC_ROLE_RANK[normalizeParcRole(existing)] ?? 9;
+    if (rankNew < rankOld) byId.set(id, row);
+  }
+  return [...byId.values()];
+}
+
+/** id → row map for Parc telemetry sync (hardware inputs win over memory duplicates). */
+function buildParcTagSnap(tags) {
+  return new Map(dedupeParcTags(tags).map((row) => [row.id, row]));
+}
+
+function isParcHardwareIoRow(row) {
+  const id = String(row?.id || '').trim();
+  if (!id) return false;
+  const role = normalizeParcRole(row);
+  return role === 'input' || role === 'output';
+}
 
 /** Map Parc telemetry tag row → MooreVIEW tag store row. */
 function parcRowToStoreTag(row, driverId) {
@@ -83,4 +124,61 @@ function mergeParcTagsIntoStore(existingTags, parcTags, driverId) {
   return { ok: true, tags: [...stripped, ...incoming], count: incoming.length };
 }
 
-module.exports = { parcRowToStoreTag, mergeParcTagsIntoStore };
+/** Add missing physical input/output tags from Parc telemetry (analog RAW, Xn_AI*, etc.). */
+function ensureParcHardwareTags(store, parcTags, opts = {}) {
+  const driverId = opts.driverId ?? null;
+  let added = 0;
+  for (const row of parcTags || []) {
+    if (!isParcHardwareIoRow(row)) continue;
+    if (store.get(row.id)) continue;
+    const tag = parcRowToStoreTag(row, driverId);
+    if (!tag) continue;
+    store.upsert({ ...tag, driverId: tag.driverId ?? driverId ?? null });
+    added += 1;
+  }
+  return added;
+}
+
+/** Apply latest Parc hardware I/O values into an existing tag store row. */
+function applyParcHardwareTelemetry(store, parcTags, opts = {}) {
+  const quality = opts.stale ? 'STALE' : 'GOOD';
+  let n = 0;
+  for (const row of parcTags || []) {
+    if (!isParcHardwareIoRow(row)) continue;
+    const t = store.get(row.id);
+    if (!t) continue;
+    if (store.isDriverReadSkipped?.(t)) continue;
+    let val = row.value;
+    if (t.type === 'BOOL') val = !!val;
+    else if (t.type === 'INT') {
+      val = Math.trunc(rawToEngineering(Math.trunc(Number(val) || 0), t));
+    } else if (t.type === 'REAL' || t.type === 'PID' || t.type === 'AVG') {
+      val = rawToEngineering(Number(val) || 0, t);
+    }
+    if (typeof store.applyParcTelemetry === 'function') {
+      store.applyParcTelemetry(t.id, {
+        value: val,
+        quality,
+        forceInput: row.forceInput,
+        forceOutput: row.forceOutput,
+        forceValue: row.forceValue,
+        logicValue: row.logicValue,
+        type: t.type,
+      });
+    } else {
+      store.setValue(t.id, val, quality);
+    }
+    n += 1;
+  }
+  return n;
+}
+
+module.exports = {
+  parcRowToStoreTag,
+  mergeParcTagsIntoStore,
+  isParcHardwareIoRow,
+  ensureParcHardwareTags,
+  applyParcHardwareTelemetry,
+  dedupeParcTags,
+  buildParcTagSnap,
+};

@@ -25,5 +25,16 @@
     "input": [{ "prefix": "I", "suffix": "_RAW", "count": 8, "start": 0 }],
     "holding": [{ "prefix": "H", "count": 8, "start": 0 }]
   },
-  "notes": "Adds mqtt_parc driver only. On Opta: /setup → Scan expansions. Then Drivers → Sync tags from Parc device."
+  "notes": "Adds mqtt_parc driver only. On Opta: /setup → Scan expansions. Then Drivers → Sync tags from Parc device. CT inputs I1–I6 (I1_RAW–I6_RAW) feed on-device PdM edge inference for pump-1 / pump-2.",
+  "pdm": {
+    "motorType": "pump",
+    "application": "lift_station",
+    "configuration": "duplex",
+    "locationClass": "strip_mall",
+    "floatLadder": "pull_down",
+    "assets": [
+      { "assetId": "pump-1", "pumpIndex": 1, "pumpRole": "lead" },
+      { "assetId": "pump-2", "pumpIndex": 2, "pumpRole": "lag" }
+    ]
+  }
 }

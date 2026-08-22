@@ -1,4 +1,4 @@
-# MooreVIEW — USPTO Trademark Summary
+# mooreVIEW — USPTO Trademark Summary
 ## International Classes 9 & 42 (TEAS-Ready)
 
 **Document version:** 1.0 · **Date:** June 2026  
@@ -37,7 +37,7 @@
 ### Mark appears on
 
 - Engineering and operator UIs
-- MooreVIEW Cloud Studio
+- mooreVIEW Cloud Studio
 - Installers and appliance bundles
 - Technical documentation and MQTT integration specs
 - Equipment nameplates, enclosure labels, and HMI bezels
@@ -64,7 +64,7 @@
 ### CMMS
 
 - Integrated work orders, assets, facilities, and users
-- MooreVIEW CMMS Integration v1 MQTT (alarms, alarm-notify)
+- mooreVIEW CMMS Integration v1 MQTT (alarms, alarm-notify)
 - Cloud tenant CMMS entitlement
 - Standalone MQTT bridge to external CMMS
 
@@ -185,7 +185,7 @@
 - **Cl. 9 hardware** — Nameplate or HMI bezel photo; appliance datasheet
 - **Cl. 9 white-label** — OEM agreement; dual-brand label; About screen
 - **Cl. 42 SaaS** — Cloud login + Studio dashboard
-- **Cl. 42 CMMS** — Work orders / assets UI in MooreVIEW shell
+- **Cl. 42 CMMS** — Work orders / assets UI in mooreVIEW shell
 - **Cl. 42 AI / PdM** — Historian PdM chart / failure forecast UI
 - **Cl. 42 white-label** — Integrator SOW or white-label partner agreement
 
@@ -199,4 +199,4 @@
 
 ---
 
-*Prepared from MooreVIEW product documentation (MVP Suite, Cloud Studio, CMMS Integration v1, PdM/edge AI, appliance templates). Verify all statements against current use in commerce before filing.*
+*Prepared from mooreVIEW product documentation (MVP Suite, Cloud Studio, CMMS Integration v1, PdM/edge AI, appliance templates). Verify all statements against current use in commerce before filing.*

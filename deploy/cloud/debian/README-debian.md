@@ -1,14 +1,22 @@
-# MooreVIEW Cloud on Debian / Ubuntu (native install — **full GUI**)
+# mooreVIEW Cloud on Debian / Ubuntu (native install — **full GUI**)
 
-Headless MooreVIEW cloud VM on **Debian 12** or **Ubuntu 22.04/24.04** without Docker: **MongoDB 7**, **Mosquitto MQTT**, and the **full MooreVIEW GUI** (ST editor, HMI, runtime, historian, Parc) on port **3090**.
+Headless mooreVIEW cloud VM on **Debian 12** or **Ubuntu 22.04/24.04** without Docker: **MongoDB 7**, **Mosquitto MQTT**, and the **full mooreVIEW GUI** (ST editor, HMI, runtime, historian, Parc) on port **3090**.
 
-For multi-tenant SaaS (`/login`, `/studio`, port **3100**), see [mooreview-cloud/DEPLOY.md](../../../../mooreview-cloud/DEPLOY.md) — different install path.
+For **multi-tenant SaaS** (`/login`, port **3100**, DO Managed MongoDB), see **[docs/CLOUD_DEPLOY_DO.md](../../../docs/CLOUD_DEPLOY_DO.md)** and **[debian/INSTALL-SAAS.txt](INSTALL-SAAS.txt)**.
+
+Build bundle from est-pc (no separate repo required):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\create-saas-bundle.ps1
+```
+
+Legacy sync via sibling `mooreview-cloud` repo: `scripts/create-cloud-bundle.ps1`.
 
 **Install path:** `/home/mooreview`  
 **Target platforms:** Debian 11/12 or Ubuntu 22.04/24.04 on **amd64** (DigitalOcean droplet, bare metal) and **arm64** SBC (e.g. Raspberry Pi 64-bit). ≥2 GB RAM recommended.
 
 For Docker Compose on Ubuntu, see [../README.md](../README.md).  
-For the **multi-tenant SaaS API** (`npm start`, port 3100, managed MongoDB), see [mooreview-cloud/DEPLOY.md](../../../../mooreview-cloud/DEPLOY.md).
+For the **multi-tenant SaaS API** (port 3100, managed MongoDB), see **[docs/CLOUD_DEPLOY_DO.md](../../../docs/CLOUD_DEPLOY_DO.md)**.
 
 ## What runs
 
@@ -197,7 +205,7 @@ sudo -E bash /home/mooreview/deploy/cloud/debian/install.sh
 sudo ufw allow OpenSSH
 sudo ufw allow 80/tcp comment 'HTTP (domain + certbot)'
 sudo ufw allow 443/tcp comment 'HTTPS mooreview.io'
-sudo ufw allow 3090/tcp comment 'MooreVIEW API (optional if using nginx)'
+sudo ufw allow 3090/tcp comment 'mooreVIEW API (optional if using nginx)'
 sudo ufw allow 1883/tcp comment 'MQTT Parc + cloud uplink'
 # Do NOT expose 27017 — Mongo stays on localhost
 sudo ufw enable
@@ -208,7 +216,7 @@ For production, terminate TLS on 443 (nginx/Caddy) and restrict 1883 to known ap
 
 ### Port 80 (optional — browse without `:3090`)
 
-Reverse-proxy with nginx so `http://<host>/` serves MooreVIEW:
+Reverse-proxy with nginx so `http://<host>/` serves mooreVIEW:
 
 ```bash
 sudo apt install -y nginx
@@ -216,7 +224,7 @@ sudo cp /home/mooreview/deploy/cloud/debian/nginx-mooreview.conf /etc/nginx/site
 sudo ln -sf /etc/nginx/sites-available/mooreview /etc/nginx/sites-enabled/
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl enable nginx && sudo systemctl reload nginx
-sudo ufw allow 80/tcp comment 'HTTP MooreVIEW'
+sudo ufw allow 80/tcp comment 'HTTP mooreVIEW'
 ```
 
 HTTPS later: `sudo apt install certbot python3-certbot-nginx && sudo certbot --nginx -d your.domain`
@@ -299,6 +307,10 @@ Default file: **`/etc/mooreview/env`** (from `debian/.env.debian.example`).
 | `MOOREVIEW_MQTT_BROKER` | `mqtt://127.0.0.1:1883` | Parc hub broker |
 | `MOSQUITTO_USER` / `MOSQUITTO_PASS` | `mooreview` / *(secret)* | Broker auth |
 | `MOSQUITTO_ALLOW_ANONYMOUS` | `false` | Set `true` for dev/LAN only |
+| `MOSQUITTO_TLS` | `true` | TLS listener on **8883** (see [MQTT.md](../MQTT.md)) |
+| `MOOREVIEW_DOMAIN` | `mooreview.io` | TLS cert CN + public broker hostname |
+
+Full MQTT credentials, TLS setup, and topic layout: **[deploy/cloud/MQTT.md](../MQTT.md)**.
 
 After editing env:
 
@@ -359,7 +371,7 @@ Or from dev PC: `sync-runtime-to-cloud.ps1` → `create-cloud-bundle.ps1` → re
 
 ## 9. Cloud remote pairing (site appliances)
 
-On each site MooreVIEW appliance:
+On each site mooreVIEW appliance:
 
 - **System setup → Cloud remote**: `enabled`, `tenantId`, `gatewayId`, `brokerUrl=mqtt://<droplet-ip>:1883`
 - Matching MQTT credentials when auth is enabled.
@@ -409,7 +421,7 @@ By default the Debian bundle **requires MQTT credentials** (same as Docker cloud
 
 1. Set `MOSQUITTO_USER` and `MOSQUITTO_PASS` in `/etc/mooreview/env`.
 2. Re-run `install.sh` to regenerate `/etc/mosquitto/passwd`.
-3. In MooreVIEW **System setup**, set matching **MQTT Parc** username/password.
+3. In mooreVIEW **System setup**, set matching **MQTT Parc** username/password.
 4. On appliances, set `cloudRemote.brokerUrl=mqtt://<droplet-ip>:1883` and matching credentials.
 
 Config template: [`mosquitto-debian.conf`](mosquitto-debian.conf) → `/etc/mosquitto/conf.d/mooreview.conf`.
@@ -540,5 +552,5 @@ Re-run `install.sh` after syncing updated deploy files; it strips mistaken `NODE
 
 ## Production blockers
 
-- TLS termination on 443 for MooreVIEW API still manual (nginx/Caddy).
+- TLS termination on 443 for mooreVIEW API still manual (nginx/Caddy).
 - Single-node Mongo — no replica set / backup automation in this install path.

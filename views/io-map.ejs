@@ -19,6 +19,7 @@
       <label class="checkbox-inline"><input type="checkbox" id="io-map-live-update"> Enable I/O update</label>
       <span id="io-map-status" class="muted cell-mono" aria-live="polite">Loading…</span>
       <span class="topbar-version muted cell-mono" title="MooreVIEW release">v<%= appVersion %></span>
+      <button type="button" class="btn" id="btn-standalone-sign-out" title="Sign out">Sign out</button>
       <a href="/" class="btn popup-close page-close" title="Return to dashboard">Close</a>
     </div>
   </header>
@@ -42,7 +43,8 @@
     </div>
   </main>
 
-  <script src="/js/api.js"></script>
+  <script src="/js/api.js?v=<%= assetV %>"></script>
+  <script src="/js/signOut.js?v=<%= assetV %>"></script>
   <script src="/js/mooreviewCore.js"></script>
   <script src="/js/tagDisplay.js?v=<%= assetV %>"></script>
   <script src="/js/expansionIo.js?v=<%= assetV %>"></script>
@@ -50,5 +52,6 @@
   <script src="/js/ioTimestamp.js?v=<%= assetV %>"></script>
   <script src="/js/ioMapPage.js?v=<%= assetV %>"></script>
   <script src="/js/ioMapBindings.js?v=<%= assetV %>"></script>
+  <script>MooreviewSignOut.bind('btn-standalone-sign-out');</script>
 </body>
 </html>

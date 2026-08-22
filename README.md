@@ -1,13 +1,23 @@
-# MooreVIEW MVP Suite
+# mooreVIEW MVP Suite
 
-**All-in-one** MooreVIEW for **Windows and Linux**: ST programming, integrated HMI, PLC runtime, tag historian, alarms, and MQTT Parc in a single Node application.
+**All-in-one** mooreVIEW for **Windows and Linux**: ST programming, integrated HMI, PLC runtime, tag historian, alarms, and MQTT Parc in a single Node application.
 
 This folder (`est-pc`) is the **development source**. A distributable copy is generated as `mooreview-mvp-suite/` — see [docs/PRODUCT_FORKS.md](docs/PRODUCT_FORKS.md).
 
-- **Integrated dashboard** — program, tags, drivers, HMI, historian, alarms, Parc
+- **Integrated dashboard** — program, tags, drivers, HMI, historian, alarms, Parc, **integrated CMMS**, **PdM (proactive maintenance)**, **BACnet/IP** (edge)
 - **IP cameras** — ONVIF discovery (Reolink), go2rtc live streaming, GridFS snapshots, vision AI
+- **Portable `.est.zip` projects** — tags, drivers, ST, HMI, MV Draw, settings in one archive
 - **HTTP polling** — `GET /api/dashboard`
 - **`.est` project files** — portable project export/import (includes camera inventory)
+
+## Documentation
+
+| Area | Path |
+|------|------|
+| Training (F2) | [docs/training/](docs/training/) |
+| Marketing / sales PDFs | [docs/marketing/](docs/marketing/) · [mooreview-docs](https://github.com/mooreview/mooreview-docs) |
+| Cloud SaaS | [docs/CLOUD_SAAS.md](docs/CLOUD_SAAS.md) · [docs/CLOUD_USER_GUIDE.md](docs/CLOUD_USER_GUIDE.md) |
+| Archive export (cloud fleet) | [docs/ARCHIVE_EXPORT.md](docs/ARCHIVE_EXPORT.md) |
 
 ## Start
 
@@ -31,9 +41,9 @@ npm run green
 
 Open **http://127.0.0.1:3090**
 
-Press **F1** for the in-app help guide. **Training** (F2) includes MooreVIEW modules M0–M15 and the IoT Condition-Based Monitoring course — see `docs/training/`.
+Press **F1** for the in-app help guide. **Training** (F2) includes mooreVIEW modules M0–M15 and the IoT Condition-Based Monitoring course — see `docs/training/`. **Sales & marketing PDFs:** `docs/marketing/README.md`. **PdM → proactive CMMS:** `docs/pdm/PDM_PROACTIVE_CMMS.md`.
 
-Toolbar: **Open .est** / **Save .est** / **Save workspace**
+Toolbar: **Open project…** / **Import project file…** / **Save project** / **Save workspace** — portable **`.est.zip`** archives (legacy `.est.json` imports supported)
 
 ## IP cameras (Reolink / ONVIF)
 

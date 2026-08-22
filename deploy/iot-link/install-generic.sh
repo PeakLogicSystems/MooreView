@@ -14,6 +14,7 @@ SOURCE_DIR="${MOOREVIEW_SOURCE:-$REPO_ROOT}"
 ENV_FILE="${MOOREVIEW_ENV_FILE:-/etc/mooreview/env}"
 SERVICE_USER="${MOOREVIEW_USER:-mooreview}"
 IOT_LINK_ENV_EXAMPLE="$SCRIPT_DIR/.env.generic.example"
+APPLIANCE_ENV_EXAMPLE="$REPO_ROOT/deploy/appliance/env/.env.iot-link-generic.example"
 
 log() { printf '[iot-link-generic-install] %s\n' "$*"; }
 die() { printf '[iot-link-generic-install] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -40,8 +41,13 @@ strip_crlf "$IOT_LINK_ENV_EXAMPLE"
 
 install -d -m 0750 -o root -g "$SERVICE_USER" /etc/mooreview
 if [[ ! -f "$ENV_FILE" ]]; then
-  log "Creating $ENV_FILE from generic IOT-LINK template"
-  install -m 0640 -o root -g "$SERVICE_USER" "$IOT_LINK_ENV_EXAMPLE" "$ENV_FILE"
+  if [[ -f "$APPLIANCE_ENV_EXAMPLE" ]]; then
+    log "Creating $ENV_FILE from appliance profile template"
+    install -m 0640 -o root -g "$SERVICE_USER" "$APPLIANCE_ENV_EXAMPLE" "$ENV_FILE"
+  else
+    log "Creating $ENV_FILE from generic IOT-LINK template"
+    install -m 0640 -o root -g "$SERVICE_USER" "$IOT_LINK_ENV_EXAMPLE" "$ENV_FILE"
+  fi
 else
   log "Keeping existing $ENV_FILE"
 fi

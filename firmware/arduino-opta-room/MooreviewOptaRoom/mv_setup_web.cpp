@@ -337,13 +337,27 @@ bool mvEthBegin(const MvDeviceConfig* cfg, byte* mac) {
   return mvEthConfigure(cfg, mac);
 }
 
+void mvEthLogStatus(const MvDeviceConfig* cfg) {
+  if (!cfg) return;
+  IPAddress ip = Ethernet.localIP();
+  char ipbuf[20];
+  snprintf(ipbuf, sizeof(ipbuf), "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
+  if (cfg->ethUseDhcp) {
+    MV_LOG_CMD2("Ethernet DHCP ", ipbuf);
+  } else {
+    char cfgIp[20];
+    snprintf(cfgIp, sizeof(cfgIp), "%u.%u.%u.%u", cfg->ethIp[0], cfg->ethIp[1], cfg->ethIp[2], cfg->ethIp[3]);
+    MV_LOG_CMD2("Ethernet static ", cfgIp);
+  }
+  if (ip[0] == 0 && ip[1] == 0 && ip[2] == 0 && ip[3] == 0) {
+    MV_LOG("Ethernet has no IP — check cable/DHCP or set static IP in /setup");
+  }
+}
+
 bool mvEthApply(const MvDeviceConfig* cfg, byte* mac) {
   const bool ok = mvEthConfigure(cfg, mac);
   if (ok) {
-    IPAddress ip = Ethernet.localIP();
-    char ipbuf[20];
-    snprintf(ipbuf, sizeof(ipbuf), "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
-    MV_LOG_CMD2("Ethernet IP applied ", ipbuf);
+    mvEthLogStatus(cfg);
 #if (defined(ARDUINO_PORTENTA_H7_M7) || defined(ARDUINO_OPTA)) && MV_HAS_WEBSERVER
     mvHttpEnsureListening();
 #endif

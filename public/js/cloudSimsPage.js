@@ -50,7 +50,7 @@ function renderDisabledState() {
 
       <p class="panel-hint">Enable it in <strong>System setup → Features</strong>, click <strong>Apply all settings</strong>, then return here.</p>
 
-      <p><a href="/?openSetup=features" class="btn primary">Open System setup → Features</a></p>
+      <p><a href="/cellular/sims" class="btn primary">Open Connectivity…</a></p>
 
     </div>`;
 
@@ -59,6 +59,25 @@ function renderDisabledState() {
 }
 
 
+
+function defaultDeviceIdForType(type, sensorCount) {
+  if (type === 'jxct_soil') return Number(sensorCount) === 1 ? 'dragino_jxct_01' : 'dragino_jxct_x4';
+  if (type === 'pool_chemistry') return 'dragino_pool_chem';
+  return '';
+}
+
+function syncSimFormForType() {
+  const typeEl = document.getElementById('sim-type');
+  const wrap = document.getElementById('sim-sensor-count-wrap');
+  const deviceEl = document.getElementById('sim-device-id');
+  if (!typeEl) return;
+  const type = typeEl.value;
+  if (wrap) wrap.classList.toggle('view-hidden', type !== 'jxct_soil');
+  if (deviceEl && !deviceEl.dataset.userEdited) {
+    const sensorCount = document.getElementById('sim-sensor-count')?.value || '4';
+    deviceEl.placeholder = defaultDeviceIdForType(type, sensorCount) || 'auto-generated if blank';
+  }
+}
 
 function statusBadge(status) {
 
@@ -218,6 +237,10 @@ async function onCreate(ev) {
 
   };
 
+  if (body.type === 'jxct_soil') {
+    body.config.sensorCount = Number(document.getElementById('sim-sensor-count')?.value) || 4;
+  }
+
   const deviceId = document.getElementById('sim-device-id').value.trim();
 
   if (deviceId) body.mqttDeviceId = deviceId;
@@ -233,6 +256,9 @@ async function onCreate(ev) {
     document.getElementById('sim-tenant').value = 'demo-tenant';
 
     document.getElementById('sim-interval').value = '2000';
+
+    const deviceEl = document.getElementById('sim-device-id');
+    if (deviceEl) delete deviceEl.dataset.userEdited;
 
     await refresh();
 
@@ -282,6 +308,32 @@ async function onTableClick(ev) {
 
 
 
+async function onSeedWebsiteDemo() {
+
+  const msg = document.getElementById('cloud-sims-seed-msg');
+
+  if (msg) msg.textContent = 'Seeding…';
+
+  try {
+
+    const data = await window.api.seedWebsiteDemoSims({ start: true });
+
+    const summary = (data.results || []).map((r) => `${r.action} ${r.sim?.mqttDeviceId}${r.started ? ' (running)' : ''}`).join(' · ');
+
+    if (msg) msg.textContent = summary || 'Done.';
+
+    await refresh();
+
+  } catch (e) {
+
+    if (msg) msg.textContent = e.message || 'Seed failed';
+
+  }
+
+}
+
+
+
 document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('cloud-sims-create-form')?.addEventListener('submit', onCreate);
@@ -289,6 +341,24 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('cloud-sims-refresh')?.addEventListener('click', refresh);
 
   document.getElementById('cloud-sims-table-wrap')?.addEventListener('click', onTableClick);
+
+  document.getElementById('cloud-sims-seed-website')?.addEventListener('click', onSeedWebsiteDemo);
+
+  document.getElementById('sim-type')?.addEventListener('change', syncSimFormForType);
+
+  document.getElementById('sim-sensor-count')?.addEventListener('change', syncSimFormForType);
+
+  document.getElementById('sim-device-id')?.addEventListener('input', (ev) => {
+
+    const el = ev.target;
+
+    if (el.value.trim()) el.dataset.userEdited = '1';
+
+    else delete el.dataset.userEdited;
+
+  });
+
+  syncSimFormForType();
 
   refresh();
 

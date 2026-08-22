@@ -228,7 +228,7 @@ void setup() {
   registerApiRoutes();
   mvOtaRegisterHttpRoutes();
   mvHttpBegin(MV_HTTP_PORT);
-  MV_LOG2("Ethernet http://", Ethernet.localIP().toString());
+  mvEthLogStatus(&g_cfg);
 #else
   MV_LOG("HTTP disabled on this board");
 #endif

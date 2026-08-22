@@ -1,10 +1,10 @@
-# MooreVIEW IP cameras — integration guide
+# mooreVIEW IP cameras — integration guide
 
-MooreVIEW MVP Suite includes full IP camera integration for **Reolink** and other **ONVIF** cameras: discovery, live viewing, snapshot archive, vision AI, and HMI operator popups.
+mooreVIEW MVP Suite includes full IP camera integration for **Reolink** and other **ONVIF** cameras: discovery, live viewing, snapshot archive, vision AI, and HMI operator popups.
 
 ## Discovery
 
-MooreVIEW uses **three** methods to find cameras (run together on **Scan network**):
+mooreVIEW uses **three** methods to find cameras (run together on **Scan network**):
 
 | Method | How | When it helps |
 |--------|-----|----------------|
@@ -19,7 +19,7 @@ Disable subnet sweep on the **Discover** tab with **Subnet TCP sweep** unchecked
 ## Quick start (Reolink)
 
 1. On each camera web UI: enable **ONVIF** (port **8000**) and **RTSP** (port **554**).
-2. Start MooreVIEW: `npm start` → http://127.0.0.1:3090
+2. Start mooreVIEW: `npm start` → http://127.0.0.1:3090
 3. **Tools → Cameras → Settings**: set default username/password.
 
 > **DHCP camera not found by scan?** Discovery probes every network adapter and subnet broadcast, but some networks block multicast. Use **Discover → Add & probe by IP** and enter the camera's address (from your router's DHCP list or the Reolink app).
@@ -86,7 +86,7 @@ Requires `mongoLogger.uri` in **Historian → Logger config…** (same MongoDB a
 |--------|---------|
 | `camera_snapshots` | ONVIF snapshot JPEGs |
 | `hmi_assets` | Mirrored HMI user imports |
-| `project_bundles` | Project `.est.json` on save |
+| `project_bundles` | Project `.est.zip` snapshots on save (optional GridFS mirror) |
 | `report_pdfs` | Historian PDF exports |
 
 ### Snapshot archive settings
@@ -147,7 +147,7 @@ Response:
 
 ### Alarm integration
 
-Set **Alarm tag** to a BOOL memory tag (e.g. `CAM_ALARM`). When `score >= threshold`, MooreVIEW sets the tag `true` and logs `inference_alarm` in `camera_events`.
+Set **Alarm tag** to a BOOL memory tag (e.g. `CAM_ALARM`). When `score >= threshold`, mooreVIEW sets the tag `true` and logs `inference_alarm` in `camera_events`.
 
 ## Top-bar quick access
 
@@ -259,7 +259,7 @@ Symbols: `valve`, `pump`, `motor`, `dot`, `text`, `box`. Latest AI inference bou
 ## Security notes
 
 - Camera credentials stored locally in `data/cameras.json` (not encrypted).
-- go2rtc binds to `127.0.0.1` only; MooreVIEW proxies `/api/go2rtc`.
+- go2rtc binds to `127.0.0.1` only; mooreVIEW proxies `/api/go2rtc`.
 - RTSP URLs contain embedded passwords — protect project exports.
 
 ## Appliance → SaaS (Cloud Studio)

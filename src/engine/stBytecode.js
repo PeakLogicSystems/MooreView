@@ -12,9 +12,12 @@ const {
   META_PRESET,
   META_MODE,
   META_PID,
+  META_GLOBAL,
   NO_TAG,
 } = require('./stOpcodes');
 const { inferTagType } = require('../parc/optaTagMeta');
+const { isGlobalTagMeta } = require('../parc/globalTagMeta');
+const { evalConstExpr } = require('./alternatorStWire');
 
 class BytecodeWriter {
   constructor() {
@@ -81,6 +84,7 @@ function tagTypeCode(type) {
   if (t === 'PID') return TAG_TYPE.PID;
   if (t === 'AVG') return TAG_TYPE.AVG;
   if (t === 'FLOW') return TAG_TYPE.FLOW;
+  if (t === 'ALT') return TAG_TYPE.ALT;
   return TAG_TYPE.BOOL;
 }
 
@@ -97,6 +101,7 @@ function writeTagMeta(w, tag) {
   if (tag.preset != null) flags |= META_PRESET;
   if (tag.mode && modeId(tag.mode) != null) flags |= META_MODE;
   if (type === TAG_TYPE.PID && (tag.kp != null || tag.ki != null || tag.kd != null)) flags |= META_PID;
+  if (isGlobalTagMeta(tag) || tag.global === true) flags |= META_GLOBAL;
   w.u8(flags);
   if (flags & META_PRESET) w.u32(Math.trunc(Number(tag.preset) || 0));
   if (flags & META_MODE) w.u8(modeId(tag.mode));
@@ -109,7 +114,28 @@ function writeTagMeta(w, tag) {
   }
 }
 
-function compileExpr(node, w, tagIndex) {
+/** Builtin that reads a bare tag ref in an expression (PUSH_TAG idx is table index, not value). */
+function tagReadBuiltin(type) {
+  const t = String(type || 'BOOL').toUpperCase();
+  if (t === 'INT' || t === 'COUNTER') return BUILTIN.CounterValue;
+  if (t === 'REAL' || t === 'PID' || t === 'AVG' || t === 'FLOW') return BUILTIN.PidValue;
+  if (t === 'TIMER') return BUILTIN.TimerDone;
+  if (t === 'ALT') return BUILTIN.AltActiveUnit;
+  return BUILTIN.IsON;
+}
+
+function compileTagRef(name, w, tagIndex, metaById) {
+  const idx = tagIndex.get(name);
+  if (idx == null) throw new Error(`Unknown tag ${name}`);
+  const meta = metaById?.get(name);
+  const type = meta?.type || inferTagType(name);
+  w.u8(OP.PUSH_TAG);
+  w.u16(idx);
+  w.u8(OP.CALL);
+  w.u8(tagReadBuiltin(type));
+}
+
+function compileExpr(node, w, tagIndex, metaById) {
   if (!node) {
     w.u8(OP.PUSH_I16);
     w.u16(0);
@@ -125,13 +151,12 @@ function compileExpr(node, w, tagIndex) {
         w.f32(node.value);
       }
       break;
-    case 'tag': {
-      const idx = tagIndex.get(node.name);
-      if (idx == null) throw new Error(`Unknown tag ${node.name}`);
-      w.u8(OP.PUSH_TAG);
-      w.u16(idx);
+    case 'tag':
+      compileTagRef(node.name, w, tagIndex, metaById);
       break;
-    }
+    case 'tagIndex':
+      compileExpr(node.index, w, tagIndex, metaById);
+      break;
     case 'call': {
       const id = BUILTIN[node.name];
       if (id == null) throw new Error(`Unknown builtin ${node.name}`);
@@ -147,7 +172,7 @@ function compileExpr(node, w, tagIndex) {
           w.u8(OP.PUSH_TAG);
           w.u16(idx);
         } else {
-          compileExpr(a, w, tagIndex);
+          compileExpr(a, w, tagIndex, metaById);
         }
       }
       w.u8(OP.CALL);
@@ -155,14 +180,14 @@ function compileExpr(node, w, tagIndex) {
       break;
     }
     case 'un':
-      compileExpr(node.arg, w, tagIndex);
+      compileExpr(node.arg, w, tagIndex, metaById);
       if (node.op === 'NOT') w.u8(OP.NOT);
       else if (node.op === 'NEG') w.u8(OP.NEG);
       else throw new Error(`Unknown unary ${node.op}`);
       break;
     case 'bin':
-      compileExpr(node.left, w, tagIndex);
-      compileExpr(node.right, w, tagIndex);
+      compileExpr(node.left, w, tagIndex, metaById);
+      compileExpr(node.right, w, tagIndex, metaById);
       switch (node.op) {
         case 'AND': w.u8(OP.AND); break;
         case 'OR': w.u8(OP.OR); break;
@@ -191,8 +216,8 @@ function tagIdx(tagIndex, name) {
   return idx;
 }
 
-function compileSetInt(stmt, w, tagIndex) {
-  compileExpr(stmt.valueExpr, w, tagIndex);
+function compileSetInt(stmt, w, tagIndex, metaById) {
+  compileExpr(stmt.valueExpr, w, tagIndex, metaById);
   w.u8(OP.STORE_TAG);
   w.u16(tagIdx(tagIndex, stmt.tag));
 }
@@ -204,40 +229,46 @@ function compileAction(stmt, w, tagIndex) {
   w.u8(id);
   w.u16(tagIdx(tagIndex, stmt.tag));
   w.u16(stmt.inputTag ? tagIdx(tagIndex, stmt.inputTag) : NO_TAG);
+  if (stmt.unit != null) w.u8(Number(stmt.unit) & 0xff);
+  if (stmt.levelBands) {
+    for (const band of stmt.levelBands) {
+      w.f32(evalConstExpr(band));
+    }
+  }
 }
 
-function compileBlock(stmts, w, tagIndex) {
-  for (const s of stmts || []) compileStmt(s, w, tagIndex);
+function compileBlock(stmts, w, tagIndex, metaById) {
+  for (const s of stmts || []) compileStmt(s, w, tagIndex, metaById);
 }
 
-function compileIf(stmt, w, tagIndex) {
-  compileExpr(stmt.cond, w, tagIndex);
+function compileIf(stmt, w, tagIndex, metaById) {
+  compileExpr(stmt.cond, w, tagIndex, metaById);
   const jmpElseAt = w.length;
   w.u8(OP.JMP_IFNOT);
   w.u16(0);
   const thenStart = w.length;
-  compileBlock(stmt.thenBody, w, tagIndex);
+  compileBlock(stmt.thenBody, w, tagIndex, metaById);
   const jmpEndAt = w.length;
   w.u8(OP.JMP);
   w.u16(0);
   const elseStart = w.length;
-  compileBlock(stmt.elseBody, w, tagIndex);
+  compileBlock(stmt.elseBody, w, tagIndex, metaById);
   const end = w.length;
   w.patchU16(jmpElseAt + 1, elseStart - thenStart);
   w.patchU16(jmpEndAt + 1, end - (jmpEndAt + 3));
 }
 
-function compileStmt(stmt, w, tagIndex) {
+function compileStmt(stmt, w, tagIndex, metaById) {
   if (stmt.type === 'action') {
     if (stmt.name === 'SetInt') {
-      compileSetInt(stmt, w, tagIndex);
+      compileSetInt(stmt, w, tagIndex, metaById);
       return;
     }
     compileAction(stmt, w, tagIndex);
     return;
   }
   if (stmt.type === 'if') {
-    compileIf(stmt, w, tagIndex);
+    compileIf(stmt, w, tagIndex, metaById);
     return;
   }
   throw new Error(`Cannot compile stmt type ${stmt.type}`);
@@ -255,7 +286,7 @@ function compileProgramBytecode(ast, tagIds, tags) {
   const metaById = new Map((tags || []).map((t) => [t.id, t]));
 
   const code = new BytecodeWriter();
-  compileBlock(ast.body, code, tagIndex);
+  compileBlock(ast.body, code, tagIndex, metaById);
   code.u8(OP.END);
   const codeBuf = code.build();
 

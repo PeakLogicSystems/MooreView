@@ -1,12 +1,12 @@
-# MooreVIEW pool controller — Compulab IOT-LINK (native Debian appliance)
+# mooreVIEW pool controller — Compulab IOT-LINK (native Debian appliance)
 
-Edge pool controller on **Compulab IOT-LINK** (Debian Linux, NXP i.MX93 **arm64**): dual RS-485 field buses, local Mosquitto for Arduino Opta I/O, and MooreVIEW HMI on port **3090**.
+Edge pool controller on **Compulab IOT-LINK** (Debian Linux, NXP i.MX93 **arm64**): dual RS-485 field buses, local Mosquitto for Arduino Opta I/O, and mooreVIEW HMI on port **3090**.
 
 For a **generic** appliance (blank workspace, no pool program), see [`README-generic.md`](README-generic.md) and `install-generic.sh`.
 
 | Layer | Role |
 |-------|------|
-| MooreVIEW | ST runtime `logic/30_pool_controller.st`, chemistry, pump, backwash, lighting |
+| mooreVIEW | ST runtime `logic/30_pool_controller.st`, chemistry, pump, backwash, lighting |
 | RS-485 PORT A (`/dev/ttyLP6`) | Speck BADU Pro-VI filter pump (`vgreen_epc`, 19200, slave 21) |
 | RS-485 PORT B (`/dev/ttyLP4`) | Pentair shared bus (`pentair_rs485`, 9600) — IntelliFlo, IntelliChlor, UltraTemp, valves **or** legacy heat-pump-only **or** Modbus chemistry |
 | Ethernet MQTT | Opta relays, dosing pumps, flow pulse (`mqtt_parc`) |
@@ -55,18 +55,18 @@ ls -l /dev/ttyLP*
 # FARS4+FBRS4 typical: ttyLP6 (A), ttyLP4 (B)
 ```
 
-MooreVIEW uses env vars `MOOREVIEW_RS485_PORT_A` and `MOOREVIEW_RS485_PORT_B` (see `.env.example`).
+mooreVIEW uses env vars `MOOREVIEW_RS485_PORT_A` and `MOOREVIEW_RS485_PORT_B` (see `.env.example`).
 
 ---
 
 ## Wiring summary
 
 ```
-IOT-LINK (MooreVIEW)
+IOT-LINK (mooreVIEW)
  ├── PORT A RS-485 ──► Speck BADU Pro-VI (A/B, GND, 19200 8N1, slave 21)
  ├── PORT B RS-485 ──► Pentair bus: IntelliFlo (0x60), IntelliChlor, UltraTemp (0x70), valves
  │                      OR legacy heat-pump-only driver
- │                      OR Modbus RTU probes (9600, unique slave IDs)
+ │                      OR DFRobot SEN0711+SEN0712 (4800 8N1, slaves 1+2)
  ├── Ethernet ──► LAN switch ──► Opta (MQTT Parc, relays R1–R4, DI I1–I2)
  └── DIO (optional, no Opta) ──► See "Without Opta" below
 ```
@@ -89,7 +89,7 @@ IOT-LINK provides **3** digital lines — insufficient for full pool I/O (6 ligh
 
 1. **Recommended:** Arduino Opta on MQTT (default seed config).
 2. **Minimal:** Map critical outputs to DIO1–DIO3 in `tags.json` and disable lighting/backwash features in ST.
-3. **Future:** MooreVIEW HAL plugin for IOT-LINK DIO (not bundled — contact integrator).
+3. **Future:** mooreVIEW HAL plugin for IOT-LINK DIO (not bundled — contact integrator).
 
 ---
 
@@ -147,7 +147,7 @@ bash /opt/mooreview/deploy/iot-link/install.sh
 
 ## Prototype on PC → deploy on IOT-LINK
 
-MooreVIEW runs the **same** `pentair_rs485` driver on Windows (COM port) and on IOT-LINK (`/dev/ttyLP4`). Fieldbus stays on the gateway (`remoteExecution: false`); ST and drivers execute locally on the appliance.
+mooreVIEW runs the **same** `pentair_rs485` driver on Windows (COM port) and on IOT-LINK (`/dev/ttyLP4`). Fieldbus stays on the gateway (`remoteExecution: false`); ST and drivers execute locally on the appliance.
 
 1. **PC:** Add driver `pentair_bus` (type `pentair_rs485`), serial `COM4`, baud 9600, bus gap 120 ms. Apply hardware-wizard templates (IntelliFlo, IntelliChlor, UltraTemp, valves) or import tag fixtures from `st/fixtures/tags.pentair_*.json`.
 2. **Validate:** Pump/chlorinator/heater tags update; set `IFLO_REMOTE_CMD` and `IC_TAKEOVER_CMD` true before writes if no Pentair panel is on the bus.
@@ -155,6 +155,29 @@ MooreVIEW runs the **same** `pentair_rs485` driver on Windows (COM port) and on 
 4. **IOT-LINK:** Set env (`MOOREVIEW_POOL_PENTAIR_BUS=true`, `MOOREVIEW_POOL_INTELLIFLO=true`), copy bundle, run `install.sh`, then `seed-pool-config.js --force`. PORT B maps to `/dev/ttyLP4` automatically.
 
 No Opta firmware changes are required for Pentair RS-485 — the IOT-LINK polls the bus directly.
+
+### Res-Pool-Link (home LAN + 4 IntelliValves)
+
+Product **`res-pool-link`**: residential pool & spa, IntelliFlo + IntelliChlor on PORT B, ESP32 four-valve backwash (inlet, outlet, waste, spare).
+
+```bash
+cp /opt/mooreview/deploy/iot-link/.env.res-pool-link.example /etc/mooreview/env
+bash /opt/mooreview/deploy/iot-link/install-res-pool-link.sh
+```
+
+Guide: [`docs/RES_POOL_LINK.md`](../../docs/RES_POOL_LINK.md).
+
+### Residential pool & spa (home LAN)
+
+Unique homeowner profile: **IntelliFlo + IntelliChlor share PORT B**, spa mode on, Opta off, Waveshare satellites join **home Wi-Fi**.
+
+```bash
+cp /opt/mooreview/deploy/iot-link/.env.residential-pool-spa.example /etc/mooreview/env
+# set MOSQUITTO_PASS + confirm ttyLP ports
+node /opt/mooreview/deploy/iot-link/seed-pool-config.js --force
+```
+
+Guide: [`docs/RESIDENTIAL_POOL_SPA.md`](../../docs/RESIDENTIAL_POOL_SPA.md). Do not put DFRobot Modbus probes on the Pentair cable.
 
 ---
 
@@ -169,13 +192,15 @@ Template: [`deploy/iot-link/.env.example`](.env.example)
 | `MOOREVIEW_DATA` | `/var/lib/mooreview` | Runtime persistence |
 | `MOOREVIEW_RS485_PORT_A` | `/dev/ttyLP6` | Speck pump (PORT A / FARS4) |
 | `MOOREVIEW_RS485_PORT_B` | `/dev/ttyLP4` | Pentair or Modbus chem (PORT B / FBRS4) |
+| `MOOREVIEW_PRODUCT` | `iot-link-pool` | `res-pool-link` — residential pool/spa + 4 IntelliValves |
+| `MOOREVIEW_POOL_PROFILE` | `default` | `residential-spa` or `res-pool-link` |
 | `MOOREVIEW_POOL_PENTAIR` | `true` | Enable Pentair heat pump (legacy `pentair_hp` driver) |
 | `MOOREVIEW_POOL_PENTAIR_BUS` | `false` | Shared Pentair bus driver (`pentair_bus`) — IntelliFlo + IC + heater + valves |
 | `MOOREVIEW_POOL_INTELLIFLO` | follows `PENTAIR_BUS` | Use IntelliFlo instead of Speck; retargets `PUMP_*` tags for ST |
 | `MOOREVIEW_POOL_INTELLIFLO_ADDR` | `96` | IntelliFlo RS-485 address (0x60) |
-| `MOOREVIEW_POOL_MODBUS_CHEM` | `false` | Use Modbus RTU on PORT B instead of Pentair |
+| `MOOREVIEW_POOL_MODBUS_CHEM` | `false` | PORT B = DFRobot SEN0711+SEN0712 (4800 8N1) instead of Pentair |
 | `MOOREVIEW_POOL_OPTA_IO` | `true` | Enable `mqtt_parc` Opta driver |
-| `MOOREVIEW_MQTT_BROKER` | `mqtt://127.0.0.1:1883` | Local Mosquitto for MooreVIEW hub (same host) |
+| `MOOREVIEW_MQTT_BROKER` | `mqtt://127.0.0.1:1883` | Local Mosquitto for mooreVIEW hub (same host) |
 | `MOSQUITTO_USER` / `MOSQUITTO_PASS` | — | Hub credentials; set `MOSQUITTO_ALLOW_ANONYMOUS=true` so Opta can connect without user/pass |
 
 **Opta MQTT broker** (on device `/setup` → MQTT Parc broker): use this gateway's **LAN IP** (e.g. `192.168.1.176:1883`), not `127.0.0.1` and not the sketch default `192.168.1.233`.
@@ -211,7 +236,7 @@ Open **http://\<iot-link-ip\>:3090** — pool overview HMI. Press **F1** for in-
 
 ## 5. Cloud uplink (optional)
 
-On the IOT-LINK appliance: **System setup → Cloud remote** — set `tenantId`, `gatewayId`, `brokerUrl` to your MooreVIEW cloud droplet. Parc telemetry relays to `mooreview/v1/{tenantId}/{deviceId}/telemetry`.
+On the IOT-LINK appliance: **System setup → Cloud remote** — set `tenantId`, `gatewayId`, `brokerUrl` to your mooreVIEW cloud droplet. Parc telemetry relays to `mooreview/v1/{tenantId}/{deviceId}/telemetry`.
 
 ---
 

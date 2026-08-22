@@ -93,6 +93,7 @@ function createStudioRoutes() {
         title: 'mooreVIEW Studio',
         assetV: APP_VERSION,
         product: 'cloud-studio',
+        deployment: DEPLOYMENT_MODE,
         mooreviewApiBase: '/api/studio',
         studioLocationId,
       });

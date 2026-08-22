@@ -25,6 +25,9 @@ function sanitizeDriverConfig(raw) {
     case 'mqtt':
       ['brokerUrl', 'broker', 'clientId', 'subscriptions', 'timeoutMs'].forEach((k) => keep.add(k));
       break;
+    case 'mqtt_sim':
+      ['brokerUrl', 'broker', 'intervalMs', 'samplePath', 'stations', 'publishToBroker', 'timeoutMs'].forEach((k) => keep.add(k));
+      break;
     case 'https':
       ['baseUrl', 'url', 'pollIntervalMs', 'bearerToken', 'timeoutMs'].forEach((k) => keep.add(k));
       break;
@@ -35,10 +38,13 @@ function sanitizeDriverConfig(raw) {
       ['host', 'port', 'scanMs', 'bearerToken', 'deviceId', 'timeoutMs'].forEach((k) => keep.add(k));
       break;
     case 'mqtt_parc':
-      ['deviceId', 'scanMs', 'reportIntervalSec', 'timeoutMs'].forEach((k) => keep.add(k));
+      ['deviceId', 'scanMs', 'reportIntervalSec', 'timeoutMs', 'remoteExecution', 'telemetryOnly', 'draginoModbus'].forEach((k) => keep.add(k));
       break;
     case 'hal':
       ['backend', 'pluginPath', 'halConfig', 'timeoutMs'].forEach((k) => keep.add(k));
+      break;
+    case 'bacnet':
+      ['interface', 'bindInterface', 'port', 'broadcastAddress', 'broadcast', 'apduTimeout', 'timeoutMs', 'pollIntervalMs', 'defaultHost', 'deviceInstance', 'writeEnabled', 'writePriority', 'discoverTimeoutMs'].forEach((k) => keep.add(k));
       break;
     case 'native_so':
       ['library', 'timeoutMs'].forEach((k) => keep.add(k));

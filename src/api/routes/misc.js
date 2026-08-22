@@ -5,6 +5,7 @@ const mongoTagLogger = require('../../logger/mongoTagLogger');
 const persistence = require('../../persistence');
 const { normalizePens } = require('../../graph/graphPens');
 const { moveOnce, moveReverse } = require('../../drivers/modbusMove');
+const { scheduleRemoteTagForce } = require('../pushRemoteTagForce');
 
 function mergeSeedPens(existingPens, seedPens, tagList) {
   const byTag = new Map((existingPens || []).map((p) => [p.tagId, p]));
@@ -116,6 +117,7 @@ function createMiscRoutes(deps) {
         forceValue: req.body.forceValue,
       });
       if (!t) return res.status(404).json({ error: 'Tag not found' });
+      scheduleRemoteTagForce(tagStore, driverManager, scanEngine, t);
       res.json({ tag: t });
     } catch (e) {
       res.status(e.status || 400).json({ error: e.message || String(e) });
@@ -124,7 +126,9 @@ function createMiscRoutes(deps) {
 
   router.delete('/debug/force', (req, res) => {
     const { tagStore } = deps;
-    res.json({ tag: tagStore.clearForce(req.query.tagId, req.query.which || null) });
+    const t = tagStore.clearForce(req.query.tagId, req.query.which || null);
+    if (t) scheduleRemoteTagForce(tagStore, driverManager, scanEngine, t);
+    res.json({ tag: t });
   });
 
   router.post('/graph/clear', (req, res) => {

@@ -1,4 +1,4 @@
-# MooreVIEW product forks
+# mooreVIEW product forks
 
 `est-pc/` is the **development source tree** for all products. The shipped all-in-one desktop app is **MVP Suite**.
 
@@ -8,7 +8,7 @@
 | **ST MVP** | `../mooreview-st-mvp/` | Linux ST runtime with web GUI: project, program, tags, drivers, help (no HMI/Mongo/Parc) |
 | **MV Client** | `../mooreview-client/` | Browser HMI and operator UI — remote API |
 | **Opta Parc** | `../mooreview-opta-parc/` | Browser HMI pointed at **mooreview.io** (`MOOREVIEW_API_BASE` default) |
-| **Cloud SaaS** | `../mooreview-cloud/` | Headless SaaS platform (port **3100**): API, sites, agent hub, Mongo, Parc — not the site appliance GUI |
+| **Cloud SaaS** | `est-pc` (same repo) | Multi-tenant platform (port **3100**): login, Sites, agent hub, DO Mongo — see [CLOUD_DEPLOY_DO.md](CLOUD_DEPLOY_DO.md) |
 
 Historical **`est/`** is the older embedded stack (OpenWrt, WebSocket). **`mooreview-st-mvp`** is the est-pc–aligned embedded fork.
 

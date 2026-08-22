@@ -3,11 +3,13 @@
 const { MockDriver } = require('./mockDriver');
 const { ModbusDriver } = require('./modbusDriver');
 const { MqttDriver } = require('./mqttDriver');
+const { MqttSimDriver } = require('./mqttSimDriver');
 const { HttpsDriver } = require('./httpsDriver');
 const { MqttParcOptaDriver } = require('./mqttParcOptaDriver');
 const { SerialDriver } = require('./serialDriver');
 const { NativeSoDriver } = require('./nativeSoDriver');
 const { HalDriver } = require('./halDriver');
+const { BacnetDriver } = require('./bacnetDriver');
 const { ModbusBridgeDriver } = require('./modbusBridge');
 const { VgreenDriver } = require('./vgreenDriver');
 const { NextcenturyDriver } = require('./nextcenturyDriver');
@@ -65,6 +67,7 @@ const FACTORIES = {
   modbus_bridge: (cfg) => new ModbusBridgeDriver(cfg),
   vgreen_epc: (cfg) => new VgreenDriver(cfg),
   mqtt: (cfg) => new MqttDriver(cfg),
+  mqtt_sim: (cfg) => new MqttSimDriver(cfg),
   https: (cfg) => new HttpsDriver(cfg),
   nextcentury: (cfg) => new NextcenturyDriver(cfg),
   opta_remote: (cfg) => new MqttParcOptaDriver(normalizeRemoteDriverCfg(cfg)),
@@ -72,6 +75,7 @@ const FACTORIES = {
   serial: (cfg) => new SerialDriver(cfg),
   native_so: (cfg) => new NativeSoDriver(cfg),
   hal: (cfg) => new HalDriver(cfg),
+  bacnet: (cfg) => new BacnetDriver(cfg),
 };
 
 class DriverManager {
@@ -147,6 +151,13 @@ class DriverManager {
         ...cfg,
         brokerUrl: cfg.brokerUrl || cfg.broker,
         subscriptions: [...topics],
+      };
+    }
+    if (cfg.type === 'mqtt_sim') {
+      return {
+        ...cfg,
+        brokerUrl: cfg.brokerUrl || cfg.broker,
+        peerDrivers: this.configs.filter((c) => c.id !== cfg.id),
       };
     }
     if (cfg.type === 'https') {
@@ -239,7 +250,13 @@ class DriverManager {
     }
     const rtuPortsInUse = new Map();
 
-    for (const cfg of this.configs) {
+    const orderedConfigs = [...this.configs].sort((a, b) => {
+      if (a.type === 'mqtt_sim' && b.type !== 'mqtt_sim') return -1;
+      if (b.type === 'mqtt_sim' && a.type !== 'mqtt_sim') return 1;
+      return 0;
+    });
+
+    for (const cfg of orderedConfigs) {
       if (!cfg.enabled) continue;
       const factory = FACTORIES[cfg.type];
       if (!factory) continue;
@@ -395,6 +412,61 @@ class DriverManager {
         await driver.readBatch(maps, this.tagStore);
       } catch (e) {
         driver._lastError = e.message;
+      }
+    }
+  }
+
+  /** Mirror Parc MQTT telemetry into tag store (remote Opta — no HTTP poll required). */
+  async syncParcTelemetry() {
+    for (const cfg of this.configs) {
+      if (!cfg.enabled) continue;
+      if (cfg.type !== 'mqtt_parc' && cfg.type !== 'opta_remote') continue;
+      const inst = this.instances.get(cfg.id);
+      if (!inst) continue;
+      try {
+        if (typeof inst.syncFromParcTelemetry === 'function') {
+          inst.syncFromParcTelemetry(this.tagStore);
+        } else if (typeof inst.runScanCycle === 'function') {
+          await inst.runScanCycle(this.tagStore);
+        }
+      } catch (e) {
+        inst._lastError = e.message || String(e);
+      }
+    }
+  }
+
+  /** Poll fieldbus drivers for Live I/O when scan engine is stopped or paused. */
+  async readFieldbus() {
+    for (const [id, driver] of this.instances) {
+      const cfg = this.configs.find((c) => c.id === id);
+      if (!cfg?.enabled) continue;
+      if (cfg.type === 'mqtt_parc' || cfg.type === 'opta_remote') continue;
+      const maps = this.mappingsFor(id).filter(
+        (t) => (t.role === 'input' || t.role === 'memory') && !this.tagStore.isDriverReadSkipped(t),
+      );
+      if (!maps.length) continue;
+      try {
+        await driver.readBatch(maps, this.tagStore);
+      } catch (e) {
+        driver._lastError = e.message || String(e);
+      }
+    }
+    await this.syncParcTelemetry();
+  }
+
+  /** Poll cloud/API drivers (NextCentury, etc.) for Live I/O refresh. */
+  async readHostApi() {
+    for (const cfg of this.configs) {
+      if (!cfg.enabled || cfg.type !== 'nextcentury') continue;
+      const inst = this.instances.get(cfg.id);
+      if (!inst?.connected) continue;
+      const maps = this.mappingsFor(cfg.id).filter(
+        (t) => (t.role === 'input' || t.role === 'memory') && !this.tagStore.isDriverReadSkipped(t),
+      );
+      try {
+        await inst.readBatch(maps, this.tagStore);
+      } catch (e) {
+        inst._lastError = e.message || String(e);
       }
     }
   }

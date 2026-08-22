@@ -146,6 +146,7 @@
     import * as THREE from 'three';
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
     import { SITE } from './assisted-living-site-config.js';
+    import { mountNorthIndicator } from './mv-north-indicator.js';
 
     const ROOMS_ON_FLOOR = SITE.roomsOnFloor;
     const BUILDING = SITE.building;
@@ -1201,9 +1202,12 @@
       statsEl.innerHTML = lines.map((t) => `<div>${t}</div>`).join('');
     }
 
+    const north = mountNorthIndicator();
+
     function animate() {
       requestAnimationFrame(animate);
       controls.update();
+      north.update(camera);
       applyAlarmVisuals();
       renderer.render(scene, camera);
     }

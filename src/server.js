@@ -1,76 +1,82 @@
 'use strict';
 
-if (!process.env.MOOREVIEW_DEPLOYMENT) {
-  process.env.MOOREVIEW_DEPLOYMENT = 'cloud';
-}
+const http = require('http');
+const { WebSocketServer } = require('ws');
+const { DEFAULT_PORT, LIVE_WS_INTERVAL_MS } = require('./config');
+const { TagStore } = require('./tags/tagStore');
+const { DriverManager } = require('./drivers');
+const { ScanEngine } = require('./runtime/scanEngine');
+const { GraphHistory } = require('./runtime/graphHistory');
+const { createRouter } = require('./http/router');
+const { createApiRoutes } = require('./api/routes');
+const persistence = require('./persistence');
+const { sanitizeLegacyProjectHwDefaultsOnDisk } = require('./settings/portableSettings');
 
-const { createCloudApp } = require('./api/cloudApp');
-const configStore = require('./configStore');
-const { connectMongo, closeMongo } = require('./db/mongo');
-const { ensureIndexes } = require('./db/indexes');
-const { PORT } = require('./config');
-const { registerCloudServices } = require('./messaging/cloudServices');
-const { startServiceBusWorkers, stopServiceBusWorkers } = require('./messaging/workers');
-const { closeEventHub } = require('./messaging/eventHub');
-const { startCloudMqttIngest, stopCloudMqttIngest } = require('./ingest/mqttCloudIngest');
-const { DEFAULT_MQTT_PARC_BROKER } = require('./config');
-const { startConnectivityRenewalScheduler } = require('./connectivity/connectivityRenewalScheduler');
-const { setRenewalScheduler } = require('./api/connectivityRenewalHolder');
+const tagStore = new TagStore();
+const driverManager = new DriverManager(tagStore);
+const graphHistory = new GraphHistory();
+const scanEngine = new ScanEngine(tagStore, driverManager, graphHistory);
+const { registerParcRecoveryDeps } = require('./parc/parcDeviceRecovery');
+const { getMqttCentralHub } = require('./parc/mqttCentralHub');
+const { registry } = require('./parc/deviceRegistry');
+registerParcRecoveryDeps({ scanEngine, driverManager });
+getMqttCentralHub(registry).setGlobalMirrorDeps({ tagStore });
 
-async function main() {
-  await connectMongo();
-  await ensureIndexes();
-  await configStore.init();
+const apiHandlers = createApiRoutes({
+  tagStore,
+  driverManager,
+  scanEngine,
+  graphHistory,
+  sendJson: (res, status, body) => {
+    const data = JSON.stringify(body);
+    res.writeHead(status, {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(data),
+      'Access-Control-Allow-Origin': '*',
+    });
+    res.end(data);
+  },
+});
 
-  registerCloudServices();
-  await startServiceBusWorkers();
+const router = createRouter(apiHandlers);
 
-  if (process.env.CLOUD_MQTT_INGEST !== 'false') {
-    startCloudMqttIngest();
-    console.log(`[cloud-mqtt-ingest] enabled → ${DEFAULT_MQTT_PARC_BROKER} (set CLOUD_MQTT_INGEST=false to disable)`);
-  }
+const server = http.createServer((req, res) => router(req, res));
 
-  const renewalScheduler = startConnectivityRenewalScheduler();
-  setRenewalScheduler(renewalScheduler);
-  console.log('[connectivity-billing] renewal scheduler started');
+const wss = new WebSocketServer({ server, path: '/api/live' });
 
-  const app = createCloudApp();
-  const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`MooreVIEW Cloud API listening on :${PORT}`);
-  });
-
-  try {
-    const { isCloudDeployment } = require('./cloud/agentProtocol');
-    const { attachAgentHub } = require('./cloud/agentHub');
-    if (isCloudDeployment()) {
-      attachAgentHub(server);
-      console.log('[cloud-sites] agent hub listening on /api/sites/:siteId/agent');
+wss.on('connection', (ws) => {
+  const iv = setInterval(() => {
+    if (ws.readyState === ws.OPEN) {
+      ws.send(JSON.stringify({
+        tags: tagStore.liveSnapshot(),
+        runtime: scanEngine.status(),
+        graph: graphHistory.getHistory(null, 120),
+      }));
     }
-  } catch (e) {
-    console.warn('[cloud-sites] agent hub:', e.message || e);
+  }, LIVE_WS_INTERVAL_MS);
+  ws.on('close', () => clearInterval(iv));
+});
+
+async function boot() {
+  persistence.ensureDataDir();
+  if (await sanitizeLegacyProjectHwDefaultsOnDisk(persistence)) {
+    console.log('[boot] removed legacy project RTU defaults from data files');
   }
-
-  const shutdown = async (signal) => {
-    console.log(`[cloud] ${signal} — shutting down`);
-    server.close();
-    renewalScheduler.stop();
-    await stopCloudMqttIngest().catch(() => {});
-    await configStore.shutdown().catch(() => {});
-    await stopServiceBusWorkers();
-    await closeEventHub();
-    await closeMongo();
-    process.exit(0);
-  };
-
-  process.on('SIGINT', () => shutdown('SIGINT'));
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
-}
-
-if (require.main === module) {
-  main().catch((err) => {
-    console.error('[cloud] boot failed:', err.message);
-    process.exit(1);
+  const { initMongoServicesFromSettings } = require('./logger/mongoServicesInit');
+  await initMongoServicesFromSettings().catch((e) => {
+    console.warn('[boot] MongoDB services:', e.message || e);
+  });
+  const settings = persistence.readJson('settings.json', {});
+  const port = settings.port || DEFAULT_PORT;
+  await driverManager.rebuild();
+  server.listen(port, '0.0.0.0', () => {
+    console.log(`MooreVIEW listening on :${port}`);
   });
 }
 
-module.exports = { main };
+boot().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
+
+module.exports = { server, tagStore, driverManager, scanEngine, graphHistory };

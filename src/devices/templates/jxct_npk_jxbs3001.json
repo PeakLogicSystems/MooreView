@@ -29,6 +29,7 @@
         "role": "input",
         "table": "holding",
         "address": 6,
+        "wordWidth": 16,
         "signed": false,
         "scale": 0.01,
         "comment": "Soil pH (HR 0x0006, register ×100)"
@@ -39,6 +40,7 @@
         "role": "input",
         "table": "holding",
         "address": 18,
+        "wordWidth": 16,
         "signed": false,
         "scale": 0.1,
         "comment": "Soil moisture % (HR 0x0012, register ×10)"
@@ -49,6 +51,7 @@
         "role": "input",
         "table": "holding",
         "address": 19,
+        "wordWidth": 16,
         "signed": true,
         "scale": 0.1,
         "comment": "Soil temperature °C (HR 0x0013, register ×10)"

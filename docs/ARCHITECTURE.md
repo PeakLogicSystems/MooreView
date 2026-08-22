@@ -1,21 +1,25 @@
-# MooreVIEW architecture
+# mooreVIEW architecture
 
 ## Strategy (current)
 
-**Appliance first.** `est-pc` is the reference product: one Node process on Windows or Linux for debugging, field deployment, and non-cloud sites.
+**Appliance and Cloud SaaS share one codebase** (`est-pc`). Deployment mode is set by `MOOREVIEW_DEPLOYMENT`:
 
-**Cloud second (~30 days).** `mooreview-cloud` stays API-compatible but is not the active development target until the appliance feature set is complete.
+| Mode | Port | Guide |
+|------|------|-------|
+| Appliance (edge) | 3090 | Default — site PC, IoT-Link |
+| Cloud hub | 3090 | `npm run start:cloud` — MQTT ingest |
+| **Cloud SaaS** | **3100** | [CLOUD_DEPLOY_DO.md](CLOUD_DEPLOY_DO.md) — DO droplet multi-tenant |
 
-Goal: **nearly identical behavior and API**; only deployment topology and scale limits differ.
+Goal: **nearly identical Studio UI and API**; field buses that need LAN stay on the edge appliance.
 
-| | Appliance (PC / Linux) | Cloud (future) |
-|--|------------------------|----------------|
-| **Processes** | 1 monolith (`server.js`) | Multiple VMs (ingestion, alarms/notify, GUI API, AI) |
-| **Scale** | Single site, local I/O | 10M devices, 10K users |
-| **Data** | `data/*.json` + optional local Mongo | MongoDB multi-tenant |
-| **Users** | `data/users.json` | Mongo `users` + JWT |
-| **Tenant** | Synthetic `tenantId: local` | Real tenant per account |
-| **Alarm notify** | In-process event → queue file | Message bus → notify service |
+| | Appliance (PC / Linux) | Cloud SaaS (DO) |
+|--|------------------------|-----------------|
+| **Processes** | 1 monolith (`server.js`) | 1 monolith per droplet (nginx → 3100) |
+| **Scale** | Single site, local I/O | Multi-tenant orgs + site agents |
+| **Data** | `data/*.json` + optional Mongo | DO Managed Mongo + tenant JSON/Mongo |
+| **Users** | `appliance_auth.json` login | `cloud_tenants.json` org login |
+| **Tenant** | Synthetic `tenantId: local` | Real tenant per organization |
+| **Alarm notify** | In-process + notification profiles | Same + CMMS entitlement |
 
 Set `MOOREVIEW_DEPLOYMENT=appliance` (default) or `cloud`. Health: `GET /health` returns `deployment` and `tenantId`.
 
@@ -59,7 +63,8 @@ Use this on PC/Linux before shifting focus to cloud.
 | Alarm notify queue | Done | Delivery (SMTP/SMS) TBD |
 | Historian (Mongo) | Done | Optional local Mongo |
 | MQTT fleet / Parc | Done | |
-| PdM batch | Done | |
+| PdM batch | Done | Nightly features + proactive CMMS + optional scheduled PDF |
+| Proactive CMMS bridge | Done | PdM forecast → `/cmms` WO; WO complete → service history |
 | HMI composer | Done | |
 | `.est` project export | Done | |
 | Event bus seam | Done | `src/runtime/eventBus.js` |
@@ -116,4 +121,4 @@ npm run green      # full test suite
 
 Linux appliance: same tree; use `MOOREVIEW_DATA` for persistent data dir. Optional `npm run build-native` for HAL plugins.
 
-Cloud API (when needed): `mooreview-cloud` on port 3100 — do not block appliance work on cloud parity until the checklist above is satisfied.
+Cloud API (when needed): **est-pc Cloud SaaS** on port **3100** (`npm run start:saas`) — same codebase as the appliance. See `docs/EST_PC_PARITY.md`; do not block appliance work on cloud parity until the checklist above is satisfied.

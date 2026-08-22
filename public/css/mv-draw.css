@@ -1,9 +1,30 @@
-.mv-draw-body {
+html:has(.mv-draw-body) {
+  height: 100%;
+  max-height: 100dvh;
+  overflow: hidden;
+}
+
+html:has(.mv-draw-body.mv-draw-embedded) {
+  height: 100%;
+  max-height: 100%;
+}
+
+body.mv-draw-body {
   display: flex;
   flex-direction: column;
+  width: 100%;
+  height: 100%;
   min-height: 100vh;
+  min-height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
   background: #0f172a;
   color: #e2e8f0;
+}
+
+body.mv-draw-body.mv-draw-embedded {
+  min-height: 0;
+  max-height: 100%;
 }
 
 .mv-draw-embedded .mv-draw-topbar .topbar-brand,
@@ -18,14 +39,60 @@
   padding-block: 0.35rem;
 }
 
+.mv-composer-modes {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  flex: 0 0 auto;
+}
+
+.mv-composer-modes-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-right: 0.15rem;
+}
+
+.mv-composer-mode-btn {
+  padding: 0.3rem 0.55rem;
+  font-size: 0.78rem;
+  min-width: 0;
+}
+
+.mv-composer-mode-btn.active {
+  background: #7c3aed;
+  border-color: #7c3aed;
+  color: #fff;
+  font-weight: 600;
+}
+
+.mv-draw-embedded .mv-composer-modes-label {
+  display: none;
+}
+
 .mv-file-menu-mooreview {
   margin-top: 0.2rem;
   color: #cbd5e1;
 }
 
 .mv-draw-topbar {
+  flex-shrink: 0;
   flex-wrap: wrap;
   gap: 0.5rem;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.mv-draw-topbar .standalone-title {
+  flex: 0 0 auto;
+  font-size: 1rem;
+  white-space: nowrap;
+}
+
+.mv-draw-topbar .standalone-meta {
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .mv-file-menu-wrap {
@@ -47,6 +114,13 @@
 
 .mv-file-menu-panel.view-hidden {
   display: none;
+}
+
+/* File dropdown must not sit above modal dialogs (e.g. File → New with unsaved changes). */
+body.mv-draw-body:has(dialog[open]) .mv-file-menu-panel,
+body.mv-draw-body:has(#mv-unsaved-overlay:not(.view-hidden)) .mv-file-menu-panel,
+body.mv-draw-body:has(#mv-open-overlay:not(.view-hidden)) .mv-file-menu-panel {
+  display: none !important;
 }
 
 .mv-file-menu-path {
@@ -118,13 +192,11 @@
   padding: 1rem 1.25rem;
   background: #1e293b;
   color: #e2e8f0;
-  max-width: 420px;
-  margin: auto;
-  position: fixed;
-  inset: 0;
-  height: fit-content;
-  max-height: calc(100vh - 2rem);
+  max-width: min(420px, 92vw);
+  width: min(420px, 92vw);
+  max-height: calc(100dvh - 2rem);
   overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .mv-open-dialog {
@@ -285,8 +357,9 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 0.35rem;
-  flex: 1;
-  justify-content: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: flex-start;
 }
 
 .mv-snap-toggle {
@@ -483,7 +556,9 @@ body.mv-draw-body button.mv-draw-btn--danger:hover:not(:disabled) {
   background: #1e293b;
   border-right: 1px solid #334155;
   padding: 0.75rem 1rem;
+  min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .mv-draw-inspector {
@@ -507,6 +582,37 @@ body.mv-draw-body button.mv-draw-btn--danger:hover:not(:disabled) {
 .mv-sidebar-hint {
   font-size: 0.8rem;
   margin-bottom: 0.75rem;
+}
+
+.mv-library-search-label {
+  display: block;
+  font-size: 0.78rem;
+  margin-bottom: 0.45rem;
+}
+
+.mv-library-search {
+  width: 100%;
+  margin-top: 0.2rem;
+  padding: 0.35rem 0.45rem;
+  border-radius: 6px;
+  border: 1px solid #475569;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-size: 0.82rem;
+}
+
+.mv-symbol-thumb-hmi {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #1e293b;
+}
+
+.mv-symbol-thumb-hmi img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .mv-symbol-list {
@@ -737,11 +843,46 @@ body.mv-draw-body button.mv-draw-btn--danger:hover:not(:disabled) {
   background: rgba(0, 0, 0, 0.55);
 }
 
+.mv-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.55);
+  pointer-events: auto;
+}
+
+.mv-modal-overlay.view-hidden {
+  display: none !important;
+}
+
+.mv-modal-overlay .mv-modal-panel {
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
+  max-height: calc(100dvh - 2rem);
+}
+
 .mv-dialog-actions {
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
   margin-top: 1rem;
+}
+
+.mv-unsaved-dialog {
+  min-width: min(400px, 92vw);
+}
+
+.mv-unsaved-actions {
+  flex-wrap: wrap;
+}
+
+.mv-unsaved-actions .btn-primary {
+  margin-left: auto;
 }
 
 @media (max-width: 960px) {

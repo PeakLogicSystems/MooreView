@@ -58,7 +58,9 @@ function writeActiveProject(doc) {
 }
 
 function newActiveProject(meta = {}) {
-  return writeActiveProject(blankMvDrawDoc(meta));
+  const doc = blankMvDrawDoc(meta);
+  doc.libraryFile = null;
+  return writeActiveProject(doc);
 }
 
 function isDefaultProjectName(name) {

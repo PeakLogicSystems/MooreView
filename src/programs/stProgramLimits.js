@@ -1,7 +1,7 @@
 'use strict';
 
 /** Parc / Opta edge targets — small RAM, keep ST programs modest. */
-const ST_PROGRAM_MAX_LINES_PARC = 500;
+const ST_PROGRAM_MAX_LINES_PARC = 1000;
 
 /** PC/Linux runtime — no line cap (memory is not a constraint). */
 const ST_PROGRAM_MAX_LINES_LOCAL = null;

@@ -60,10 +60,26 @@ function readProgram(rel) {
   return fs.readFileSync(fp, 'utf8');
 }
 
+/** Coerce API/import input to ST source text — rejects deploy AST objects with a clear error. */
+function normalizeProgramSource(source) {
+  if (source == null) return '';
+  if (typeof source === 'string') return source;
+  if (Buffer.isBuffer(source)) return source.toString('utf8');
+  if (typeof source === 'object') {
+    const nested = source.source ?? source.text ?? source.content ?? source.program;
+    if (typeof nested === 'string') return nested;
+  }
+  throw Object.assign(
+    new Error('Program source must be ST text (string), not a JSON object'),
+    { status: 400 },
+  );
+}
+
 function writeProgram(rel, source) {
+  const text = normalizeProgramSource(source);
   const fp = resolvePath(rel);
   fs.mkdirSync(path.dirname(fp), { recursive: true });
-  fs.writeFileSync(fp, source, 'utf8');
+  fs.writeFileSync(fp, text, 'utf8');
 }
 
 /** Map a picked filename to a path under st/ (e.g. logic/my_prog.st). */
@@ -200,6 +216,7 @@ module.exports = {
   suggestRelFromFilename,
   saveToPath,
   readProgram,
+  normalizeProgramSource,
   writeProgram,
   listPrograms,
   listProgramsInRoot,

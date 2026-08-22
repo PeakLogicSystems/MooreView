@@ -1,6 +1,6 @@
 # MQTT Parc hub (appliance)
 
-MooreVIEW PC acts as the **central MQTT Parc hub**: Mosquitto on the LAN, Opta firmware publishes `mooreview/v1/{deviceId}/telemetry`, and the hub ingests into `data/parc.json` for tag sync and remote ST.
+mooreVIEW PC acts as the **central MQTT Parc hub**: Mosquitto on the LAN, Opta firmware publishes `mooreview/v1/{deviceId}/telemetry`, and the hub ingests into `data/parc.json` for tag sync and remote ST.
 
 Hardware baseline checklist: [BASELINE_TEST.md](./BASELINE_TEST.md).
 
@@ -63,11 +63,11 @@ Optional lines:
 
 ### Bulk add
 
-**Drivers → Bulk add MQTT Parc Opta** — paste device IDs, or use range / from registry. Driver saves also update `workspace.est.json` so restart does not drop Opta drivers.
+**Drivers → Bulk add MQTT Parc Opta** — paste device IDs, or use range / from registry. Driver saves also update `workspace.est.zip` so restart does not drop Opta drivers.
 
 ### Workspace vs drivers.json
 
-Startup mode **Last workspace** loads `data/workspace.est.json`. Remote drivers (`mqtt_parc`, `opta_remote`) in `drivers.json` are **merged** into the workspace snapshot so an stale workspace cannot remove Opta drivers.
+Startup mode **Last workspace** loads `data/workspace.est.zip`. Remote drivers (`mqtt_parc`, `opta_remote`) in `drivers.json` are **merged** into the workspace snapshot so a stale workspace cannot remove Opta drivers.
 
 ---
 
@@ -77,24 +77,12 @@ Startup mode **Last workspace** loads `data/workspace.est.json`. Remote drivers 
 |------|------|
 | `data/parc.json` | Last telemetry per device (registry) |
 | `data/drivers.json` | Driver configs |
-| `data/workspace.est.json` | Autosave / startup workspace |
+| `data/workspace.est.zip` | Autosave / startup workspace (portable archive) |
+| `data/projects/*.est.zip` | Named project library |
 
 Telemetry saves are **debounced (~300 ms)** to avoid Windows rename races on `parc.json`. Writes use unique temp files and retries.
 
----
-
-## Sync to mooreview-cloud
-
-From `est-pc`:
-
-```powershell
-powershell -File scripts\sync-runtime-to-cloud.ps1
-cd ..\mooreview-cloud
-npm install
-npm run test:baseline
-```
-
-Cloud runtime fork (`npm run start:runtime`) uses the same Parc hub boot logic. See [mooreview-cloud/docs/EST_PC_PARITY.md](../../mooreview-cloud/docs/EST_PC_PARITY.md).
+Topics and attach/detach: `../est/docs/parc-architecture.md` (if `est` repo present). Cloud SaaS uses the same Parc topic layout — see `docs/EST_PC_PARITY.md` and `docs/CLOUD_USER_GUIDE.md`.
 
 ---
 
@@ -106,7 +94,6 @@ Cloud runtime fork (`npm run start:runtime`) uses the same Parc hub boot logic. 
 | `hub not started: … Parc registry: opta_st_01` | Registry has device but no driver — bulk-add or restart (auto-restore) |
 | Driver **Not linked** after boot | Opta offline, wrong broker URL, or `deviceId` mismatch |
 | `[mqtt-parc-hub] telemetry: ENOENT … parc.json.tmp` | Fixed in current build (debounced save + unique temps); ensure one node instance |
+| `[mqtt-parc-hub] telemetry: EPERM … parc.json.tmp` | Windows file lock during rename — fixed with debounced save + unique temps + rename retries; restart with a single node instance (`npm stop` then `npm start`) |
 | Hub OK but no program on Opta | Press **Download & Start** (Remote on) |
 | Sync tags fails | Wait for first telemetry; check `deviceId` |
-
-Topics and attach/detach: `../est/docs/parc-architecture.md` (if `est` repo present).

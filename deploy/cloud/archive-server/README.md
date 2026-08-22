@@ -1,8 +1,28 @@
 # Archive server (cloud 2)
 
-zstd blob + index storage for MooreVIEW Mongo compaction. **No MongoDB.**
+zstd blob + index storage for mooreVIEW Mongo compaction. **No MongoDB.**
 
-## Run
+## Phase 1 deployment
+
+Build bundle on Windows, upload via WinSCP:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\create-archive-bundle.ps1
+```
+
+Full guide: [deploy/cloud/phase1/WINSCP-DEPLOY.md](../phase1/WINSCP-DEPLOY.md)
+
+Install on droplet:
+
+```bash
+MOOREVIEW_SOURCE=/opt/mooreview-archive MOOREVIEW_ARCHIVE_DIR=/opt/mooreview-archive \
+  MOOREVIEW_SAAS_IP=<cloud-1-private-ip> \
+  bash deploy/cloud/debian/install-archive.sh
+```
+
+Config: `/etc/mooreview/archive.env` from [phase1/droplet-archive/archive.env.template](../phase1/droplet-archive/archive.env.template)
+
+## Run (manual / dev)
 
 ```bash
 mkdir -p /data/archive
@@ -26,9 +46,15 @@ Auth: `Authorization: Bearer $ARCHIVE_SERVER_TOKEN` (optional if token unset —
 ## Cloud 1 compact cron
 
 ```bash
-export MONGODB_URI=mongodb://127.0.0.1:27017
-export MONGODB_DB=mooreview
-export ARCHIVE_SERVER_URL=http://archive-host:8090
+bash deploy/cloud/debian/enable-phase1-archive-compact.sh
+```
+
+Or manual:
+
+```bash
+export MONGODB_URI=mongodb+srv://...
+export MONGODB_DB=mooreview_cloud
+export ARCHIVE_SERVER_URL=http://10.x.x.x:8090
 export ARCHIVE_SERVER_TOKEN=change-me
 node scripts/run-archive-compact.js
 ```

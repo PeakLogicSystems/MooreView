@@ -19,6 +19,7 @@ function inferTagType(id) {
   if (/^PID/i.test(id)) return 'PID';
   if (/^AVG/i.test(id)) return 'AVG';
   if (/^FLOW/i.test(id)) return 'FLOW';
+  if (/^ALT\d+$/i.test(id)) return 'ALT';
   if (/^TMR/i.test(id)) return 'TIMER';
   if (/^CTR/i.test(id)) return 'COUNTER';
   if (/^VPR/i.test(id)) return 'REAL';
@@ -81,6 +82,10 @@ function defaultMetaForId(id, driverId) {
     meta.preset = 100;
     meta.mode = 'GPM';
   }
+  if (type === 'ALT') {
+    meta.preset = 2;
+    meta.mode = 'ALT2';
+  }
   if (id === 'TMR1') {
     meta.preset = 60000;
     meta.mode = 'TON';
@@ -110,7 +115,7 @@ function slimTagMetaForDeploy(tag, id, driverId) {
   const type = tag?.type || inferTagType(id);
   const meta = { id, type };
   const src = tag || defaultMetaForId(id, driverId);
-  if (['PID', 'AVG', 'TIMER', 'COUNTER', 'FLOW'].includes(type)) {
+  if (['PID', 'AVG', 'TIMER', 'COUNTER', 'FLOW', 'ALT'].includes(type)) {
     if (src.preset != null) meta.preset = src.preset;
     if (src.mode) meta.mode = src.mode;
   }

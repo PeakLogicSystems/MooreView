@@ -17,6 +17,7 @@ async function request(method, path, body, apiBase = API) {
     res = await fetch(url, {
       method,
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
       body: body != null ? JSON.stringify(body) : undefined,
     });
   } catch (e) {
@@ -45,6 +46,32 @@ async function platformRequest(method, path, body) {
   return request(method, path, body, PLATFORM_API);
 }
 
+async function importProjectFileRequest(fileOrBlob) {
+  const blob = fileOrBlob instanceof Blob ? fileOrBlob : new Blob([fileOrBlob]);
+  const buf = await blob.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  const isZip = bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b;
+  const contentType = isZip ? 'application/zip' : 'application/json';
+  let res;
+  try {
+    res = await fetch(`${API}/project/archive`, {
+      method: 'POST',
+      headers: { 'Content-Type': contentType },
+      credentials: 'same-origin',
+      body: buf,
+    });
+  } catch (e) {
+    const hint = e.message === 'Failed to fetch'
+      ? `Cannot reach the MooreVIEW server at ${location.origin}. Start MVP Suite with npm start.`
+      : e.message;
+    throw new Error(hint);
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || res.statusText || 'Import project failed');
+  if (!data.ok) throw new Error(data.error || 'Import project failed');
+  return data;
+}
+
 window.api = {
   getDashboard: (graphTags, opts = {}) => {
     const q = new URLSearchParams();
@@ -58,11 +85,12 @@ window.api = {
     if (graphTags?.length) q += `?graphTags=${graphTags.join(',')}`;
     return request('GET', q);
   },
-  openEst: (doc) => request('POST', '/project/est', doc),
+  openProjectArchive: importProjectFileRequest,
+  importProjectFile: importProjectFileRequest,
   saveEstBlob: async (name) => {
     let res;
     try {
-      res = await fetch(`${API}/project/est?name=${encodeURIComponent(name || 'project')}`);
+      res = await fetch(`${API}/project/archive?name=${encodeURIComponent(name || 'project')}`);
     } catch (e) {
       const hint = e.message === 'Failed to fetch'
         ? `Cannot reach the MooreVIEW server at ${location.origin}. Start MVP Suite with npm start.`
@@ -71,37 +99,25 @@ window.api = {
     }
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      throw new Error(data.error || res.statusText || 'Save project failed');
+      throw new Error(data.error || res.statusText || 'Export project failed');
     }
     return res.blob();
   },
   saveWorkspace: (project) => request('POST', '/workspace/save', { project }),
   listProjects: () => request('GET', '/projects'),
+  listImportableProjects: () => request('GET', '/projects/importable'),
+  importProjectFromLibrary: (file) => request('POST', '/projects/import-library', { file }),
+  importProjectNativePick: () => request('POST', '/projects/import-pick', {}),
+  importProjectFromPath: (path) => request('POST', '/projects/import-path', { path }),
   openProjectsFolder: () => request('POST', '/projects/open-folder', {}),
   saveProject: (name) => request('POST', '/projects/save', { name }),
   newProject: (name) => request('POST', '/projects/new', { name }),
   openProject: (id) => request('POST', '/projects/open', { id }),
   deleteProject: (id) => request('DELETE', `/projects?id=${encodeURIComponent(id)}`),
-  exportEstDoc: async (name) => {
+  exportSavedProjectBlob: async (id) => {
     let res;
     try {
-      res = await fetch(`${API}/project/est?name=${encodeURIComponent(name || 'project')}`);
-    } catch (e) {
-      const target = API.startsWith('http') ? API : `${location.origin}${API}`;
-      throw new Error(e.message === 'Failed to fetch'
-        ? `Cannot reach the MooreVIEW server at ${target}.`
-        : e.message);
-    }
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new Error(data.error || res.statusText || 'Export project failed');
-    }
-    return res.json();
-  },
-  downloadProjectBundle: async (name) => {
-    let res;
-    try {
-      res = await fetch(`${API}/project/bundle?name=${encodeURIComponent(name || 'project')}`);
+      res = await fetch(`${API}/projects/${encodeURIComponent(id)}/archive`);
     } catch (e) {
       const hint = e.message === 'Failed to fetch'
         ? `Cannot reach the MooreVIEW server at ${location.origin}. Start MVP Suite with npm start.`
@@ -113,6 +129,67 @@ window.api = {
       throw new Error(data.error || res.statusText || 'Export project failed');
     }
     return res.blob();
+  },
+  downloadProjectArchive: async (name) => {
+    let res;
+    try {
+      res = await fetch(`${API}/project/archive?name=${encodeURIComponent(name || 'project')}`);
+    } catch (e) {
+      const hint = e.message === 'Failed to fetch'
+        ? `Cannot reach the MooreVIEW server at ${location.origin}. Start MVP Suite with npm start.`
+        : e.message;
+      throw new Error(hint);
+    }
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || res.statusText || 'Export project failed');
+    }
+    return res.blob();
+  },
+  listProjectHubLocal: () => request('GET', '/project-hub/catalog'),
+  listProjectHubCloud: () => request('GET', '/project-hub/cloud/catalog'),
+  publishProjectHubLocal: (body) => request('POST', '/project-hub/publish', body),
+  publishProjectHubCloud: (body) => request('POST', '/project-hub/cloud/publish', body),
+  publishProjectHubPlatform: (body) => platformRequest('POST', '/project-hub/publish', body),
+  downloadProjectHubFile: async (id) => {
+    let res;
+    try {
+      res = await fetch(`${API}/project-hub/catalog/${encodeURIComponent(id)}/file`);
+    } catch (e) {
+      throw new Error(e.message === 'Failed to fetch'
+        ? `Cannot reach the MooreVIEW server at ${location.origin}.`
+        : e.message);
+    }
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || res.statusText || 'Download failed');
+    }
+    return res.blob();
+  },
+  deployProjectHub: (body) => request('POST', '/project-hub/deploy', body),
+  deployProjectHubFile: async (fileOrBlob) => {
+    const blob = fileOrBlob instanceof Blob ? fileOrBlob : new Blob([fileOrBlob]);
+    const buf = await blob.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    const isZip = bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b;
+    const contentType = isZip ? 'application/zip' : 'application/json';
+    let res;
+    try {
+      res = await fetch(`${API}/project-hub/deploy/file`, {
+        method: 'POST',
+        headers: { 'Content-Type': contentType },
+        credentials: 'same-origin',
+        body: buf,
+      });
+    } catch (e) {
+      throw new Error(e.message === 'Failed to fetch'
+        ? `Cannot reach the MooreVIEW server at ${location.origin}.`
+        : e.message);
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || res.statusText || 'Deploy failed');
+    if (!data.ok) throw new Error(data.error || 'Deploy failed');
+    return data;
   },
   listProjectHubCatalog: (locationId) => {
     const q = locationId ? `?locationId=${encodeURIComponent(locationId)}` : '';
@@ -126,6 +203,18 @@ window.api = {
   connectDriver: (driverId) => request('POST', '/drivers/connect', { driverId }),
   disconnectDriver: (driverId) => request('POST', '/drivers/disconnect', { driverId }),
   testDriver: (cfg) => request('POST', '/drivers/test', cfg),
+  bacnetDiscover: (body) => request('POST', '/drivers/bacnet/discover', body),
+  bacnetBrowse: (body) => request('POST', '/drivers/bacnet/browse', body),
+  bacnetImportTags: (body) => request('POST', '/drivers/bacnet/import-tags', body),
+  bacnetLoadExampleTags: (body) => request('POST', '/drivers/bacnet/load-example-tags', body),
+  bacnetListProfiles: () => request('GET', '/drivers/bacnet/profiles'),
+  bacnetSaveProfiles: (profiles) => request('PUT', '/drivers/bacnet/profiles', { profiles }),
+  bacnetSaveProfile: (profile) => request('POST', '/drivers/bacnet/profiles/save', { profile }),
+  bacnetDeleteProfile: (id) => request('DELETE', `/drivers/bacnet/profiles/${encodeURIComponent(id)}`),
+  bacnetProfileFromBrowse: (body) => request('POST', '/drivers/bacnet/profiles/from-browse', body),
+  bacnetProfilePreview: (body) => request('POST', '/drivers/bacnet/profiles/preview', body),
+  bacnetProfileApply: (body) => request('POST', '/drivers/bacnet/profiles/apply', body),
+  bacnetProfilesExample: () => request('GET', '/drivers/bacnet/profiles/example'),
   getNextcenturyExample: () => request('GET', '/drivers/nextcentury/example'),
   loadNextcenturyExampleTags: (body) => request('POST', '/drivers/nextcentury/load-example-tags', body),
   listDevicePresets: () => request('GET', '/devices/presets'),
@@ -187,9 +276,40 @@ window.api = {
     if (to) q.set('to', to);
     return request('GET', `/pdm/view?${q}`);
   },
-  putPdmSettings: (pdm) => request('PUT', '/pdm/settings', { pdm }),
-  buildPdmFeatures: () => request('POST', '/pdm/build', {}),
+  putPdmSettings: (body) => request('PUT', '/pdm/settings', body?.pdm != null ? body : { pdm: body }),
+  buildPdmFeatures: (body) => request('POST', '/pdm/build', body || {}),
+  runPdmProactive: (body) => request('POST', '/pdm/proactive/run', body || {}),
+  downloadPdmReportPdf: async (body) => {
+    let res;
+    try {
+      res = await fetch(`${API}/pdm/report/pdf`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body || {}),
+      });
+    } catch (e) {
+      throw new Error(e.message === 'Failed to fetch'
+        ? `Cannot reach the MooreVIEW server at ${location.origin}.`
+        : e.message);
+    }
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || res.statusText || 'PdM PDF export failed');
+    }
+    return res.blob();
+  },
   simulateMotorPdm: (body) => request('POST', '/pdm/sim/motor', body || {}),
+  simulateMotorAssetPdm: (body) => request('POST', '/pdm/sim/asset', body || {}),
+  pdmSetupCatalog: () => request('GET', '/pdm/setup/catalog'),
+  pdmSetupList: () => request('GET', '/pdm/setup'),
+  putPdmAssetSetup: (assetId, payload) => {
+    const body = payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? payload
+      : { context: payload };
+    return request('PUT', `/pdm/setup/${encodeURIComponent(assetId)}`, body);
+  },
+  deletePdmAssetSetup: (assetId) => request('DELETE', `/pdm/setup/${encodeURIComponent(assetId)}`),
+  getPdmAssetContext: (assetId) => request('GET', `/pdm/context/${encodeURIComponent(assetId)}`),
   listHmiAssets: async () => {
     const data = await request('GET', '/hmi/assets');
     if (Array.isArray(data?.assets)) return data.assets;
@@ -228,6 +348,7 @@ window.api = {
   listSites: () => platformRequest('GET', '/sites'),
   createSite: (body) => platformRequest('POST', '/sites', body || {}),
   deleteSite: (id) => platformRequest('DELETE', `/sites/${encodeURIComponent(id)}`),
+  repairSite: (id) => platformRequest('POST', `/sites/${encodeURIComponent(id)}/repair`),
   siteCameras: (siteId) => platformRequest('GET', `/sites/${encodeURIComponent(siteId)}/cameras`),
   siteCameraViewer: (siteId, cameraId) => platformRequest(
     'GET',
@@ -242,6 +363,7 @@ window.api = {
   patchTenantCmms: (id, body) => platformRequest('PATCH', `/admin/tenants/${encodeURIComponent(id)}/cmms`, body || {}),
   listTenantUsers: () => platformRequest('GET', '/tenant/users'),
   createTenantUser: (body) => platformRequest('POST', '/tenant/users', body || {}),
+  putTenantFeaturesMatrix: (matrix) => platformRequest('PUT', '/tenant/users/features-matrix', { matrix }),
   listSiteDevices: () => platformRequest('GET', '/sites/devices'),
   createSiteDevice: (body) => platformRequest('POST', '/sites/devices', body || {}),
   listFleetAssets: () => platformRequest('GET', '/fleet'),
@@ -306,4 +428,119 @@ window.api = {
     }
     return res.blob();
   },
+  getMessagingStatus: () => request('GET', '/messaging/status'),
+  saveMessagingConfig: (body) => request('PUT', '/messaging/config', body),
+  testMessagingMail: (body) => request('POST', '/messaging/test/mail', body),
+  testMessagingSms: (body) => request('POST', '/messaging/test/sms', body),
+  getCellularVendorCatalog: () => request('GET', '/cellular/vendors/catalog'),
+  getCellularVendors: () => request('GET', '/cellular/vendors'),
+  addCellularVendor: (body) => request('POST', '/cellular/vendors', body),
+  updateCellularVendor: (id, body) => request('PUT', `/cellular/vendors/${encodeURIComponent(id)}`, body),
+  deleteCellularVendor: (id) => request('DELETE', `/cellular/vendors/${encodeURIComponent(id)}`),
+  testCellularVendor: (id) => request('POST', `/cellular/vendors/${encodeURIComponent(id)}/test`, {}),
+  getCellularSimsStatus: () => request('GET', '/cellular/sims/status'),
+  getCellularSims: (opts = {}) => {
+    const q = new URLSearchParams();
+    if (opts.vendor) q.set('vendor', opts.vendor);
+    if (opts.tenantId) q.set('tenantId', opts.tenantId);
+    if (opts.deviceId) q.set('deviceId', opts.deviceId);
+    if (opts.sync) q.set('sync', '1');
+    const qs = q.toString();
+    return request('GET', `/cellular/sims${qs ? `?${qs}` : ''}`);
+  },
+  activateCellularSim: (id) => request('POST', `/cellular/sims/${encodeURIComponent(id)}/activate`, {}),
+  deactivateCellularSim: (id) => request('POST', `/cellular/sims/${encodeURIComponent(id)}/deactivate`, {}),
+  getCellularSimUsage: (id) => request('GET', `/cellular/sims/${encodeURIComponent(id)}/usage`),
+  syncCellularSims: () => request('POST', '/cellular/sync', {}),
+  getCloudSimsStatus: () => request('GET', '/cloud/sims/status'),
+  getCloudSims: () => request('GET', '/cloud/sims'),
+  createCloudSim: (body) => request('POST', '/cloud/sims', body),
+  startCloudSim: (id) => request('POST', `/cloud/sims/${encodeURIComponent(id)}/start`, {}),
+  stopCloudSim: (id) => request('POST', `/cloud/sims/${encodeURIComponent(id)}/stop`, {}),
+  deleteCloudSim: (id) => request('DELETE', `/cloud/sims/${encodeURIComponent(id)}`),
+  seedWebsiteDemoSims: (body) => request('POST', '/cloud/sims/seed-website-demo', body || {}),
+  sysLogStatus: () => request('GET', '/sys-log/status'),
+  sysLogQuery: (params = {}) => {
+    const q = new URLSearchParams();
+    if (params.level) q.set('level', params.level);
+    if (params.category) q.set('category', params.category);
+    if (params.limit) q.set('limit', String(params.limit));
+    if (params.since) q.set('since', params.since);
+    if (params.until) q.set('until', params.until);
+    if (params.userId) q.set('userId', params.userId);
+    const qs = q.toString();
+    return request('GET', `/sys-log${qs ? `?${qs}` : ''}`);
+  },
+  sysLogMaintenance: (body) => request('POST', '/sys-log/maintenance', body),
+  hardwareHistoryStatus: () => request('GET', '/hardware-history/status'),
+  hardwareHistory: (params = {}) => {
+    const q = new URLSearchParams();
+    if (params.positionId) q.set('positionId', params.positionId);
+    if (params.serial) q.set('serial', params.serial);
+    if (params.recent) q.set('recent', '1');
+    if (params.limit) q.set('limit', String(params.limit));
+    const qs = q.toString();
+    return request('GET', `/hardware-history${qs ? `?${qs}` : ''}`);
+  },
+  mongoReportCatalog: () => request('GET', '/reports/mongo/catalog'),
+  mongoReportDefinitions: () => request('GET', '/reports/mongo/definitions'),
+  putMongoReportDefinitions: (definitions) => request('PUT', '/reports/mongo/definitions', { definitions }),
+  discoverMongoReportFields: (collection) => request('GET', `/reports/mongo/discover?collection=${encodeURIComponent(collection)}`),
+  queryMongoReport: (spec) => request('POST', '/reports/mongo/query', { spec }),
+  downloadMongoReportPdf: async (body) => {
+    const res = await fetch(`${API}/reports/mongo/pdf`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || res.statusText);
+    }
+    const blob = await res.blob();
+    const disp = res.headers.get('Content-Disposition') || '';
+    const m = disp.match(/filename="([^"]+)"/);
+    return { blob, filename: m ? m[1] : 'mongo-report.pdf' };
+  },
+  cmmsStatus: () => request('GET', '/cmms/status'),
+  cmmsDashboard: () => request('GET', '/cmms/dashboard'),
+  listCmmsAssignees: () => request('GET', '/cmms/assignees'),
+  listCmmsWorkOrders: (params = {}) => {
+    const q = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => {
+      if (v != null && v !== '') q.set(k, String(v));
+    });
+    const qs = q.toString();
+    return request('GET', `/cmms/work-orders${qs ? `?${qs}` : ''}`);
+  },
+  createCmmsWorkOrder: (body) => request('POST', '/cmms/work-orders', body),
+  updateCmmsWorkOrder: (id, body) => request('PUT', `/cmms/work-orders/${encodeURIComponent(id)}`, body),
+  deleteCmmsWorkOrder: (id) => request('DELETE', `/cmms/work-orders/${encodeURIComponent(id)}`),
+  completeCmmsWorkOrder: (id) => request('POST', `/cmms/work-orders/${encodeURIComponent(id)}/complete`),
+  listCmmsPmSchedules: (params = {}) => {
+    const q = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => {
+      if (v != null && v !== '') q.set(k, String(v));
+    });
+    const qs = q.toString();
+    return request('GET', `/cmms/pm-schedules${qs ? `?${qs}` : ''}`);
+  },
+  createCmmsPmSchedule: (body) => request('POST', '/cmms/pm-schedules', body),
+  updateCmmsPmSchedule: (id, body) => request('PUT', `/cmms/pm-schedules/${encodeURIComponent(id)}`, body),
+  deleteCmmsPmSchedule: (id) => request('DELETE', `/cmms/pm-schedules/${encodeURIComponent(id)}`),
+  completeCmmsPmSchedule: (id) => request('POST', `/cmms/pm-schedules/${encodeURIComponent(id)}/complete`),
+  generateCmmsDuePmWorkOrders: () => request('POST', '/cmms/pm/generate-due'),
+  listUsers: () => request('GET', '/users'),
+  createUser: (body) => request('POST', '/users', body),
+  updateUser: (id, body) => request('PUT', `/users/${encodeURIComponent(id)}`, body),
+  deleteUser: (id) => request('DELETE', `/users/${encodeURIComponent(id)}`),
+  listAuthUsers: () => request('GET', '/auth/users'),
+  createAuthUser: (body) => request('POST', '/auth/users', body),
+  updateAuthUser: (id, body) => request('PUT', `/auth/users/${encodeURIComponent(id)}`, body),
+  deleteAuthUser: (id) => request('DELETE', `/auth/users/${encodeURIComponent(id)}`),
+  putAuthFeaturesMatrix: (matrix) => request('PUT', '/auth/users/features-matrix', { matrix }),
+  authFeaturesCatalog: () => request('GET', '/auth/features'),
 };
+
+window.api.dashboard = window.api.getDashboard;

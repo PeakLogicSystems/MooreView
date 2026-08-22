@@ -25,6 +25,6 @@ idf.py -p COM7 flash monitor
 
 1. WAN up → Parc MQTT connects → `online` retained true.
 2. Boot log shows `Sequent SM-I-010 online` (or soft I/O if HAT unplugged).
-3. From MooreVIEW: Download & Start a small ST program → device logs `put_program OK`.
+3. From mooreVIEW: Download & Start a small ST program → device logs `put_program OK`.
 4. Telemetry shows `smI010: true` and tags; toggle opto → `I1` changes; force `R1` → relay clicks.
 5. `runtime.running` true.

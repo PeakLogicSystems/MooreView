@@ -1,6 +1,6 @@
 'use strict';
 
-const { registry } = require('../../cameras/cameraRegistry');
+const { registry, camerasSystemEnabled } = require('../../cameras/cameraRegistry');
 const { discoverOnvif, dedupeHits } = require('../../cameras/onvifDiscover');
 const { discoverOnvifSubnet, estimateSweepTimeoutMs } = require('../../cameras/subnetSweep');
 const { expandDiscoveryHits, isReolinkHit } = require('../../cameras/reolink');
@@ -11,14 +11,16 @@ const { renderPlayerHtml, renderPlayerSetupHtml } = require('../../cameras/go2rt
 const snapshotService = require('../../cameras/cameraSnapshotService');
 const { queryEvents } = require('../../cameras/cameraEvents');
 const { viewerUrlForCamera } = require('../../cameras/reolink');
+const { stopCameraSystem, startCameraSystem, restartCameraAiServices } = require('../../cameras/cameraSystemControl');
+const cameraInference = require('../../cameras/cameraInference');
 const cameraScheduler = require('../../cameras/cameraScheduler');
 const cameraLiveSampler = require('../../cameras/cameraLiveSampler');
 const cameraMotionMonitor = require('../../cameras/cameraMotionMonitor');
-const cameraInference = require('../../cameras/cameraInference');
 const mongoTagLogger = require('../../logger/mongoTagLogger');
 const gridfs = require('../../storage/gridfsStore');
 const { normalizeOverlays, overlaysForCamera } = require('../../cameras/cameraOverlays');
 const cameraTagBridge = require('../../cameras/cameraTagBridge');
+const { CAMERA_SYSTEM_DISABLED_MSG } = require('../../cameras/cameraMessages');
 
 function resolveSweepPorts(settings, body = {}) {
   if (Array.isArray(body.sweepPorts) && body.sweepPorts.length) {
@@ -28,17 +30,16 @@ function resolveSweepPorts(settings, body = {}) {
   return Array.from(new Set([onvifPort, 80].filter((p) => p > 0 && p <= 65535)));
 }
 
-function restartCameraAiServices(settings) {
-  if (settings.cameraAiLiveEnabled !== false && cameraInference.aiEnabled(settings)) {
-    cameraLiveSampler.start();
-  } else {
-    cameraLiveSampler.stop();
-  }
-  if (settings.cameraAiMotionEnabled !== false && cameraInference.aiEnabled(settings)) {
-    cameraMotionMonitor.refresh();
-  } else {
-    cameraMotionMonitor.stop();
-  }
+function isCamerasConfigRoute(req) {
+  const path = req.path;
+  const method = req.method;
+  if (path === '/cameras/settings') return true;
+  if (path === '/cameras/ai/status' && method === 'GET') return true;
+  if (path === '/cameras' && method === 'GET') return true;
+  if (path === '/cameras/overview' && method === 'GET') return true;
+  if (path === '/cameras' && method === 'POST') return true;
+  if (/^\/cameras\/[^/]+$/.test(path) && ['GET', 'PUT', 'DELETE'].includes(method)) return true;
+  return false;
 }
 
 function resolveViewerUrl(camera, settings = registry.settings()) {
@@ -115,8 +116,20 @@ async function probeAllCameras(body = {}) {
   return probeCameraIds(registry.listCameraRecords().map((rec) => rec.cameraId), body);
 }
 
+function isCameraApiPath(path) {
+  const p = String(path || '');
+  return p.startsWith('/cameras') || p.startsWith('/go2rtc');
+}
+
 function createCameraRoutes() {
   const router = require('express').Router();
+
+  router.use((req, res, next) => {
+    if (!isCameraApiPath(req.path)) return next();
+    if (camerasSystemEnabled(registry.settings())) return next();
+    if (isCamerasConfigRoute(req)) return next();
+    res.status(503).json({ error: CAMERA_SYSTEM_DISABLED_MSG });
+  });
 
   router.get('/cameras/settings', (req, res) => {
     res.json({ settings: registry.settings() });
@@ -125,6 +138,7 @@ function createCameraRoutes() {
   router.put('/cameras/settings', (req, res) => {
     const patch = req.body || {};
     const next = registry.updateSettings({
+      camerasEnabled: patch.camerasEnabled,
       discoverTimeoutMs: patch.discoverTimeoutMs,
       defaultUsername: patch.defaultUsername,
       defaultPassword: patch.defaultPassword,
@@ -160,9 +174,26 @@ function createCameraRoutes() {
       cameraTagBridgeEnabled: patch.cameraTagBridgeEnabled,
       cameraTagBridgeIntervalMs: patch.cameraTagBridgeIntervalMs,
     });
+    if (patch.camerasEnabled != null) {
+      if (next.camerasEnabled === false) {
+        stopCameraSystem().catch(() => {});
+      } else {
+        startCameraSystem(next).catch(() => {});
+      }
+    } else if (patch.go2rtcEnabled != null) {
+      if (next.camerasEnabled !== false) {
+        if (next.go2rtcEnabled !== false) {
+          go2rtc.start(next).then(() => go2rtc.syncAllFromRegistry(registry, next)).catch(() => {});
+        } else {
+          go2rtc.stop().catch(() => {});
+        }
+      }
+    }
     if (patch.snapshotArchiveEnabled != null || patch.snapshotIntervalMs != null) {
-      if (next.snapshotArchiveEnabled) cameraScheduler.start();
-      else cameraScheduler.stop();
+      if (next.camerasEnabled !== false) {
+        if (next.snapshotArchiveEnabled) cameraScheduler.start();
+        else cameraScheduler.stop();
+      }
     }
     if (
       patch.cameraAiEnabled != null
@@ -170,11 +201,13 @@ function createCameraRoutes() {
       || patch.cameraAiMotionEnabled != null
       || patch.cameraAiLiveIntervalMs != null
     ) {
-      restartCameraAiServices(next);
+      if (next.camerasEnabled !== false) restartCameraAiServices(next);
     }
     if (patch.cameraTagBridgeEnabled != null || patch.cameraTagBridgeIntervalMs != null) {
-      if (next.cameraTagBridgeEnabled !== false) cameraTagBridge.start();
-      else cameraTagBridge.stop();
+      if (next.camerasEnabled !== false) {
+        if (next.cameraTagBridgeEnabled !== false) cameraTagBridge.start();
+        else cameraTagBridge.stop();
+      }
     }
     res.json({ settings: next });
   });
@@ -385,6 +418,7 @@ function createCameraRoutes() {
       go2rtcRunning = await go2rtc.isRunning(settings);
     } catch { /* ignore */ }
     res.json({
+      camerasEnabled: settings.camerasEnabled !== false,
       cameras: {
         total: list.length,
         probedOk,

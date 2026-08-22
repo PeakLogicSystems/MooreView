@@ -17,6 +17,27 @@
 
   const OVERLAY_SYMBOLS = ['valve', 'pump', 'motor', 'dot', 'text', 'box'];
 
+  const CAMERA_DISABLED_HINT = 'Camera system is off — enable it under Cameras → Administration… → Settings.';
+
+  function cameraSystemEnabled() {
+    return settings.camerasEnabled !== false;
+  }
+
+  function isCameraDisabledError(msg) {
+    return /camera system is disabled/i.test(String(msg || ''));
+  }
+
+  function normalizeCameraError(msg) {
+    return isCameraDisabledError(msg) ? CAMERA_DISABLED_HINT : String(msg || '');
+  }
+
+  function guardCameraRuntime(msgId, opts = {}) {
+    if (cameraSystemEnabled()) return true;
+    if (msgId) setMsg(msgId, CAMERA_DISABLED_HINT, false);
+    if (opts.renderEl) opts.renderEl.innerHTML = `<p class="panel-hint err">${esc(CAMERA_DISABLED_HINT)}</p>`;
+    return false;
+  }
+
   function esc(s) {
     return String(s ?? '')
       .replace(/&/g, '&amp;')
@@ -33,9 +54,10 @@
   function setMsg(id, text, ok) {
     const el = $(id);
     if (!el) return;
-    el.textContent = text || '';
+    const display = ok ? (text || '') : normalizeCameraError(text);
+    el.textContent = display;
     el.classList.toggle('ok', !!ok);
-    el.classList.toggle('err', text && !ok);
+    el.classList.toggle('err', display && !ok);
   }
 
   function camById(id) {
@@ -260,11 +282,13 @@
     const fleet = $('cameras-overview-fleet');
     if (!cards || !fleet || !data) return;
     const c = data.cameras || {};
+    const sys = data.camerasEnabled !== false;
     const g = data.go2rtc || {};
     const gfs = data.gridfs || {};
     const ai = data.ai || {};
     const arch = data.archive || {};
     cards.innerHTML = `
+      <div class="cam-stat-card ${sys ? '' : 'err'}"><div class="cam-stat-val">${sys ? 'ON' : 'OFF'}</div><div class="cam-stat-lbl">System</div></div>
       <div class="cam-stat-card"><div class="cam-stat-val">${c.total || 0}</div><div class="cam-stat-lbl">Cameras</div></div>
       <div class="cam-stat-card ok"><div class="cam-stat-val">${c.probedOk || 0}</div><div class="cam-stat-lbl">Probed OK</div></div>
       <div class="cam-stat-card ${c.probedErr ? 'err' : ''}"><div class="cam-stat-val">${c.probedErr || 0}</div><div class="cam-stat-lbl">Probe errors</div></div>
@@ -354,6 +378,7 @@
       body.innerHTML = '<p class="panel-hint">Select a camera to view live stream, URLs, and latest snapshot.</p>';
       return;
     }
+    if (!guardCameraRuntime(null, { renderEl: body })) return;
     selectedCameraId = id;
     const cam = camById(id);
     body.innerHTML = '<p class="panel-hint">Loading camera detail…</p>';
@@ -406,7 +431,7 @@
         ${renderOverlayEditor(id, viewerData.overlays || [], tagOptions)}`;
       bindOverlayEditor(id);
     } catch (e) {
-      body.innerHTML = `<p class="err">${esc(e.message || String(e))}</p>`;
+      body.innerHTML = `<p class="err">${esc(normalizeCameraError(e.message || String(e)))}</p>`;
     }
   }
 
@@ -414,6 +439,7 @@
     const filterId = $('cameras-archive-filter')?.value || '';
     const gallery = $('cameras-archive-gallery');
     if (!gallery) return;
+    if (!guardCameraRuntime('cameras-archive-msg', { renderEl: gallery })) return;
     gallery.innerHTML = '<p class="panel-hint">Loading snapshots…</p>';
     try {
       let items = [];
@@ -458,6 +484,7 @@
     const type = $('cameras-events-type')?.value || '';
     const wrap = $('cameras-events-table');
     if (!wrap) return;
+    if (!guardCameraRuntime('cameras-events-msg', { renderEl: wrap })) return;
     wrap.innerHTML = '<p class="panel-hint">Loading events…</p>';
     try {
       const data = filterId
@@ -490,6 +517,7 @@
     const hours = Number($('cameras-ai-hours')?.value) || 24;
     const wrap = $('cameras-ai-table');
     if (!wrap) return;
+    if (!guardCameraRuntime('cameras-ai-msg', { renderEl: wrap })) return;
     wrap.innerHTML = '<p class="panel-hint">Loading inference history…</p>';
     try {
       let rows = [];
@@ -538,6 +566,7 @@
   async function loadSystem() {
     const wrap = $('cameras-system-panels');
     if (!wrap) return;
+    if (!guardCameraRuntime('cameras-system-msg', { renderEl: wrap })) return;
     wrap.innerHTML = '<p class="panel-hint">Loading system status…</p>';
     try {
       const [overview, syncHint] = await Promise.all([
@@ -702,6 +731,7 @@
   }
 
   function fillSettingsForm() {
+    setSetting('cam-set-system-enabled', (el) => { el.checked = settings.camerasEnabled !== false; });
     setSetting('cam-set-timeout', (el) => { el.value = String(settings.discoverTimeoutMs || 4000); });
     setSetting('cam-set-onvif-port', (el) => { el.value = String(settings.onvifPort || 8000); });
     setSetting('cam-set-rtsp-port', (el) => { el.value = String(settings.rtspPort || 554); });
@@ -732,6 +762,20 @@
     refreshGo2rtcStatus();
     refreshCameraAiStatus();
     refreshCloudAgentStatus();
+    updateCameraSystemUi();
+  }
+
+  function updateCameraSystemUi() {
+    const enabled = settings.camerasEnabled !== false;
+    $('cameras-system-disabled-hint')?.classList.toggle('view-hidden', enabled);
+    document.querySelectorAll(
+      '#cam-set-go2rtc-enabled, #cam-set-auto-add, #cam-set-auto-probe, #cam-set-gridfs-mirror, '
+      + '#cam-set-snapshot-archive, #cam-set-prefer-sub, #cam-set-ai-enabled, #cam-set-ai-post, '
+      + '#cam-set-ai-live, #cam-set-ai-motion, #btn-cameras-discover, #btn-cameras-probe-all, '
+      + '#btn-system-sync-go2rtc, #btn-system-ai-refresh',
+    ).forEach((el) => {
+      if (el) el.disabled = !enabled;
+    });
   }
 
   function refreshCameraAiStatus() {
@@ -792,6 +836,11 @@
   function refreshGo2rtcStatus() {
     const el = $('cameras-go2rtc-status');
     if (!el || !api.go2rtcStatus) return Promise.resolve();
+    if (!cameraSystemEnabled()) {
+      el.textContent = 'Camera system off';
+      el.classList.remove('ok', 'err');
+      return Promise.resolve();
+    }
     return api.go2rtcStatus().then(async (data) => {
       const parts = [];
       if (data.enabled) parts.push('go2rtc enabled');
@@ -811,7 +860,7 @@
       el.classList.toggle('ok', !!data.running);
       el.classList.toggle('err', data.enabled && !data.binaryFound);
     }).catch((e) => {
-      el.textContent = e.message || String(e);
+      el.textContent = normalizeCameraError(e.message || String(e));
       el.classList.add('err');
     });
   }
@@ -921,6 +970,7 @@
   }
 
   async function probeCameraById(cameraId, msgId = 'cameras-inventory-msg') {
+    if (!guardCameraRuntime(msgId)) return;
     setMsg(msgId, `Probing ${cameraId} via ONVIF…`, true);
     try {
       const data = await api.probeCamera(cameraId, {
@@ -950,6 +1000,7 @@
   }
 
   async function probeAllCameras() {
+    if (!guardCameraRuntime('cameras-inventory-msg')) return;
     setMsg('cameras-inventory-msg', 'Probing all cameras via ONVIF…', true);
     try {
       const data = await api.probeAllCameras({
@@ -982,6 +1033,7 @@
   }
 
   async function runDiscover(msgId) {
+    if (!guardCameraRuntime(msgId)) return;
     setMsg(msgId, 'Scanning network (WS-Discovery + subnet TCP sweep)…', true);
     try {
       const autoAdd = $('cam-set-auto-add')?.checked ?? settings.autoAddDiscovered !== false;
@@ -1046,6 +1098,7 @@
       setMsg('cameras-discover-msg', 'Enter the camera IP address.', false);
       return;
     }
+    if (!guardCameraRuntime('cameras-discover-msg')) return;
     setMsg('cameras-discover-msg', `Adding and probing ${host}…`, true);
     try {
       const data = await api.addCameraByIp({
@@ -1085,13 +1138,16 @@
     const menu = $('camera-menu');
     if (!menu) return;
     const empty = $('camera-menu-empty');
+    const sep = $('camera-menu-sep');
     const list = cameras.slice().sort((a, b) => String(a.name || a.cameraId).localeCompare(String(b.name || b.cameraId)));
     menu.querySelectorAll('.topbar-camera-item').forEach((el) => el.remove());
     if (!list.length) {
       if (empty) empty.classList.remove('view-hidden');
+      if (sep) sep.classList.add('view-hidden');
       return;
     }
     if (empty) empty.classList.add('view-hidden');
+    if (sep) sep.classList.remove('view-hidden');
     const frag = document.createDocumentFragment();
     list.forEach((cam) => {
       const ready = cam.probeStatus === 'ok' || cam.hasStream || viewerUrlFor(cam);
@@ -1164,6 +1220,7 @@
   async function saveSettings() {
     try {
       const data = await api.putCameraSettings({
+        camerasEnabled: !!$('cam-set-system-enabled')?.checked,
         discoverTimeoutMs: Number($('cam-set-timeout')?.value) || 4000,
         onvifPort: Number($('cam-set-onvif-port')?.value) || 8000,
         rtspPort: Number($('cam-set-rtsp-port')?.value) || 554,
@@ -1193,7 +1250,10 @@
         cameraAiMotionCooldownMs: Number($('cam-set-ai-motion-cooldown')?.value) || 10000,
       });
       settings = data.settings || settings;
-      setMsg('cameras-settings-msg', 'Camera settings saved.', true);
+      setMsg('cameras-settings-msg', settings.camerasEnabled !== false
+        ? 'Camera settings saved.'
+        : 'Camera system disabled — streams, archive, and AI stopped.', true);
+      updateCameraSystemUi();
       refreshGo2rtcStatus();
       refreshCameraAiStatus();
     } catch (e) {
@@ -1202,6 +1262,7 @@
   }
 
   async function syncGo2rtc(msgId = 'cameras-settings-msg') {
+    if (!guardCameraRuntime(msgId)) return;
     setMsg(msgId, 'Syncing camera streams to go2rtc…', true);
     try {
       const data = await api.syncGo2rtc();
@@ -1221,6 +1282,7 @@
       setMsg(msgId, 'Select a camera first.', false);
       return;
     }
+    if (!guardCameraRuntime(msgId)) return;
     setMsg(msgId, 'Capturing snapshot…', true);
     try {
       const data = await api.captureCameraSnapshot(id);
@@ -1238,6 +1300,7 @@
       setMsg(msgId, 'Select a camera first.', false);
       return;
     }
+    if (!guardCameraRuntime(msgId)) return;
     setMsg(msgId, 'Running AI inference…', true);
     try {
       const data = await api.inferCamera(id);
@@ -1281,7 +1344,102 @@
     }).catch(() => {});
   }
 
+  function isCloudStudioHost() {
+    return window.MOOREVIEW_CLOUD_STUDIO === true
+      || document.body?.dataset?.mvDeployment === 'cloud';
+  }
+
+  function showCloudPairingBanner(created, siteId) {
+    const banner = $('cam-cloud-pairing-banner');
+    if (!banner) return;
+    const pairing = created?.pairingCode || '';
+    const token = created?.agentToken || '';
+    const id = created?.site?.siteId || siteId || '';
+    if (!pairing && !token) {
+      banner.innerHTML = '';
+      return;
+    }
+    banner.innerHTML = `<div class="cs-pairing">
+      <strong>Pairing keys for <code>${esc(id)}</code></strong>
+      ${pairing ? `<p>Pairing code: <code>${esc(pairing)}</code></p>` : ''}
+      ${token ? `<p>Agent token: <code>${esc(token)}</code></p>` : ''}
+      <p class="muted">Copy now — paste on the edge appliance, then Save cloud pairing.</p>
+    </div>`;
+  }
+
+  async function loadCloudSitesMini() {
+    const host = $('cam-cloud-sites-table');
+    const msg = $('cam-cloud-sites-msg');
+    if (!host || !api.listSites) return;
+    try {
+      const data = await api.listSites();
+      const sites = data.sites || [];
+      if (!sites.length) {
+        host.innerHTML = '<p class="muted">No remote sites yet. Create one above to get a pairing code.</p>';
+      } else {
+        host.innerHTML = `<table class="tags-table cameras-cloud-sites-table"><thead><tr>
+          <th>Site</th><th>Name</th><th>Agent</th><th>Cameras</th><th></th>
+        </tr></thead><tbody>
+          ${sites.map((s) => `<tr>
+            <td><code>${esc(s.siteId)}</code></td>
+            <td>${esc(s.name || '—')}</td>
+            <td>${s.agentOnline ? 'online' : 'offline'}</td>
+            <td>${Number(s.cameraCount) || 0}</td>
+            <td>
+              <a class="btn btn-sm" href="/remote-sites/${encodeURIComponent(s.siteId)}/cameras">Cameras</a>
+              <button type="button" class="btn btn-sm" data-cam-cloud-repair="${esc(s.siteId)}">Re-pair</button>
+            </td>
+          </tr>`).join('')}
+        </tbody></table>`;
+        host.querySelectorAll('[data-cam-cloud-repair]').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            try {
+              const issued = await api.repairSite(btn.getAttribute('data-cam-cloud-repair'));
+              showCloudPairingBanner(issued, btn.getAttribute('data-cam-cloud-repair'));
+              await loadCloudSitesMini();
+            } catch (e) {
+              if (msg) setMsg('cam-cloud-sites-msg', e.message || String(e), false);
+            }
+          });
+        });
+      }
+      if (msg) setMsg('cam-cloud-sites-msg', `${sites.length} remote site(s)`, true);
+    } catch (e) {
+      host.innerHTML = `<p class="err">${esc(e.message || String(e))}</p>`;
+    }
+  }
+
+  function applyCloudStudioCameraUi() {
+    if (!isCloudStudioHost()) return;
+    $('cameras-cloud-host-panel')?.classList.remove('view-hidden');
+    $('cameras-appliance-settings')?.classList.add('view-hidden');
+    ['discover', 'system'].forEach((tab) => {
+      document.querySelectorAll(`[data-cameras-tab-btn="${tab}"]`).forEach((el) => {
+        el.classList.add('view-hidden');
+      });
+    });
+    const settingsBtn = document.querySelector('[data-cameras-tab-btn="settings"]');
+    if (settingsBtn) settingsBtn.textContent = 'Cloud pairing';
+    $('btn-cam-cloud-create-site')?.addEventListener('click', async () => {
+      try {
+        const created = await api.createSite({
+          siteId: $('cam-cloud-new-site-id')?.value?.trim() || undefined,
+          name: $('cam-cloud-new-site-name')?.value?.trim() || undefined,
+        });
+        showCloudPairingBanner(created, created.site?.siteId);
+        await loadCloudSitesMini();
+      } catch (e) {
+        setMsg('cam-cloud-sites-msg', e.message || String(e), false);
+      }
+    });
+    $('btn-cam-cloud-refresh-sites')?.addEventListener('click', () => {
+      loadCloudSitesMini().catch((e) => setMsg('cam-cloud-sites-msg', e.message || String(e), false));
+    });
+    loadCloudSitesMini().catch(() => {});
+  }
+
   function bind() {
+    applyCloudStudioCameraUi();
     bindCameraMenu();
     refreshCameras().catch(() => renderCameraMenu());
     document.querySelectorAll('[data-cameras-tab-btn]').forEach((b) => {
@@ -1323,6 +1481,10 @@
     });
     $('camera-edit-form')?.addEventListener('submit', saveEditForm);
     $('btn-cameras-save-settings')?.addEventListener('click', saveSettings);
+    $('cam-set-system-enabled')?.addEventListener('change', () => {
+      settings = { ...settings, camerasEnabled: !!$('cam-set-system-enabled')?.checked };
+      updateCameraSystemUi();
+    });
     $('btn-cameras-sync-go2rtc')?.addEventListener('click', () => syncGo2rtc());
     $('btn-cameras-cloud-save')?.addEventListener('click', () => saveCloudAgent());
     $('btn-cameras-cloud-sync')?.addEventListener('click', async () => {
@@ -1416,8 +1578,12 @@
   window.MooreviewCameras = {
     refresh: refreshCameras,
     open: () => {
-      showCamerasTab('overview');
-      refreshCameras().catch(console.error);
+      showCamerasTab(isCloudStudioHost() ? 'settings' : 'overview');
+      if (isCloudStudioHost()) {
+        loadCloudSitesMini().catch(console.error);
+      } else {
+        refreshCameras().catch(console.error);
+      }
     },
   };
 

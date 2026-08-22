@@ -1,6 +1,16 @@
 'use strict';
 
+const { jxctSoil7in1Tags, dfrobotPoolChemistryDraginoTags } = require('../devices/tagBuilders');
+
 /** Build tenant-scoped Parc telemetry payloads for cloud sim runners. */
+
+function round1(n) {
+  return Math.round(n * 10) / 10;
+}
+
+function round2(n) {
+  return Math.round(n * 100) / 100;
+}
 
 function buildOptaTags(tick) {
   const phase = tick / 10;
@@ -28,13 +38,85 @@ function buildModbusTags(tick, config = {}) {
   }));
 }
 
+function jxctSimValue(tagId, tick, sensorIndex = 0) {
+  const phase = tick / 20 + sensorIndex * 1.7;
+  const s = Math.sin(phase);
+  const c = Math.cos(phase * 0.7);
+  if (tagId.endsWith('SOIL_PH')) return round2(6.5 + s * 0.4);
+  if (tagId.endsWith('SOIL_MOIST_PCT')) return round1(38 + s * 12);
+  if (tagId.endsWith('SOIL_TEMP_C')) return round1(22 + c * 6);
+  if (tagId.endsWith('SOIL_EC_US_CM')) return Math.round(650 + s * 350);
+  if (tagId.endsWith('N_MG_KG')) return Math.round(95 + sensorIndex * 8 + s * 15);
+  if (tagId.endsWith('P_MG_KG')) return Math.round(42 + sensorIndex * 3 + c * 8);
+  if (tagId.endsWith('K_MG_KG')) return Math.round(160 + sensorIndex * 5 + s * 20);
+  return 0;
+}
+
+function buildJxctSoilTags(tick, config = {}) {
+  const sensorCount = Math.max(1, Math.min(4, Number(config.sensorCount) || 4));
+  const slaves = Array.from({ length: sensorCount }, (_, i) => i + 1);
+  const idPrefix = sensorCount === 1 ? '' : 'S{n}_';
+  const defs = jxctSoil7in1Tags('_sim', { slaves, idPrefix });
+  return defs.map((tag, idx) => ({
+    id: tag.id,
+    type: tag.type,
+    role: tag.role || 'input',
+    value: jxctSimValue(tag.id, tick, Math.floor(idx / 7)),
+    quality: 'GOOD',
+  }));
+}
+
+function poolSimValue(tagId, tick) {
+  const phase = tick / 15;
+  const s = Math.sin(phase);
+  const c = Math.cos(phase * 0.5);
+  switch (tagId) {
+    case 'PH_PV': return round2(7.4 + s * 0.15);
+    case 'CL_PV': return round2(1.8 + s * 0.6);
+    case 'WATER_TEMP_C': return round1(28 + c * 2.5);
+    case 'NH3_MG_L': return round2(Math.max(0, 0.08 + Math.abs(c) * 0.12));
+    default: return 0;
+  }
+}
+
+function buildPoolChemistryTags(tick) {
+  const defs = dfrobotPoolChemistryDraginoTags('_sim', { phSlaveId: 1, clSlaveId: 2 });
+  return defs.map((tag) => ({
+    id: tag.id,
+    type: tag.type,
+    role: tag.role || 'input',
+    value: poolSimValue(tag.id, tick),
+    quality: 'GOOD',
+  }));
+}
+
+function draginoSimMeta(sim) {
+  const preset = sim.config?.modbusPreset
+    || (sim.type === 'jxct_soil'
+      ? (Number(sim.config?.sensorCount) === 1
+        ? 'jxct_npk_jxbs3001_dragino'
+        : 'jxct_npk_jxbs3001_dragino_x4')
+      : sim.type === 'pool_chemistry'
+        ? 'dfrobot_pool_chemistry_dragino'
+        : null);
+  return preset ? { modbusPreset: preset, gatewayRole: 'cellular_rs485' } : {};
+}
+
 function buildSimTelemetry(sim, tick = 0) {
   const deviceId = sim.mqttDeviceId;
+  const intervalMs = Math.max(200, Number(sim.config?.intervalMs) || 2000);
+  const draginoMeta = draginoSimMeta(sim);
   const base = {
     deviceId,
     name: sim.name,
-    platform: sim.type === 'modbus' ? 'modbus-slave-sim' : 'arduino-opta',
-    reportIntervalSec: Math.max(1, Math.round((sim.config?.intervalMs || 2000) / 1000)),
+    platform: sim.type === 'jxct_soil' || sim.type === 'pool_chemistry'
+      ? 'dragino-rs485-nb'
+      : sim.type === 'modbus'
+        ? 'modbus-slave-sim'
+        : sim.type === 'mixed'
+          ? 'mixed-sim'
+          : 'arduino-opta',
+    reportIntervalSec: Math.max(1, Math.round(intervalMs / 1000)),
     runtime: { running: true, firmware: 'cloud-sim', deviceMode: 'simulated' },
     driverHealth: [{ id: 'mqtt', type: 'mqtt', connected: true, message: 'OK' }],
     meta: {
@@ -42,9 +124,17 @@ function buildSimTelemetry(sim, tick = 0) {
       simId: sim.id,
       tenantId: sim.tenantId,
       simType: sim.type,
+      ...draginoMeta,
     },
+    ...draginoMeta,
   };
 
+  if (sim.type === 'jxct_soil') {
+    return { ...base, tags: buildJxctSoilTags(tick, sim.config) };
+  }
+  if (sim.type === 'pool_chemistry') {
+    return { ...base, tags: buildPoolChemistryTags(tick) };
+  }
   if (sim.type === 'modbus') {
     return { ...base, tags: buildModbusTags(tick, sim.config) };
   }
@@ -61,5 +151,9 @@ function buildSimTelemetry(sim, tick = 0) {
 module.exports = {
   buildOptaTags,
   buildModbusTags,
+  buildJxctSoilTags,
+  buildPoolChemistryTags,
   buildSimTelemetry,
+  jxctSimValue,
+  poolSimValue,
 };

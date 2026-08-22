@@ -7,6 +7,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { buildPlacementObject, applyLiftStationLevel } from './mvdraw-symbol-3d.js';
+import { mountNorthIndicator } from './mv-north-indicator.js';
 
 const PIPE_Y = 0.35;
 
@@ -262,9 +263,12 @@ export function mountMvDrawSiteScene(container, site, opts = {}) {
 
   window.addEventListener('resize', onResize);
 
+  const north = mountNorthIndicator();
+
   function animate() {
     requestAnimationFrame(animate);
     controls.update();
+    north.update(camera);
     renderer.render(scene, camera);
   }
   animate();

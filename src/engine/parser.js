@@ -2,8 +2,23 @@
 
 const { attachSpan, spanFrom } = require('./sourceSpan');
 
+const ALT_STMTS = new Set([
+  'AltEnable', 'AltAdvance', 'AltAutoFault', 'AltLead', 'AltOff', 'AltHigh', 'AltLow',
+  'AltLag2', 'AltLevel', 'AltLevelBands',
+  'AltOnline', 'AltUnitOut', 'AltLeadSel', 'AltLagSel', 'AltLag2Sel',
+]);
+
+const ALT_UNIT_STMTS = new Set([
+  'AltOnline', 'AltUnitOut', 'AltLeadSel', 'AltLagSel', 'AltLag2Sel',
+]);
+
+const ALT_CALLS = new Set([
+  'AltActiveUnit', 'AltFault', 'AltLag', 'AltOffActive', 'AltHighActive', 'AltLowActive',
+  'AltLow2Active', 'AltPumpUp', 'AltPumpDown',
+]);
+
 const KEYWORDS = new Set([
-  'IF', 'THEN', 'ELSE', 'END_IF', 'AND', 'OR', 'NOT',
+  'IF', 'THEN', 'ELSE', 'ELSIF', 'END_IF', 'AND', 'OR', 'NOT',
   'IsON', 'IsOFF', 'TurnON', 'TurnOFF', 'WithInLimits',
   'TimerDone', 'TimerRun', 'TimerInput',
   'CounterDone', 'CounterValue', 'CounterReset', 'CounterCu', 'CounterCd',
@@ -131,6 +146,9 @@ class Parser {
     if (tok.type === 'kw' && tok.value === 'SetInt') {
       return this.setIntStmt();
     }
+    if (tok.type === 'id' && ALT_STMTS.has(tok.value)) {
+      return this.altStmt();
+    }
     if (tok.type === 'kw' && [
       'TurnON', 'TurnOFF', 'CounterReset', 'CounterCu', 'CounterCd', 'TimerInput',
       'PidPv', 'PidSp', 'PidOut', 'PidAuto', 'PidManual',
@@ -146,8 +164,20 @@ class Parser {
     this.eat('kw', 'IF');
     const cond = this.expr();
     this.eat('kw', 'THEN');
-    const thenBody = this.blockUntil(['ELSE', 'END_IF']);
+    const thenBody = this.blockUntil(['ELSE', 'ELSIF', 'END_IF']);
     let elseBody = [];
+    while (this.peek().type === 'kw' && this.peek().value === 'ELSIF') {
+      this.eat('kw', 'ELSIF');
+      const elifCond = this.expr();
+      this.eat('kw', 'THEN');
+      const elifBody = this.blockUntil(['ELSE', 'ELSIF', 'END_IF']);
+      elseBody = [{
+        type: 'if',
+        cond: elifCond,
+        thenBody: elifBody,
+        elseBody,
+      }];
+    }
     if (this.peek().type === 'kw' && this.peek().value === 'ELSE') {
       this.eat('kw', 'ELSE');
       elseBody = this.blockUntil(['END_IF']);
@@ -164,6 +194,63 @@ class Parser {
       if (this.peek().type === 'semi') this.eat('semi');
     }
     return body;
+  }
+
+  altStmt() {
+    const nameTok = this.eat('id');
+    const name = nameTok.value;
+    this.eat('(');
+    const tagTok = this.eat('id');
+    const tag = tagTok.value;
+    if (name === 'AltLevelBands') {
+      this.eat(',');
+      const levelBands = [];
+      for (let i = 0; i < 4; i++) {
+        levelBands.push(this.addExpr());
+        if (i < 3) this.eat(',');
+      }
+      const close = this.eat(')');
+      return attachSpan({
+        type: 'action',
+        name,
+        tag,
+        levelBands,
+        tagSpan: spanFrom(tagTok),
+      }, nameTok, close);
+    }
+    if (ALT_UNIT_STMTS.has(name)) {
+      this.eat(',');
+      const unitTok = this.eat('num');
+      this.eat(',');
+      const inputTok = this.eat('id');
+      const close = this.eat(')');
+      return attachSpan({
+        type: 'action',
+        name,
+        tag,
+        unit: unitTok.value,
+        inputTag: inputTok.value,
+        tagSpan: spanFrom(tagTok),
+        inputSpan: spanFrom(inputTok),
+      }, nameTok, close);
+    }
+    let inputTag = null;
+    let inputSpan = null;
+    if (this.peek().type === ',') {
+      this.eat(',');
+      const inputTok = this.eat('id');
+      inputTag = inputTok.value;
+      inputSpan = spanFrom(inputTok);
+    }
+    const close = this.eat(')');
+    return attachSpan({
+      type: 'action',
+      name,
+      tag,
+      inputTag,
+      tagSpan: spanFrom(tagTok),
+      inputSpan,
+    }, nameTok, close);
   }
 
   setArrayStmt() {
@@ -308,6 +395,9 @@ class Parser {
     ].includes(tok.value)) {
       return this.call(tok.value);
     }
+    if (tok.type === 'id' && ALT_CALLS.has(tok.value)) {
+      return this.call(tok.value);
+    }
     if (tok.type === 'id') {
       const idTok = tok;
       this.i++;
@@ -329,7 +419,9 @@ class Parser {
   }
 
   call(name) {
-    const kw = this.eat('kw', name);
+    const nameTok = this.peek();
+    if (nameTok.type === 'id' && nameTok.value === name) this.eat('id');
+    else this.eat('kw', name);
     const open = this.eat('(');
     const args = [];
     const first = this.eat('id');
@@ -351,7 +443,7 @@ class Parser {
       last = idx;
     }
     const close = this.eat(')');
-    return attachSpan({ type: 'call', name, args }, kw, open, last, close);
+    return attachSpan({ type: 'call', name, args }, nameTok, open, last, close);
   }
 }
 
@@ -381,9 +473,13 @@ function collectProgramTagRefs(ast) {
       if (node.inputTag) refs.add(node.inputTag);
     }
     if (node.type === 'tagIndex') walk(node.index);
-    if (node.type === 'action' && (node.name === 'SetArray' || node.name === 'SetInt')) {
-      walk(node.index);
-      walk(node.valueExpr);
+    if (node.type === 'action') {
+      if (node.name === 'SetArray' || node.name === 'SetInt') {
+        walk(node.index);
+        walk(node.valueExpr);
+      } else if (node.name === 'AltLevelBands') {
+        (node.levelBands || []).forEach((b) => walk(b));
+      }
     }
     if (node.type === 'if') {
       walk(node.cond);

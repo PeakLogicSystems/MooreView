@@ -5,6 +5,10 @@ const { exportFilename, EST_FORMAT } = require('../../src/project/estFile');
 const { normalizeHmi } = require('../../src/hmi/hmiConfig');
 const { normalizeMvDraw } = require('./mvDrawFormat');
 const {
+  compileMvDrawToHmi,
+  mergeCompiledHmiIntoSettings,
+} = require('./mvDrawToHmi');
+const {
   readActiveProject,
   writeActiveProject,
   saveNamedProject,
@@ -174,6 +178,54 @@ async function saveMvDrawToProjectLibrary() {
   return saved?.id || id;
 }
 
+function applyMvDrawHmiCompile(doc, compiled, options = {}) {
+  const publicRoot = options.publicRoot || PUBLIC_ROOT;
+  const settings = persistence.readJson('settings.json', {});
+  const est = readEstSnapshot();
+  const tags = est?.tags || settings.tags || [];
+  const nextSettings = mergeCompiledHmiIntoSettings(settings, compiled, publicRoot, tags);
+  persistence.writeJson('settings.json', nextSettings);
+  const normalizedScreenId = nextSettings.hmi?.layout?.areaPopupScreens?.slice(-1)[0]
+    || nextSettings.hmi?.screens?.slice(-1)[0]?.id
+    || compiled.screen.id;
+  if (est?.format === EST_FORMAT) {
+    est.settings = est.settings || {};
+    est.settings.hmi = nextSettings.hmi;
+    if (doc) est.mvDraw = normalizeMvDraw(doc);
+    est.savedAt = new Date().toISOString();
+    persistence.writeJson('project.est.json', est);
+    const workspace = persistence.readJson('workspace.est.json', null);
+    if (workspace?.format === EST_FORMAT) {
+      workspace.settings = workspace.settings || {};
+      workspace.settings.hmi = nextSettings.hmi;
+      if (doc) workspace.mvDraw = normalizeMvDraw(doc);
+      workspace.savedAt = est.savedAt;
+      persistence.writeJson('workspace.est.json', workspace);
+    }
+  }
+  return {
+    settings: nextSettings,
+    screenId: normalizedScreenId,
+    stats: compiled.stats,
+    warnings: compiled.warnings,
+  };
+}
+
+function compileAndApplyMvDrawHmi(doc, options = {}) {
+  const publicRoot = options.publicRoot || PUBLIC_ROOT;
+  const compiled = compileMvDrawToHmi(doc || readActiveProject(), {
+    ...options,
+    publicRoot,
+  });
+  if (!compiled.stats.nodesCompiled) {
+    throw Object.assign(new Error('No compilable MV Draw symbols with SCADA meta found'), { status: 400 });
+  }
+  return {
+    compiled,
+    applied: applyMvDrawHmiCompile(doc, compiled, { publicRoot }),
+  };
+}
+
 module.exports = {
   DEFAULT_FACILITY_PLAN_URL,
   buildMooreviewProjectContext,
@@ -186,4 +238,6 @@ module.exports = {
   loadMvDrawFromMooreviewProject,
   shouldAutoLoadFromProject,
   saveMvDrawToProjectLibrary,
+  applyMvDrawHmiCompile,
+  compileAndApplyMvDrawHmi,
 };

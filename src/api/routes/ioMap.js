@@ -149,12 +149,16 @@ function createIoMapRoutes(deps) {
 
   router.get('/io-map', async (req, res) => {
     const runtime = scanEngine.status();
-    if (shouldPollFieldbusForIoMap(runtime)) {
-      try {
+    const remoteExec = !!(runtime.remoteExecution ?? runtime.remoteExec);
+    try {
+      if (remoteExec && typeof driverManager?.syncParcTelemetry === 'function') {
+        await driverManager.syncParcTelemetry();
+        tagStore.applyForcesAfterRead?.();
+      } else if (shouldPollFieldbusForIoMap(runtime)) {
         await pollFieldbusForIoMap(driverManager, tagStore, runtime);
-      } catch (e) {
-        console.warn('[io-map] fieldbus poll:', e.message || String(e));
       }
+    } catch (e) {
+      console.warn('[io-map] fieldbus poll:', e.message || String(e));
     }
     const tagList = tagStore.list();
     const points = tagList.filter(isIoMapTag).sort(sortIoMapTags).map(ioMapPointFromTag);

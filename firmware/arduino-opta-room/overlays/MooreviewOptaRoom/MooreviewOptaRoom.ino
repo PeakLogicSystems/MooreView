@@ -248,16 +248,8 @@ void setup() {
   }
 
   mvEthBegin(&g_cfg, mac);
-  {
-    IPAddress ip = Ethernet.localIP();
-    char ipbuf[20];
-    snprintf(ipbuf, sizeof(ipbuf), "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
-    MV_LOG_CMD2("Ethernet IP=", ipbuf);
-    if (ip[0] == 0 && ip[1] == 0 && ip[2] == 0 && ip[3] == 0) {
-      MV_LOG("Ethernet has no IP — check cable/DHCP or set static IP in /setup");
-    }
-  }
   delay(300);
+  mvEthLogStatus(&g_cfg);
   if (g_cfg.wifiApEnable) {
     if (!mvWifiBegin(&g_cfg)) {
       MV_LOG2("WiFi AP boot failed: ", mvWifiLastError());

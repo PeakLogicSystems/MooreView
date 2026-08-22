@@ -3,22 +3,27 @@
 const simManager = require('../../cloud/simManager');
 const { isCloudSimsEnabled } = require('../../cloud/cloudSimsEnabled');
 
+const FEATURE_DISABLED_MSG = 'Cloud sim management requires MOOREVIEW_DEPLOYMENT=cloud, MOOREVIEW_CLOUD_SIMS=1, or settings cloudSims.enabled';
+
 function requireCloudSims(req, res, next) {
-  if (!isCloudSimsEnabled()) {
-    return res.status(403).json({
-      error: 'Cloud sim management requires MOOREVIEW_DEPLOYMENT=cloud, MOOREVIEW_CLOUD_SIMS=1, or settings cloudSims.enabled',
-    });
+  const path = String(req.path || '');
+  if (!path.startsWith('/cloud')) return next();
+  if (isCloudSimsEnabled()) return next();
+  if (req.method === 'GET' && path === '/cloud/sims') {
+    return res.json({ ok: true, enabled: false, sims: [], count: 0 });
   }
-  return next();
+  return res.status(403).json({ error: FEATURE_DISABLED_MSG, enabled: false });
 }
 
 function createCloudSimRoutes() {
   const router = require('express').Router();
-  router.use(requireCloudSims);
 
   router.get('/cloud/sims/status', (req, res) => {
-    res.json({ ok: true, ...simManager.managerStatus() });
+    const enabled = isCloudSimsEnabled();
+    res.json({ ok: true, enabled, ...simManager.managerStatus() });
   });
+
+  router.use(requireCloudSims);
 
   router.get('/cloud/sims', async (req, res) => {
     try {
@@ -33,6 +38,15 @@ function createCloudSimRoutes() {
     try {
       const sim = await simManager.createSim(req.body || {});
       res.status(201).json({ ok: true, sim });
+    } catch (e) {
+      res.status(e.status || 500).json({ error: e.message || String(e) });
+    }
+  });
+
+  router.post('/cloud/sims/seed-website-demo', async (req, res) => {
+    try {
+      const result = await simManager.seedWebsiteDemoSims(req.body || {});
+      res.json(result);
     } catch (e) {
       res.status(e.status || 500).json({ error: e.message || String(e) });
     }
@@ -94,4 +108,4 @@ function createCloudSimRoutes() {
   return router;
 }
 
-module.exports = { createCloudSimRoutes, requireCloudSims };
+module.exports = { createCloudSimRoutes, requireCloudSims, FEATURE_DISABLED_MSG };

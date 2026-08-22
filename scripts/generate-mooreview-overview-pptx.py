@@ -155,7 +155,7 @@ def build():
         "Main Screen Layout",
         [
             "Top bar — MooreVIEW brand, Project menu, Tools menu",
-            ("Project ▾ — Status, System setup, New/Open/Save project, Save workspace", 0),
+            ("Project ▾ — Status, System setup, New/Open/Import/Save project, Save workspace", 0),
             ("Tools ▾ — Program, Tags, Alarms, Drivers, Historian, Report, Help", 0),
             "Main workspace — live HMI operator display (composed tiles, multi-screen nav)",
             "Floating tool windows — draggable, resizable, Front/Back stacking",
@@ -166,12 +166,12 @@ def build():
     slide(
         "Projects & Workspace",
         [
-            "Open project — load full .est / JSON bundle (tags, drivers, program)",
-            "Save project — download portable project file (format: mooreview-est v1)",
-            "Save workspace — server-side copy to data/workspace.est.json",
-            "Project snapshots stored under data/projects/",
-            "Legacy import: tags-only JSON or bundle without format field",
-            "Always verify tag count after opening a project file",
+            "Open project — pick a saved .est.zip from data/projects/",
+            "Import project file — load .est.zip or legacy .est.json; converts JSON to library zip",
+            "Save project — write portable .est.zip archive to data/projects/",
+            "Export project file — download current project for another PC",
+            "Save workspace — server-side copy to data/workspace.est.zip",
+            "Always verify tag count after importing a project file",
         ],
     )
 

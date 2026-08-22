@@ -16,8 +16,8 @@ static const char MV_IO_MAP_HTML[] = R"HTML(<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>MooreVIEW Opta I/O Map</title>
 <style>
-body{font-family:system-ui,sans-serif;margin:1rem;background:#f1f5f9;color:#0f172a}
-h1{font-size:1.25rem}h2{font-size:1rem;margin-top:1.25rem}
+body{font-family:'Segoe UI',system-ui,sans-serif;margin:1rem;background:#f1f5f9;color:#0f172a}
+h1{font-size:1.25rem}h2{font-size:1rem;margin-top:1.25rem;color:#49104F}
 .card{background:#fff;border:1px solid #cbd5e1;border-radius:8px;padding:1rem;margin:.75rem 0}
 .muted{color:#64748b;font-size:.85rem}
 )HTML" MV_WEB_NAV_CSS R"HTML(
@@ -392,7 +392,7 @@ static void handleIoMapPage(Stream& client, const String& method, const String& 
   (void)path;
   (void)body;
   (void)headerBlock;
-  mvHttpSendResponseCStr(client, 200, "text/html", mvIoMapHtmlPage());
+  mvHttpSendResponseCStr(client, 200, "text/html; charset=utf-8", mvIoMapHtmlPage());
 }
 
 static void handleIoMapApi(Stream& client, const String& method, const String& path,

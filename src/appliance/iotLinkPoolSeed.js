@@ -5,6 +5,17 @@ const path = require('path');
 const { ST_DIR, DEFAULT_MQTT_PARC_BROKER } = require('../config');
 const { normalizeHmi } = require('../hmi/hmiConfig');
 const { EST_FORMAT } = require('../project/estFile');
+const {
+  parseWaveshareRelayBindings,
+  buildWaveshareRelayDriver,
+  bindWavesharePoolRelays,
+} = require('../devices/wavesharePoolRelay');
+const {
+  buildResPoolValveDriver,
+  bindResPoolValves,
+  valveDeviceId,
+} = require('../devices/resPoolValves');
+const { dfrobotPoolChemistryDraginoTags } = require('../devices/tagBuilders');
 
 const FIXTURE_DIR = path.join(ST_DIR, 'fixtures');
 const ACTIVE_PROGRAM = 'logic/30_pool_controller.st';
@@ -18,6 +29,15 @@ const IOT_LINK_DEFAULT_PORTS = {
 
 const DEFAULT_INTELLIFLO_ADDR = 96;
 const DEFAULT_INTELLIVALVE_ADDR = 12;
+const DEFAULT_INTELLIVALVE_COUNT = 1;
+
+/** Four valve slots (Pentair IntelliValve path). Default res-pool-link uses ESP32 relays. */
+const INTELLIVALVE_ROLES = [
+  { role: 'inlet', label: 'Filter inlet', cmdId: 'IV1_CMD', atId: 'IV1_AT_POS', pvId: 'IV1_POS' },
+  { role: 'outlet', label: 'Filter outlet', cmdId: 'IV2_CMD', atId: 'IV2_AT_POS', pvId: 'IV2_POS' },
+  { role: 'waste', label: 'Filter backwash waste', cmdId: 'BW_VLV1_CMD', atId: 'VLV1_AT_POS', pvId: 'VLV1_IV_POS' },
+  { role: 'spare', label: 'Spare valve', cmdId: 'IV4_CMD', atId: 'IV4_AT_POS', pvId: 'IV4_POS' },
+];
 const DEFAULT_JANDY_EPUMP_ADDR = 120;
 const DEFAULT_HAYWARD_PUMP_HUA = 0;
 
@@ -55,31 +75,72 @@ function resolveSerialPorts(env = process.env) {
   };
 }
 
+function poolProfile(env = process.env) {
+  const product = String(env.MOOREVIEW_PRODUCT || '').trim().toLowerCase();
+  const raw = String(env.MOOREVIEW_POOL_PROFILE || '').trim().toLowerCase();
+  if (product === 'res-pool-link' || raw === 'res-pool-link') {
+    return 'res-pool-link';
+  }
+  if (raw === 'residential-spa' || raw === 'residential-pool-spa' || raw === 'pool-spa') {
+    return 'residential-spa';
+  }
+  return raw || 'default';
+}
+
 function featureFlags(env = process.env) {
   const truthy = (v, fallback) => {
     if (v == null || v === '') return fallback;
     return /^(1|true|yes|on)$/i.test(String(v));
   };
-  const pentairBus = truthy(env.MOOREVIEW_POOL_PENTAIR_BUS, false);
-  const intellifloPump = truthy(env.MOOREVIEW_POOL_INTELLIFLO, pentairBus);
-  const intellivalve = truthy(env.MOOREVIEW_POOL_INTELLIVALVE, pentairBus);
+  const profile = poolProfile(env);
+  const resPoolLink = profile === 'res-pool-link';
+  const residentialSpa = profile === 'residential-spa' || resPoolLink;
+  const pentairBus = truthy(env.MOOREVIEW_POOL_PENTAIR_BUS, residentialSpa);
+  const intellifloPump = truthy(env.MOOREVIEW_POOL_INTELLIFLO, pentairBus || residentialSpa);
+  const esp32Valves = truthy(env.MOOREVIEW_POOL_ESP32_VALVES, resPoolLink);
+  const intellivalve = truthy(env.MOOREVIEW_POOL_INTELLIVALVE, (pentairBus && !residentialSpa) || (resPoolLink && !esp32Valves));
+  const intellivalveCount = resolveIntellivalveCount(env, resPoolLink && intellivalve);
   const jandyBus = truthy(env.MOOREVIEW_POOL_JANDY_BUS, false);
   const jandyEpump = truthy(env.MOOREVIEW_POOL_JANDY_EPUMP, jandyBus);
   const haywardBus = truthy(env.MOOREVIEW_POOL_HAYWARD_BUS, false);
   const haywardPump = truthy(env.MOOREVIEW_POOL_HAYWARD_PUMP, haywardBus);
   return {
-    pentairHeatPump: truthy(env.MOOREVIEW_POOL_PENTAIR, true),
+    profile,
+    resPoolLink,
+    residentialSpa,
+    pentairHeatPump: truthy(env.MOOREVIEW_POOL_PENTAIR, !residentialSpa),
     pentairBus,
     intellifloPump,
     intellivalve,
+    intellivalveCount,
     jandyBus,
     jandyEpump,
     haywardBus,
     haywardPump,
-    optaIo: truthy(env.MOOREVIEW_POOL_OPTA_IO, true),
+    optaIo: truthy(env.MOOREVIEW_POOL_OPTA_IO, !residentialSpa),
     halowIo: truthy(env.MOOREVIEW_POOL_HALOW_IO, false),
     modbusChemistryBus: truthy(env.MOOREVIEW_POOL_MODBUS_CHEM, false),
+    waveshareRelay: truthy(env.MOOREVIEW_POOL_WAVESHARE_RELAY, residentialSpa)
+      || Boolean(String(env.MOOREVIEW_POOL_WAVESHARE_RELAYS || '').trim()),
+    esp32Valves,
+    spa: truthy(env.MOOREVIEW_POOL_SPA, residentialSpa),
   };
+}
+
+/**
+ * Waveshare satellite bindings. Residential pool & spa defaults to spa jets
+ * when the profile is on and no RELAY / RELAYS list was given.
+ */
+function resolveWaveshareBindings(env = process.env, features = featureFlags(env)) {
+  if (!features.waveshareRelay) return [];
+  const listed = parseWaveshareRelayBindings(env);
+  if (listed.length) return listed;
+  if (features.residentialSpa) {
+    return parseWaveshareRelayBindings({
+      MOOREVIEW_POOL_WAVESHARE_RELAYS: 'spa_jets:ws_relay_spa',
+    });
+  }
+  return [];
 }
 
 function intellifloAddr(env = process.env) {
@@ -92,6 +153,22 @@ function intellivalveAddr(env = process.env) {
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_INTELLIVALVE_ADDR;
 }
 
+function resolveIntellivalveCount(env = process.env, resPoolLink = false) {
+  const n = Number(env.MOOREVIEW_POOL_INTELLIVALVE_COUNT);
+  if (Number.isFinite(n) && n >= 1) return Math.min(4, Math.max(1, Math.round(n)));
+  return resPoolLink ? 4 : DEFAULT_INTELLIVALVE_COUNT;
+}
+
+function intellivalveAddrs(env = process.env, count = 1) {
+  const listed = String(env.MOOREVIEW_POOL_INTELLIVALVE_ADDRS || '')
+    .split(',')
+    .map((s) => Number(String(s).trim()))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  if (listed.length >= count) return listed.slice(0, count);
+  const start = intellivalveAddr(env);
+  return Array.from({ length: count }, (_, i) => start + i);
+}
+
 function jandyEpumpAddr(env = process.env) {
   const n = Number(env.MOOREVIEW_POOL_JANDY_EPUMP_ADDR);
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_JANDY_EPUMP_ADDR;
@@ -102,8 +179,9 @@ function haywardPumpHua(env = process.env) {
   return Number.isFinite(n) && n >= 0 ? n : DEFAULT_HAYWARD_PUMP_HUA;
 }
 
-function mergePentairBusTags(byId, driverId = 'pentair_bus') {
+function mergePentairBusTags(byId, driverId = 'pentair_bus', opts = {}) {
   for (const name of PENTAIR_BUS_TAG_FIXTURES) {
+    if (opts.skipValves && name === 'tags.pentair_valves.json') continue;
     for (const tag of readFixtureJson(name)) {
       byId.set(tag.id, {
         ...tag,
@@ -232,6 +310,49 @@ function retargetBackwashValveToIntellivalve(byId, driverId, addr) {
   if (cfg) byId.set('POOL_CFG_PENTAIR_VLV', { ...cfg, value: true });
 }
 
+function upsertPoolTag(byId, id, fields) {
+  const existing = byId.get(id);
+  byId.set(id, existing ? { ...existing, ...fields, id } : { id, ...fields });
+}
+
+/** Bind 1–4 IntelliValve actuators (each has its own RS-485 address). */
+function bindIntelliValves(byId, driverId, addrs) {
+  const roles = INTELLIVALVE_ROLES.slice(0, addrs.length);
+  for (let i = 0; i < roles.length; i++) {
+    const spec = roles[i];
+    const addr = addrs[i];
+    const base = { deviceClass: 'intellivalve', deviceAddr: addr };
+    upsertPoolTag(byId, spec.cmdId, {
+      label: `${spec.label} cmd`,
+      type: 'INT',
+      role: 'output',
+      value: 0,
+      wordWidth: 16,
+      driverId,
+      driverAddress: { pentair: 'pos_cmd', ...base },
+      comment: `${spec.label} — 0=A/pool/filter 1=B/spa/waste 2=middle (addr ${addr})`,
+    });
+    upsertPoolTag(byId, spec.atId, {
+      label: `${spec.label} at position`,
+      type: 'BOOL',
+      role: 'input',
+      value: true,
+      driverId,
+      driverAddress: { pentair: 'at_pos', ...base },
+    });
+    upsertPoolTag(byId, spec.pvId, {
+      label: `${spec.label} position`,
+      type: 'INT',
+      role: 'input',
+      value: 0,
+      driverId,
+      driverAddress: { pentair: 'pos_pv', ...base },
+    });
+  }
+  const cfg = byId.get('POOL_CFG_PENTAIR_VLV');
+  if (cfg) byId.set('POOL_CFG_PENTAIR_VLV', { ...cfg, value: true });
+}
+
 /**
  * Load IOT-LINK pool driver bundle with Linux serial ports and feature toggles.
  * @param {{ env?: NodeJS.ProcessEnv }} [opts]
@@ -278,18 +399,34 @@ function loadIotLinkPoolDrivers(opts = {}) {
     if (d.id === 'opta_mqtt_st') d.enabled = features.optaIo && !features.halowIo;
   }
 
+  if (features.esp32Valves) {
+    const row = buildResPoolValveDriver(env);
+    if (!drivers.some((d) => d.id === row.id)) drivers.push(row);
+  }
+
+  if (features.waveshareRelay) {
+    const seen = new Set(drivers.map((d) => d.id));
+    for (const binding of resolveWaveshareBindings(env, features)) {
+      const row = buildWaveshareRelayDriver(binding);
+      if (seen.has(row.id)) continue;
+      drivers.push(row);
+      seen.add(row.id);
+    }
+  }
+
   if (features.modbusChemistryBus) {
     drivers.push({
       id: 'pool_chem_rtu',
       type: 'modbus_rtu',
       enabled: true,
       serialPort: ports.portB,
-      baud: 9600,
+      baud: 4800,
       slaveId: 1,
       parity: 'none',
       stopBits: 1,
       timeoutMs: 2000,
       pollIntervalMs: 5000,
+      comment: 'DFRobot SEN0711 slave 1 + SEN0712 slave 2 — 4800 8N1',
     });
   }
 
@@ -304,7 +441,9 @@ function loadIotLinkPoolTags(opts = {}) {
   const byId = new Map(base.map((t) => [t.id, { ...t }]));
 
   if (features.pentairBus && !features.modbusChemistryBus && !features.jandyBus && !features.haywardBus) {
-    mergePentairBusTags(byId, 'pentair_bus');
+    mergePentairBusTags(byId, 'pentair_bus', {
+      skipValves: features.intellivalve && features.intellivalveCount >= 4,
+    });
   } else if (features.pentairHeatPump && !features.modbusChemistryBus
       && !features.jandyBus && !features.haywardBus) {
     for (const tag of readFixtureJson('tags.pentair_ultratemp.json')) {
@@ -337,10 +476,55 @@ function loadIotLinkPoolTags(opts = {}) {
 
   if (features.intellivalve && features.pentairBus && !features.modbusChemistryBus
       && !features.jandyBus && !features.haywardBus) {
-    retargetBackwashValveToIntellivalve(byId, 'pentair_bus', intellivalveAddr(env));
+    const count = features.intellivalveCount || 1;
+    if (count >= 4) {
+      bindIntelliValves(byId, 'pentair_bus', intellivalveAddrs(env, count));
+    } else {
+      retargetBackwashValveToIntellivalve(byId, 'pentair_bus', intellivalveAddr(env));
+    }
+  }
+
+  if (features.esp32Valves) {
+    bindResPoolValves(byId, valveDeviceId(env));
+  }
+
+  if (features.waveshareRelay) {
+    bindWavesharePoolRelays(byId, resolveWaveshareBindings(env, features));
+  }
+
+  if (features.modbusChemistryBus) {
+    bindDfrobotPoolChemistry(byId, 'pool_chem_rtu');
+  }
+
+  if (features.spa) {
+    const fp2 = byId.get('CFG_FP2');
+    if (fp2) byId.set('CFG_FP2', { ...fp2, value: true, comment: 'Spa filter / spa mode enabled' });
+    if (!byId.has('SPA_JETS')) {
+      byId.set('SPA_JETS', {
+        id: 'SPA_JETS',
+        label: 'Spa jets / blower',
+        type: 'BOOL',
+        role: 'output',
+        value: false,
+        comment: 'Spa jets or blower — Waveshare satellite or local coil',
+      });
+    }
   }
 
   return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/** SEN0711 → PH_AI / WATER_TEMP_C / NH3_MG_L; SEN0712 → ORP_AI (CL2 ppm). */
+function bindDfrobotPoolChemistry(byId, driverId) {
+  for (const tag of dfrobotPoolChemistryDraginoTags(driverId, {
+    phSlaveId: 1,
+    clSlaveId: 2,
+    phTagId: 'PH_AI',
+    clTagId: 'ORP_AI',
+  })) {
+    const existing = byId.get(tag.id);
+    byId.set(tag.id, existing ? { ...existing, ...tag, label: existing.label || tag.comment } : tag);
+  }
 }
 
 function loadIotLinkPoolSettings(opts = {}) {
@@ -352,13 +536,21 @@ function loadIotLinkPoolSettings(opts = {}) {
     mqttParc: {
       ...(base.mqttParc || {}),
       brokerUrl: env.MOOREVIEW_MQTT_BROKER || base.mqttParc?.brokerUrl || DEFAULT_MQTT_PARC_BROKER,
+      clientId: features.resPoolLink
+        ? 'mv-res-pool-link'
+        : (features.residentialSpa ? 'mv-residential-pool-spa' : (base.mqttParc?.clientId || 'mv-iot-link-pool')),
     },
     features: {
       ...(base.features || {}),
+      poolController: true,
+      poolSpa: features.spa,
+      residentialSpa: features.residentialSpa,
+      resPoolLink: features.resPoolLink,
       pentairHeatPump: features.pentairHeatPump,
       pentairBus: features.pentairBus,
       intellifloPump: features.intellifloPump,
       intellivalve: features.intellivalve,
+      intellivalveCount: features.intellivalveCount,
       jandyBus: features.jandyBus,
       jandyEpump: features.jandyEpump,
       haywardBus: features.haywardBus,
@@ -366,8 +558,23 @@ function loadIotLinkPoolSettings(opts = {}) {
       optaIo: features.optaIo,
       halowIo: features.halowIo,
       modbusChemistryBus: features.modbusChemistryBus,
+      waveshareRelay: features.waveshareRelay,
+      esp32Valves: features.esp32Valves,
     },
   };
+  if (features.resPoolLink || features.residentialSpa) {
+    const projectId = features.resPoolLink ? 'res-pool-link' : 'residential-pool-spa';
+    settings.project = { name: projectId };
+    settings.startup = {
+      ...(settings.startup || {}),
+      mode: 'saved_project',
+      projectId,
+      promptOnBoot: false,
+    };
+    if (settings.hmi?.screens?.[0]) {
+      settings.hmi.screens[0] = { ...settings.hmi.screens[0], name: 'Pool & Spa' };
+    }
+  }
   settings.hmi = normalizeHmi(settings.hmi || {}, loadIotLinkPoolTags(opts));
   return settings;
 }
@@ -383,7 +590,7 @@ function buildWorkspaceEst(tags, drivers, settings) {
     format: EST_FORMAT,
     version: 1,
     savedAt: new Date().toISOString(),
-    project: { name: PROJECT_ID },
+    project: { name: settings?.project?.name || PROJECT_ID },
     tags,
     drivers,
     program: readActiveProgramSource(),
@@ -440,15 +647,21 @@ module.exports = {
   IOT_LINK_DEFAULT_PORTS,
   DEFAULT_INTELLIFLO_ADDR,
   DEFAULT_INTELLIVALVE_ADDR,
+  DEFAULT_INTELLIVALVE_COUNT,
+  INTELLIVALVE_ROLES,
   DEFAULT_JANDY_EPUMP_ADDR,
   DEFAULT_HAYWARD_PUMP_HUA,
   PENTAIR_BUS_TAG_FIXTURES,
   JANDY_BUS_TAG_FIXTURES,
   HAYWARD_BUS_TAG_FIXTURES,
   resolveSerialPorts,
+  poolProfile,
   featureFlags,
   intellifloAddr,
   intellivalveAddr,
+  resolveIntellivalveCount,
+  intellivalveAddrs,
+  bindIntelliValves,
   jandyEpumpAddr,
   haywardPumpHua,
   mergePentairBusTags,
@@ -458,6 +671,11 @@ module.exports = {
   retargetPoolPumpToJandyEpump,
   retargetPoolPumpToHaywardVs,
   retargetBackwashValveToIntellivalve,
+  parseWaveshareRelayBindings,
+  resolveWaveshareBindings,
+  bindWavesharePoolRelays,
+  bindResPoolValves,
+  bindDfrobotPoolChemistry,
   loadIotLinkPoolDrivers,
   loadIotLinkPoolTags,
   loadIotLinkPoolSettings,

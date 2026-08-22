@@ -3,6 +3,8 @@
 #include "mv_config.h"
 #include "mv_debug.h"
 #include "mv_st.h"
+#include "mv_tags.h"
+#include "mv_expansions.h"
 #if (defined(ARDUINO_PORTENTA_H7_M7) || defined(ARDUINO_OPTA)) && MV_HAS_WEBSERVER
 #include "mv_http.h"
 #endif
@@ -112,8 +114,7 @@ static char s_bootLoadErr[96];
 
 static void progStoreYield() {
 #if (defined(ARDUINO_PORTENTA_H7_M7) || defined(ARDUINO_OPTA)) && MV_HAS_WEBSERVER
-  mvHttpHandleClients();
-  mvHttpHandleClients();
+  mvHttpPumpClients(2);
 #endif
 }
 
@@ -245,6 +246,8 @@ bool mvProgramStoreLoadTick() {
       case BOOT_LOAD_APPLY: {
         uint8_t* const scratch = mvProgramScratchBuf();
         if (!s_bootLoadBcStarted) {
+          mvTagsBegin();
+          mvExpEnsureTags();
           if (!mvBcLoadBegin(&s_bootLoadBcCtx, scratch, s_bootLoadHdr.bcLen, s_bootLoadErr, sizeof(s_bootLoadErr))) {
             MV_LOG2("program NV load: ", s_bootLoadErr);
             s_bootLoadPhase = BOOT_LOAD_IDLE;

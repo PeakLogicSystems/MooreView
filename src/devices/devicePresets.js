@@ -18,6 +18,9 @@ const {
   modbusDintArrayTags,
 } = require('./tagBuilders');
 const { loadJsonTemplates } = require('./loadJsonTemplates');
+const { PRESET_PROFILES } = require('../pdm/pdmAssetSeedFromTemplate');
+const { buildEzMeterPreset } = require('../facilities/ezmeterPq');
+const { buildEzMeterPqDerivedPreset } = require('./applyDerivedPreset');
 
 const BUILTIN_PRESETS = [
   {
@@ -198,7 +201,7 @@ const BUILTIN_PRESETS = [
 ];
 
 function allPresets() {
-  return [...BUILTIN_PRESETS, ...loadJsonTemplates()];
+  return [...BUILTIN_PRESETS, buildEzMeterPreset(), buildEzMeterPqDerivedPreset(), ...loadJsonTemplates()];
 }
 
 function listPresets() {
@@ -225,6 +228,13 @@ function listPresets() {
     aiCount: p.aiCount ?? 0,
     hrCount: p.hrCount ?? 0,
     tagsFromDevice: p.tagsFromDevice === true,
+    stationType: p.stationType || null,
+    defaultProgram: p.defaultProgram || null,
+    hasPdmSeed: !!(p.pdm?.assets?.length || PRESET_PROFILES[p.id]),
+    tagsOnly: p.tagsOnly === true,
+    defaultProgram: p.defaultProgram || null,
+    requiresTags: Array.isArray(p.requiresTags) ? p.requiresTags : null,
+    linkedDriverId: p.linkedDriverId || null,
   }));
 }
 
@@ -249,7 +259,8 @@ function buildFromPreset(presetId, options = {}) {
     if (defined.port != null) opts.port = defined.port;
     for (const k of [
       'paramGroups', 'paramCount', 'paramStart', 'includeSystemTags',
-      'brokerUrl', 'serialNum', 'clientId', 'username', 'password',
+      'brokerUrl', 'serialNum', 'clientId', 'username', 'password', 'liftProfile',
+      'deviceId', 'remoteExecution',
     ]) {
       if (defined[k] != null) opts[k] = defined[k];
     }

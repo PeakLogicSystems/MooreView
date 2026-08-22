@@ -123,7 +123,12 @@
 
   const LINE_KINDS = ['src', 'return', 'electric'];
 
-  const ELECTRIC_PORT_IDS = new Set(['electrical', 'power', 'control']);
+  const ELECTRIC_PORT_IDS = new Set([
+    'electrical', 'power', 'control',
+    'line', 'load', 'bus', 'bond',
+    'primary', 'secondary',
+    'normal', 'emergency', 'gen',
+  ]);
 
   const EDGE_COLORS = {
     src: '#38bdf8',
@@ -148,7 +153,11 @@
   function isElectricPort(portId) {
     const id = String(portId || '').toLowerCase();
     if (ELECTRIC_PORT_IDS.has(id)) return true;
-    return /^c\d+$/.test(id);
+    if (/^c\d+$/.test(id)) return true;
+    if (/^(l[12]|ac_[ln]|dc_plus(_[12])?|com(_[12])?|exp|bus|bus_[we]|rs485_[ab]|r[1-4]|ai[1-8]|i[78]|x1_i(1[0-6]|[1-9])|x1_r[1-8]|x2_ai[1-8]|x2_pwm[1-4])$/.test(id)) {
+      return true;
+    }
+    return false;
   }
 
   function isElectricHandle(handle) {

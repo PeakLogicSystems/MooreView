@@ -8,7 +8,7 @@ Distractors are designed as: **right answer**, **almost right**, **could be plau
 
 ---
 
-## MooreVIEW (M0–M15)
+## mooreVIEW (M0–M15)
 
 ### M0 — Product map & first launch
 1. A local engineering appliance you run on a laptop  
@@ -44,6 +44,8 @@ Distractors are designed as: **right answer**, **almost right**, **could be plau
 3. Wrong COM port or slave ID  
 4. MQTT Parc edge devices like Opta  
 5. Creates driver(s) and tags for that product  
+6. **`bacnet`** — BACnet/IP on edge appliance; Discover → Browse → import tags alongside campus BAS (`docs/BACNET.md`)  
+7. **EZ Meter facility PQ** — apply full Modbus map first, then derived measurement set; ST `logic/ezmeter_facility_pq.st` (`docs/facilities/EZMETER_FACILITY_PQ.md`)
 
 ### M5 — ST program & runtime
 1. Syntax and compile errors before run  
@@ -76,9 +78,9 @@ Distractors are designed as: **right answer**, **almost right**, **could be plau
 ### M9 — Alarms & CMMS
 1. Trips when value rises above setpoint  
 2. Operators or techs in the Alarms panel  
-3. Open work orders from alarm MQTT events  
-4. Severity and response urgency  
-5. Trip an alarm and Ack it  
+3. Integrated `/cmms` work orders: **alarm auto-WO** (reactive) and **PdM proactive PM WO** (early warning); optional external MQTT bridge  
+4. Severity and response urgency — proactive PdM WO fires days before alarm  
+5. Trip an alarm and Ack it; contrast with PdM-sourced WO (`source: pdm`)  
 
 ### M10 — MV Draw
 1. Site plans and symbol placement  
@@ -88,14 +90,14 @@ Distractors are designed as: **right answer**, **almost right**, **could be plau
 5. Save and reload placed symbols  
 
 ### M11 — PdM & ROI
-1. Predictive maintenance  
-2. Summarizes equipment condition  
-3. Remaining useful life  
-4. Justify monitoring investment cost vs savings  
-5. PdM / edge inference views  
+1. Predictive maintenance — fix before failure, not after alarm  
+2. Summarizes equipment condition (health index, edge score, SCADA trends)  
+3. Remaining useful life (RUL) — warning/critical triggers proactive CMMS PM WO  
+4. Justify monitoring investment cost vs savings (ROI calculator)  
+5. PdM asset setup, forecast banner, CMMS work order with `source: pdm`, service history on WO complete  
 
 ### M12 — Cloud Studio
-1. MooreVIEW cloud engineering/hosting tier  
+1. mooreVIEW cloud engineering/hosting tier  
 2. Edge runtime at the site  
 3. Which cloud features a tenant may use  
 4. Signing into Cloud Studio  
@@ -156,16 +158,17 @@ Distractors are designed as: **right answer**, **almost right**, **could be plau
 5. Generation and storage health  
 
 ### CBM-5 — Commercial
-1. HVAC, lighting, access — MooreVIEW can complement  
-2. Consistent deviceId/Position ID strategy  
+1. HVAC, lighting, access — mooreVIEW can complement  
+2. Consistent deviceId/Position ID strategy; optional **BACnet/IP import** per site (`bacnet` driver)  
 3. Temperature, pressure, current, flow  
 4. Run hours, fuel, fault alarms  
-5. Centralized alarms and escalation  
+5. Centralized alarms and escalation; BACnet read-mostly alongside incumbent BAS  
+6. Import selected BMS points on edge appliance via **`bacnet`** driver (coexist, not rip-replace)  
 
 ### CBM-6 — Installation
 1. Locations, access, power, network paths  
 2. What failure mode you need to detect  
-3. Values make sense in MooreVIEW Live I/O  
+3. Values make sense in mooreVIEW Live I/O  
 4. Electrical and mechanical hazards exist  
 5. M2 commissioning + M4 drivers  
 
@@ -180,7 +183,7 @@ Distractors are designed as: **right answer**, **almost right**, **could be plau
 1. Drivers + templates; Parc deviceId  
 2. Historian / live buffer pens  
 3. Key temps, states, and alarms  
-4. REST / MQTT per MooreVIEW deployment  
+4. REST / MQTT per mooreVIEW deployment  
 5. M6 HMI dashboard exercise  
 
 ### CBM-9 — Alarm management
@@ -193,9 +196,9 @@ Distractors are designed as: **right answer**, **almost right**, **could be plau
 ### CBM-10 — Data analysis & PdM
 1. Normal operating signature for comparison  
 2. Gradual degradation over time  
-3. Remaining useful life before likely failure  
-4. CMMS bridge on critical alarms  
-5. M8 historian + M11 PdM  
+3. Remaining useful life before likely failure — proactive CMMS PM WO before alarm  
+4. PdM forecast → CMMS (`source: pdm`); alarm bridge is reactive last line  
+5. M8 historian + M11 PdM (seed demo, build features, proactive check)  
 
 ### CBM-11 — Cybersecurity
 1. Multi-factor authentication  
@@ -209,10 +212,10 @@ Distractors are designed as: **right answer**, **almost right**, **could be plau
 2. Wrong port, baud, or slave ID  
 3. Hist enabled and runtime running  
 4. Systematic diagnosis  
-5. M4 driver Test + M7 Parc + F1 guides  
+5. M4 driver Test + M7 Parc + F1 guides; BACnet: VLAN/UDP 47808, object addressing — `docs/BACNET.md`  
 
 ### CBM-13 — Capstone
-1. Survey → install → MooreVIEW → alarms → presentation  
+1. Survey → install → mooreVIEW → alarms → presentation  
 2. 20% of CBM certification grade  
 3. Recommendations from trend/alarm data  
 4. M13 + M2–M9 + M14 integrated  
@@ -239,4 +242,4 @@ Wrong options often reflect real misconceptions, e.g.:
 | 2 | CBM-4–CBM-8 as modules complete |
 | 3 | CBM-9–CBM-13; integrator track adds M quizzes after labs |
 
-MooreVIEW integrator path: assign quiz after each module lab (M0–M15).
+mooreVIEW integrator path: assign quiz after each module lab (M0–M15).

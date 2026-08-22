@@ -1,0 +1,6 @@
+name: MooreVIEW Uno Q MCSA
+description: Edge motor fault detection — true FFT MCSA + classification, MQTT Parc uplink to MooreVIEW
+icon: ⚡
+version: "1.0.0"
+ports: [8088]
+bricks: []

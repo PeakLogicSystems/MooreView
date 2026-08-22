@@ -10,15 +10,11 @@ const {
 } = require('../../cloud/agentHub');
 const siteAgent = require('../../cloud/siteAgent');
 const { isCloudDeployment } = require('../../cloud/agentProtocol');
-const { authenticate } = require('../../auth/middleware');
-
-function requireTenantAuth(req, res, next) {
-  return authenticate(req, res, next);
-}
-
-function activeTenantId(req) {
-  return req.auth?.tenantId || null;
-}
+const {
+  requireAuth,
+  requireTenantAccess,
+  activeTenantId,
+} = require('../../tenants/authMiddleware');
 
 function createCloudSiteRoutes() {
   const router = require('express').Router();
@@ -77,17 +73,19 @@ function createCloudSiteRoutes() {
 
   function assertSiteTenant(req, site) {
     if (!site) return false;
+    if (req.mvAuth?.user?.role === 'platform_admin') return true;
     const tid = activeTenantId(req);
     return !!(tid && site.tenantId === tid);
   }
 
-  router.get('/sites', requireTenantAuth, (req, res) => {
+  router.get('/sites', requireAuth, requireTenantAccess, (req, res) => {
     if (!cloudEnabled()) {
       return res.status(404).json({ error: 'Cloud sites API requires MOOREVIEW_DEPLOYMENT=cloud' });
     }
     const tid = activeTenantId(req);
+    const isAdmin = req.mvAuth.user.role === 'platform_admin';
     const sites = siteStore.listSites()
-      .filter((s) => s.tenantId === tid)
+      .filter((s) => isAdmin || s.tenantId === tid)
       .map((s) => ({
         ...s,
         agentOnline: !!(s.agentOnline || isAgentOnline(s.siteId)),
@@ -95,7 +93,7 @@ function createCloudSiteRoutes() {
     res.json({ sites, settings: siteStore.settings(), tenantId: tid });
   });
 
-  router.post('/sites', requireTenantAuth, (req, res) => {
+  router.post('/sites', requireAuth, requireTenantAccess, (req, res) => {
     if (!cloudEnabled()) {
       return res.status(404).json({ error: 'Cloud sites API requires MOOREVIEW_DEPLOYMENT=cloud' });
     }
@@ -112,7 +110,7 @@ function createCloudSiteRoutes() {
     }
   });
 
-  router.get('/sites/:siteId', requireTenantAuth, (req, res) => {
+  router.get('/sites/:siteId', requireAuth, requireTenantAccess, (req, res) => {
     if (!cloudEnabled()) return res.status(404).json({ error: 'Not found' });
     const site = siteStore.getSite(req.params.siteId);
     if (!site || !assertSiteTenant(req, site)) return res.status(404).json({ error: 'Site not found' });
@@ -124,7 +122,7 @@ function createCloudSiteRoutes() {
     });
   });
 
-  router.delete('/sites/:siteId', requireTenantAuth, (req, res) => {
+  router.delete('/sites/:siteId', requireAuth, requireTenantAccess, (req, res) => {
     if (!cloudEnabled()) return res.status(404).json({ error: 'Not found' });
     const site = siteStore.getSite(req.params.siteId);
     if (!site || !assertSiteTenant(req, site)) return res.status(404).json({ error: 'Site not found' });
@@ -133,7 +131,7 @@ function createCloudSiteRoutes() {
     res.json({ ok: true });
   });
 
-  router.post('/sites/:siteId/repair', requireTenantAuth, (req, res) => {
+  router.post('/sites/:siteId/repair', requireAuth, requireTenantAccess, (req, res) => {
     if (!cloudEnabled()) return res.status(404).json({ error: 'Not found' });
     const site = siteStore.getSite(req.params.siteId);
     if (!site || !assertSiteTenant(req, site)) return res.status(404).json({ error: 'Site not found' });
@@ -161,7 +159,7 @@ function createCloudSiteRoutes() {
     }
   });
 
-  router.get('/sites/:siteId/cameras', requireTenantAuth, (req, res) => {
+  router.get('/sites/:siteId/cameras', requireAuth, requireTenantAccess, (req, res) => {
     if (!cloudEnabled()) return res.status(404).json({ error: 'Not found' });
     const site = siteStore.getSite(req.params.siteId);
     if (!site || !assertSiteTenant(req, site)) return res.status(404).json({ error: 'Site not found' });
@@ -172,7 +170,7 @@ function createCloudSiteRoutes() {
     });
   });
 
-  router.get('/sites/:siteId/cameras/:cameraId', requireTenantAuth, (req, res) => {
+  router.get('/sites/:siteId/cameras/:cameraId', requireAuth, requireTenantAccess, (req, res) => {
     if (!cloudEnabled()) return res.status(404).json({ error: 'Not found' });
     const site = siteStore.getSite(req.params.siteId);
     if (!site || !assertSiteTenant(req, site)) return res.status(404).json({ error: 'Site not found' });
@@ -184,7 +182,7 @@ function createCloudSiteRoutes() {
     });
   });
 
-  router.get('/sites/:siteId/cameras/:cameraId/player', requireTenantAuth, (req, res) => {
+  router.get('/sites/:siteId/cameras/:cameraId/player', requireAuth, requireTenantAccess, (req, res) => {
     if (!cloudEnabled()) return res.status(404).send('Not found');
     const site = siteStore.getSite(req.params.siteId);
     if (!site || !assertSiteTenant(req, site)) return res.status(404).send('Not found');
@@ -200,7 +198,7 @@ function createCloudSiteRoutes() {
     }));
   });
 
-  router.get('/sites/:siteId/cameras/:cameraId/viewer', requireTenantAuth, (req, res) => {
+  router.get('/sites/:siteId/cameras/:cameraId/viewer', requireAuth, requireTenantAccess, (req, res) => {
     if (!cloudEnabled()) return res.status(404).json({ error: 'Not found' });
     const site = siteStore.getSite(req.params.siteId);
     if (!site || !assertSiteTenant(req, site)) return res.status(404).json({ error: 'Site not found' });
@@ -216,7 +214,7 @@ function createCloudSiteRoutes() {
     });
   });
 
-  router.put('/sites/settings', requireTenantAuth, (req, res) => {
+  router.put('/sites/settings', requireAuth, requireTenantAccess, (req, res) => {
     if (!cloudEnabled()) return res.status(404).json({ error: 'Not found' });
     const settings = siteStore.updateSettings(req.body || {});
     res.json({ settings });

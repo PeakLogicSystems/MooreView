@@ -85,11 +85,13 @@ function createTenantFleetRoutes() {
   router.get('/tenant/cmms', requireAuth, requireTenantAccess, (req, res) => {
     const tid = activeTenantId(req);
     const tenant = tenantStore.publicTenant(tenantStore.getTenant(tid));
+    const enabled = !!(tenant && tenant.cmmsEnabled);
     res.json({
-      cmmsEnabled: !!(tenant && tenant.cmmsEnabled),
+      cmmsEnabled: enabled,
+      integrated: enabled,
       externalUrl: tenant?.cmmsExternalUrl || '',
-      message: tenant?.cmmsEnabled
-        ? 'CMMS entitlement enabled for this organization'
+      message: enabled
+        ? 'Integrated CMMS enabled for this organization'
         : 'CMMS not enabled — ask a platform admin (PATCH /api/admin/tenants/:id/cmms)',
     });
   });

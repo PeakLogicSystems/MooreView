@@ -13,8 +13,22 @@ const mongoTagLogger = require('../../logger/mongoTagLogger');
 const projectStore = require('../../project/projectStore');
 const { registry } = require('../../parc/deviceRegistry');
 const { getMqttCentralHub } = require('../../parc/mqttCentralHub');
+const { enrichParcDevicesWithDriverLink } = require('../../parc/parcDiscovery');
 const { MAX_TAGS } = require('../../config');
 const { normalizeReportConfig } = require('../../reports/reportConfig');
+const { stripLegacyProjectHwDefaults } = require('../../settings/portableSettings');
+
+function parcPayload(driverManager, settings) {
+  return {
+    settings: registry.settings(),
+    devices: enrichParcDevicesWithDriverLink(
+      registry.listDevices(),
+      driverManager.list(),
+      { hubBrokerUrl: settings?.mqttParc?.brokerUrl || '' },
+    ),
+    mqtt: getMqttCentralHub(registry).status(),
+  };
+}
 
 const PUBLIC_ROOT = path.join(__dirname, '../../../public');
 const SETTINGS_FILE = 'settings.json';
@@ -36,7 +50,9 @@ function settingsMtimeMs() {
 }
 
 function readSettings() {
-  return persistence.readJson(SETTINGS_FILE, { scanMs: 100, graphMaxPoints: 600, graphPens: [] });
+  return stripLegacyProjectHwDefaults(
+    persistence.readJson(SETTINGS_FILE, { scanMs: 100, graphMaxPoints: 600, graphPens: [] }),
+  );
 }
 
 function getNormalizedHmi(settings, tagList) {
@@ -131,11 +147,7 @@ function createDashboardRoutes(deps) {
         serialPorts,
         devicePresets: listPresets(),
         mongoLogger: mongoTagLogger.status(),
-        parc: {
-          settings: registry.settings(),
-          devices: registry.listDevices(),
-          mqtt: getMqttCentralHub(registry).status(),
-        },
+        parc: parcPayload(driverManager, settings),
       });
       return;
     }
@@ -164,15 +176,16 @@ function createDashboardRoutes(deps) {
       devicePresets: listPresets(),
       mongoLogger: mongoTagLogger.status(),
       projects: projectStore.listProjects(),
-      parc: {
-        settings: registry.settings(),
-        devices: registry.listDevices(),
-        mqtt: getMqttCentralHub(registry).status(),
-      },
+      parc: parcPayload(driverManager, settings),
     });
   });
 
   return router;
 }
 
-module.exports = { createDashboardRoutes };
+function invalidateDashboardCaches() {
+  hmiCache = null;
+  programTagRefCache = null;
+}
+
+module.exports = { createDashboardRoutes, invalidateDashboardCaches };

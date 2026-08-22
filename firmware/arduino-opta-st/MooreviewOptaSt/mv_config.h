@@ -13,9 +13,9 @@
 #define MV_WIFI_HTTP_PORT 8080
 #define MV_MAX_TAGS 128
 #define MV_AVG_RING 16
-#define MV_PROGRAM_JSON_MAX 32768
+#define MV_PROGRAM_JSON_MAX 16384
 /** ArduinoJson pool — must exceed raw JSON size (nested AST needs ~2×). */
-#define MV_PROGRAM_JSON_POOL 65536
+#define MV_PROGRAM_JSON_POOL 32768
 #define MV_SCAN_MS_DEFAULT 100
 
 // WiFi setup AP (Opta WiFi variant)

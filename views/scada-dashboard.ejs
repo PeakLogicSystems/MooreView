@@ -5,12 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>mooreVIEW</title>
   <link rel="stylesheet" href="/css/pc.css?v=<%= assetV %>">
+  <link rel="stylesheet" href="/css/cloud-studio.css?v=<%= assetV %>">
 </head>
-<body class="dashboard-body">
+<body class="dashboard-body" data-mv-deployment="<%= typeof deployment !== 'undefined' ? deployment : 'cloud' %>">
   <header class="topbar">
     <div class="topbar-brand"><a href="/" class="text-white text-decoration-none">moore<span>VIEW</span></a></div>
     <a href="/" class="btn btn-sm btn-outline-light ms-2" style="align-self:center">Cloud home</a>
     <a href="/sites" class="btn btn-sm btn-outline-light ms-1" style="align-self:center">Sites</a>
+    <a href="/remote-sites" class="btn btn-sm btn-outline-light ms-1" style="align-self:center" title="Generate pairing codes for appliance cameras">Camera sites</a>
     <div class="topbar-project-bar">
       <details class="topbar-project-details" id="project-menu-details">
         <summary class="topbar-project-trigger">Project <span class="topbar-project-caret" aria-hidden="true">▾</span></summary>
@@ -61,7 +63,7 @@
         <div class="hmi-main-actions">
           <button type="button" class="btn btn-sm btn-help-context" data-help-section="hmi-overview" title="Help: HMI — overview">Help</button>
           <button type="button" id="btn-hmi-setup" class="btn">Setup…</button>
-          <button type="button" id="hmi-alarm-status" class="btn hmi-alarm-status view-hidden" title="Open the alarms list" aria-haspopup="dialog"></button>
+          <button type="button" id="hmi-alarm-status" class="btn hmi-alarm-status view-hidden" title="Open the alarms list" aria-haspopup="dialog"><span class="hmi-alarm-status-label">Alarms</span><span id="hmi-alarm-status-detail" class="hmi-alarm-status-detail"></span></button>
           <button type="button" id="btn-hmi-reload" class="btn">Reload screen</button>
         </div>
       </div>
@@ -295,6 +297,21 @@
             <p id="cameras-system-msg" class="muted cell-mono" aria-live="polite"></p>
           </section>
           <section class="cameras-panel setup-panel view-hidden" data-cameras-tab="settings">
+            <div id="cameras-cloud-host-panel" class="view-hidden">
+              <h3 class="hmi-block-title">Remote camera sites (cloud)</h3>
+              <p class="panel-hint">Generate pairing codes here, then paste them on the edge appliance under <strong>Tools → Cameras → Settings → Cloud Studio</strong>. ONVIF credentials stay on the appliance; only a redacted camera catalog syncs to the cloud.</p>
+              <div class="toolbar wrap">
+                <label>Site ID <input id="cam-cloud-new-site-id" type="text" placeholder="plant_a" class="cell-mono"></label>
+                <label>Name <input id="cam-cloud-new-site-name" type="text" placeholder="Plant A"></label>
+                <button type="button" id="btn-cam-cloud-create-site" class="btn primary">Create site &amp; keys</button>
+                <a href="/remote-sites" class="btn">Full camera sites page</a>
+                <button type="button" id="btn-cam-cloud-refresh-sites" class="btn">Refresh</button>
+              </div>
+              <div id="cam-cloud-pairing-banner" class="cameras-cloud-pairing-banner"></div>
+              <div id="cam-cloud-sites-table" class="cameras-cloud-sites-table"></div>
+              <p id="cam-cloud-sites-msg" class="muted cell-mono" aria-live="polite"></p>
+            </div>
+            <div id="cameras-appliance-settings">
             <p class="panel-hint">Discovery defaults, credentials (<code>data/cameras.json</code>), archive, and vision AI. Install go2rtc: <code>npm run go2rtc:download</code>.</p>
             <div class="form-grid compact">
               <label>Discover timeout (ms) <input id="cam-set-timeout" type="number" min="1000" max="15000" step="500" value="4000"></label>
@@ -359,6 +376,7 @@
               <button type="button" id="btn-cameras-cloud-sync" class="btn">Push inventory now</button>
             </div>
             <p id="cameras-settings-msg" class="muted cell-mono" aria-live="polite"></p>
+            </div>
           </section>
         </div>
       </div>
@@ -1825,7 +1843,7 @@
     </form>
   </dialog>
 
-  <script>window.MOOREVIEW_API_BASE = '<%= mooreviewApiBase || "/api/studio" %>'; window.MOOREVIEW_PLATFORM_API = '/api'; window.MOOREVIEW_STUDIO_LOCATION_ID = <%- JSON.stringify(studioLocationId || '') %>;</script>
+  <script>window.MOOREVIEW_API_BASE = '<%= mooreviewApiBase || "/api/studio" %>'; window.MOOREVIEW_PLATFORM_API = '/api'; window.MOOREVIEW_CLOUD_STUDIO = true; window.MOOREVIEW_STUDIO_LOCATION_ID = <%- JSON.stringify(studioLocationId || '') %>;</script>
   <script src="/js/api.js"></script>
   <script src="/js/mooreviewCore.js"></script>
   <script src="/js/graph.js"></script>

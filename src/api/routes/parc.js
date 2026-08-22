@@ -11,8 +11,18 @@ function hub() {
 }
 
 function createParcRoutes(deps = {}) {
-  const { tagStore } = deps;
+  const { tagStore, driverManager } = deps;
   const router = require('express').Router();
+  const persistence = require('../../persistence');
+  const { enrichParcDevicesWithDriverLink } = require('../../parc/parcDiscovery');
+
+  function listParcDevicesEnriched() {
+    const settings = persistence.readJson('settings.json', {});
+    const drivers = typeof driverManager?.list === 'function' ? driverManager.list() : [];
+    return enrichParcDevicesWithDriverLink(registry.listDevices(), drivers, {
+      hubBrokerUrl: settings?.mqttParc?.brokerUrl || '',
+    });
+  }
 
   router.get('/parc/settings', (req, res) => {
     res.json({
@@ -28,7 +38,7 @@ function createParcRoutes(deps = {}) {
 
   router.get('/parc/devices', (req, res) => {
     res.json({
-      devices: registry.listDevices(),
+      devices: listParcDevicesEnriched(),
       settings: registry.settings(),
       mqtt: hub().status(),
     });
@@ -135,16 +145,104 @@ function createParcRoutes(deps = {}) {
     const { op, body } = req.body || {};
     if (!op) return res.status(400).json({ error: 'op required' });
     try {
-      if (op === 'opta_set_relay') {
-        const relay = Number(body?.relay);
-        if (!relay) return res.status(400).json({ error: 'body.relay required (1-based)' });
-        hub().publishLegacyOptaRelay(relay, body?.state);
-        return res.json({ ok: true, body: { relay, state: !!body?.state } });
-      }
       const result = await hub().sendCommand(req.params.id, op, body);
       res.json({ ok: true, body: result });
     } catch (e) {
       res.status(e.status || 502).json({ error: e.message || String(e) });
+    }
+  });
+
+  /** Dragino RS485-NB → MQTT gateway commission plan for MooreVIEW Cloud. */
+  router.post('/parc/dragino-gateway/plan', (req, res) => {
+    try {
+      const persistence = require('../../persistence');
+      const { defaultMqttParcSettings } = require('../../parc/mqttParcBootstrap');
+      const { buildDraginoGatewayPlan } = require('../../parc/draginoGatewayCommission');
+      const settings = persistence.readJson('settings.json', {});
+      const mqttParc = defaultMqttParcSettings(settings.mqttParc || {});
+      const plan = buildDraginoGatewayPlan(req.body || {}, mqttParc);
+      res.json({ ok: true, plan });
+    } catch (e) {
+      res.status(e.status || 400).json({ error: e.message || String(e) });
+    }
+  });
+
+  /** Bind a Modbus device template to a Dragino mqtt_parc gateway (Modbus Parc mapping). */
+  router.post('/parc/dragino-gateway/bind-preset', async (req, res) => {
+    try {
+      const persistence = require('../../persistence');
+      const { sanitizeDriverConfig } = require('../../drivers/driverConfig');
+      const { defaultMqttParcSettings } = require('../../parc/mqttParcBootstrap');
+      const { buildDraginoGatewayPlan } = require('../../parc/draginoGatewayCommission');
+      const { modbusMapFromPreset } = require('../../parc/draginoModbusMap');
+      const { patchWorkspaceDrivers } = require('../../project/estFile');
+
+      const body = req.body || {};
+      const deviceId = String(body.deviceId || '').trim();
+      const presetId = String(body.presetId || '').trim();
+      const driverId = String(body.driverId || deviceId).trim();
+      if (!deviceId) return res.status(400).json({ error: 'deviceId required' });
+      if (!presetId) return res.status(400).json({ error: 'presetId required (modbus_rtu device template)' });
+
+      const modbusMap = modbusMapFromPreset(presetId, {
+        slaveId: body.slaveId,
+        baud: body.baud,
+        parity: body.parity,
+        stopBits: body.stopBits,
+      });
+
+      const drivers = persistence.readJson('drivers.json', []);
+      let row = drivers.find((d) => d.id === driverId);
+      if (!row) {
+        row = {
+          id: driverId,
+          type: 'mqtt_parc',
+          enabled: true,
+          deviceId,
+          telemetryOnly: true,
+          remoteExecution: false,
+        };
+        drivers.push(row);
+      }
+      row.type = 'mqtt_parc';
+      row.enabled = body.enabled !== false;
+      row.deviceId = deviceId;
+      row.telemetryOnly = true;
+      row.remoteExecution = false;
+      row.draginoModbus = modbusMap;
+
+      const sanitized = drivers.map(sanitizeDriverConfig);
+      persistence.writeJson('drivers.json', sanitized);
+      patchWorkspaceDrivers(sanitized);
+
+      const settings = persistence.readJson('settings.json', {});
+      const mqttParc = defaultMqttParcSettings(settings.mqttParc || {});
+      const plan = buildDraginoGatewayPlan({
+        ...body,
+        deviceId,
+        presetId,
+      }, mqttParc);
+
+      if (deps.driverManager) {
+        deps.driverManager.save(sanitized);
+        void deps.driverManager.rebuild().catch(() => {});
+      }
+
+      res.json({
+        ok: true,
+        deviceId,
+        driverId,
+        presetId,
+        modbusMap: {
+          presetId: modbusMap.presetId,
+          tagCount: modbusMap.tags.length,
+          tagIds: modbusMap.tags.map((t) => t.id),
+          reads: modbusMap.reads,
+        },
+        plan,
+      });
+    } catch (e) {
+      res.status(e.status || 400).json({ error: e.message || String(e) });
     }
   });
 

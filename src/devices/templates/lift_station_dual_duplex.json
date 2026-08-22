@@ -1,29 +1,44 @@
 {
   "id": "lift_station_dual_duplex",
-  "label": "Lift station — dual duplex",
+  "label": "DUPLEXLS — dual duplex lift station",
   "vendor": "MooreVIEW",
-  "model": "Dual duplex alternator (ALT2, 2 pumps)",
+  "model": "DUPLEXLS (ALT2, 2 pumps + gen monitoring)",
   "transport": "mqtt_parc",
   "stationType": "dual_duplex",
   "defaultProgram": "logic/36_duplex_lift_station.st",
   "tagsFromDevice": false,
-  "ioBaseOnly": true,
-  "diCount": 8,
+  "ioBaseOnly": false,
+  "diCount": 16,
   "doCount": 4,
-  "aiCount": 8,
+  "aiCount": 6,
   "defaults": {
-    "deviceId": "lift_dd_01",
+    "deviceId": "duplexls_01",
     "reportIntervalMs": 200,
     "scanMs": 100,
     "remoteExecution": true,
-    "ioBaseOnly": true
+    "ioBaseOnly": false
   },
   "driver": {
     "enabled": true,
-    "ioBaseOnly": true
+    "ioBaseOnly": false
   },
   "tags": {
-    "fixture": "tags.duplex_lift_station.json"
+    "fixture": "tags.duplex_lift_station.json",
+    "expansions": [
+      { "slot": 1, "type": "d1608e" },
+      { "slot": 2, "type": "a0602", "rtdsEnabled": true }
+    ]
   },
-  "notes": "Florida fleet profile: 2-pump duplex alternator on Opta baseboard only (I1–I6 floats/run fb, R1–R2 contactors). ST lives on device; sync Parc telemetry for live values. Do not map floats or relays to X1_ expansion tags."
+  "notes": "DUPLEXLS: slot1 D1608E X1_I1=OFF X1_I2=LEAD X1_I3=LAG X1_I4=HIGH … X1_I10=gen; base analog in 1–6 (I1–I6 terminals, I1_RAW–I6_RAW) 0–1 V CTs→AI1–AI6 scaled 0–50 A; base R1/R2 contactors; slot2 A0602 8× 2-wire PT100 RTD on X2_AI1–X2_AI8 (MOTOR1/2_TEMP + RTD3–8 spare). Opta /setup: slot1=AFX00005 slot2=AFX00007, enable A0602 RTD checkbox. Opta firmware 2.3.73+ publishes MCSA-lite cooked spectra on mcsa[] (6 CT channels) plus edgeAi on pump starts — see st/fixtures/opta-mcsa-lite-telemetry-sample.json.",
+  "pdm": {
+    "motorType": "pump",
+    "application": "lift_station",
+    "configuration": "duplex",
+    "locationClass": "strip_mall",
+    "floatLadder": "pull_down",
+    "assets": [
+      { "assetId": "pump-1", "pumpIndex": 1, "pumpRole": "lead" },
+      { "assetId": "pump-2", "pumpIndex": 2, "pumpRole": "lag" }
+    ]
+  }
 }

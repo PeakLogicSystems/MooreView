@@ -41,6 +41,8 @@
 
       <span class="topbar-version muted cell-mono" title="MooreVIEW release">v<%= appVersion %></span>
 
+      <button type="button" class="btn" id="btn-standalone-sign-out" title="Sign out">Sign out</button>
+
       <a href="<%= homeUrl || '/' %>" class="btn popup-close page-close" title="Return to dashboard">Close</a>
 
     </div>
@@ -53,11 +55,47 @@
 
     <p class="panel-hint cellular-sims-hint">
 
-      One place for alarm <strong>email</strong>, <strong>SMS</strong>, cellular vendor credentials, and SIM inventory.
+      One place for alarm <strong>email</strong>, <strong>SMS</strong>, platform feature toggles, cellular vendor credentials, and SIM inventory.
 
       Twilio account SID and auth token are shared between SMS and Twilio Super SIM vendor sync.
 
     </p>
+
+
+
+    <section class="cellular-sims-features panel" id="connectivity-features-section">
+
+      <h2>Platform features</h2>
+
+      <p class="panel-hint">Enable optional cloud tools. Settings are saved with the project (<code>settings.json</code>).</p>
+
+      <div class="form-grid compact">
+
+        <label class="historian-ctl span-all">
+
+          <input type="checkbox" id="conn-cloud-sims-enabled"> Enable Cloud Sim management
+
+        </label>
+
+        <label class="historian-ctl span-all">
+
+          <input type="checkbox" id="conn-cellular-sims-enabled"> Enable Cellular SIM management
+
+        </label>
+
+      </div>
+
+      <div class="toolbar wrap">
+
+        <button type="button" class="btn btn-primary" id="conn-features-save">Save feature settings</button>
+
+        <a href="/cloud/sims" class="btn view-hidden" id="conn-cloud-sims-open">Open Cloud Sims</a>
+
+      </div>
+
+      <p id="conn-features-msg" class="cellular-sims-msg muted" aria-live="polite"></p>
+
+    </section>
 
 
 
@@ -205,7 +243,7 @@
 
 
 
-    <section class="cellular-sims-vendors panel">
+    <section class="cellular-sims-vendors panel" id="cellular-vendors-section">
 
       <div class="cellular-sims-list-head">
 
@@ -239,7 +277,7 @@
 
 
 
-    <section class="cellular-sims-list panel">
+    <section class="cellular-sims-list panel" id="cellular-sims-inventory-section">
 
       <div class="cellular-sims-list-head">
 
@@ -267,13 +305,17 @@
 
 
 
-  <script>window.MOOREVIEW_API_BASE = '<%= mooreviewApiBase || "/api" %>';</script>
+  <script>window.MOOREVIEW_API_BASE = '<%= typeof mooreviewApiBase !== "undefined" ? mooreviewApiBase : "/api" %>';</script>
 
   <script>window.MOOREVIEW_DEPLOYMENT = '<%= deployment %>';</script>
 
-  <script src="/js/api.js?v=<%= assetV %>"></script>
+  <script src="/js/api.js?v=<%= assetV %>-conn"></script>
 
-  <script src="/js/cellularSimsPage.js?v=<%= assetV %>"></script>
+  <script src="/js/signOut.js?v=<%= assetV %>"></script>
+
+  <script src="/js/cellularSimsPage.js?v=<%= assetV %>-conn"></script>
+
+  <script>MooreviewSignOut.bind('btn-standalone-sign-out');</script>
 
 </body>
 

@@ -10,8 +10,12 @@ const DATA_DIR = process.env.MOOREVIEW_DATA || path.join(__dirname, '..', 'data'
 async function main() {
   persistence.ensureDataDir();
   const settings = registry.settings();
+  if (settings.camerasEnabled === false) {
+    console.log('Camera system is disabled in settings (Cameras → Administration… → Settings).');
+    process.exit(0);
+  }
   if (!settings.go2rtcEnabled) {
-    console.log('go2rtc is disabled in camera settings (Tools → Cameras → Settings).');
+    console.log('go2rtc is disabled in camera settings (Cameras → Administration… → Settings).');
     process.exit(0);
   }
   const result = await go2rtc.start(settings);

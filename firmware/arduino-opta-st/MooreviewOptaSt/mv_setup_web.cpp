@@ -6,7 +6,9 @@
 #include "mv_wifi.h"
 #include "mv_http.h"
 #include "mv_device_status.h"
+#include "mv_debug.h"
 #include <ArduinoJson.h>
+#include <Ethernet.h>
 #include <string.h>
 
 static String mvSetupHtmlBody();
@@ -179,6 +181,26 @@ bool mvEthBegin(const MvDeviceConfig* cfg, byte* mac) {
   arrToIp(cfg->ethGw, gw);
   arrToIp(cfg->ethMask, mask);
   return Ethernet.begin(mac, ip, dns, gw, mask) != 0;
+}
+
+void mvEthLogStatus(const MvDeviceConfig* cfg) {
+  if (!cfg) return;
+  IPAddress ip = Ethernet.localIP();
+  char ipbuf[20];
+  snprintf(ipbuf, sizeof(ipbuf), "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
+  if (cfg->ethUseDhcp) {
+    MV_LOG2("Ethernet DHCP ", ipbuf);
+  } else {
+    char cfgIp[20];
+    snprintf(cfgIp, sizeof(cfgIp), "%u.%u.%u.%u", cfg->ethIp[0], cfg->ethIp[1], cfg->ethIp[2], cfg->ethIp[3]);
+    MV_LOG2("Ethernet static ", cfgIp);
+  }
+  if (ip[0] == 0 && ip[1] == 0 && ip[2] == 0 && ip[3] == 0) {
+    MV_LOG("Ethernet has no IP — check cable/DHCP or set static IP in /setup");
+  }
+#if (defined(ARDUINO_PORTENTA_H7_M7) || defined(ARDUINO_OPTA)) && MV_HAS_WEBSERVER
+  MV_LOG2("Ethernet http://", ip.toString());
+#endif
 }
 
 static void fillConfigJson(JsonObject root) {

@@ -15,7 +15,11 @@ const {
   resolveUpload,
 } = require('../mvDrawStore');
 const { normalizeMvDraw } = require('../mvDrawFormat');
-const { listSymbols } = require('../symbolLibrary');
+const { listSymbols, getSymbol } = require('../symbolLibrary');
+const {
+  buildMvDrawPreviewSvg,
+  listBridgedHmiSymbols,
+} = require('../symbolBridge');
 const { buildMvDrawPdf } = require('../exportPdf');
 const { buildMvDrawDxf } = require('../exportDxf');
 const { buildSceneFromMvDraw } = require('../sceneFromMvDraw');
@@ -29,7 +33,11 @@ const {
   loadMvDrawFromMooreviewProject,
   saveMvDrawToProjectLibrary,
   linkComposerTo3d,
+  applyMvDrawHmiCompile,
 } = require('../projectSync');
+const {
+  compileMvDrawToHmi,
+} = require('../mvDrawToHmi');
 const persistence = require('../../../src/persistence');
 const {
   packMvDraw,
@@ -185,7 +193,56 @@ function createMvDrawRoutes() {
   });
 
   router.get('/mv-draw/symbols', (req, res) => {
-    res.json({ symbols: listSymbols() });
+    try {
+      const includeHmi = String(req.query.includeHmi || '').trim() === '1'
+        || String(req.query.includeHmi || '').toLowerCase() === 'true';
+      const symbols = listSymbols();
+      if (!includeHmi) {
+        return res.json({ symbols });
+      }
+      const publicRoot = path.join(__dirname, '../../../public');
+      const { listHmiAssets } = require('../../../src/hmi/hmiConfig');
+      const hmiAssets = listHmiAssets(publicRoot);
+      const bridged = listBridgedHmiSymbols(hmiAssets);
+      res.json({
+        symbols: [...symbols, ...bridged],
+        mvDrawCount: symbols.length,
+        hmiBridgedCount: bridged.length,
+      });
+    } catch (e) {
+      res.status(500).json({ error: e.message || String(e) });
+    }
+  });
+
+  router.get('/mv-draw/symbols/:type/preview.svg', (req, res) => {
+    try {
+      const type = decodeURIComponent(String(req.params.type || '').trim());
+      const sym = getSymbol(type);
+      if (!sym) return res.status(404).send('Symbol not found');
+      res.type('image/svg+xml');
+      res.send(buildMvDrawPreviewSvg(sym));
+    } catch (e) {
+      res.status(500).send(e.message || String(e));
+    }
+  });
+
+  router.post('/mv-draw/compile-hmi', (req, res) => {
+    try {
+      const project = normalizeMvDraw(req.body?.project || readActiveProject());
+      const publicRoot = path.join(__dirname, '../../../public');
+      const compiled = compileMvDrawToHmi(project, {
+        screenId: req.body?.screenId,
+        screenName: req.body?.screenName,
+        publicRoot,
+      });
+      if (req.body?.apply) {
+        const applied = applyMvDrawHmiCompile(project, compiled, { publicRoot });
+        return res.json({ ok: true, applied: true, ...compiled, settings: applied.settings });
+      }
+      res.json({ ok: true, applied: false, ...compiled });
+    } catch (e) {
+      res.status(e.status || 500).json({ error: e.message || String(e) });
+    }
   });
 
   router.get('/mv-draw/background/:file', (req, res) => {

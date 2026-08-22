@@ -16,8 +16,10 @@ async function runBatch(getSettings) {
   try {
     const settings = typeof getSettings === 'function' ? getSettings() : persistence.readJson('settings.json', {});
     const result = await pdmService.buildAllFeatures({ settings });
+    const proactive = await pdmService.evaluateProactiveCmms({ settings });
+    const reports = await pdmService.runScheduledPdmReports({ settings });
     lastRunAt = new Date().toISOString();
-    return { ok: true, ...result, ranAt: lastRunAt };
+    return { ok: true, ...result, proactive, reports, ranAt: lastRunAt };
   } catch (e) {
     lastRunError = e.message || String(e);
     return { ok: false, error: lastRunError };

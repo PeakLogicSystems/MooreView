@@ -1,11 +1,11 @@
-# MooreVIEW Arduino ST Runtime
+# mooreVIEW Arduino ST Runtime
 
-On-device **Structured Text interpreter** for Arduino Opta (and compatible Portenta H7 targets). MooreVIEW PC parses `.st` into a JSON AST; firmware loads and executes that AST on every scan cycle.
+On-device **Structured Text interpreter** for Arduino Opta (and compatible Portenta H7 targets). mooreVIEW PC parses `.st` into a JSON AST; firmware loads and executes that AST on every scan cycle.
 
 ## Architecture
 
 ```
-MooreVIEW PC                          Arduino Opta
+mooreVIEW PC                          Arduino Opta
 ─────────────                         ────────────
 .st source  ──parse──►  AST JSON  ──HTTP/MQTT──►  mvProgramLoad()
 tag metadata                              │      mvExecuteScan(dtMs)
@@ -28,6 +28,11 @@ tag metadata                              │      mvExecuteScan(dtMs)
 |--------|-----------|----------|
 | `arduino-opta-st/` | Ethernet HTTP | Single Opta, `opta_remote` driver |
 | `arduino-opta-mqtt-st/` | MQTT + optional HTTP | Parc deploy via `mqtt_parc_opta` |
+| `arduino-uno-q-mcsa/` | MQTT Parc (Linux MPU) | UNO Q true-FFT motor fault detection |
+| `arduino-t-eth-a7670-modem-test/` | USB Serial AT | LilyGO T-ETH-ELITE-A7670X modem bring-up |
+| `waveshare-esp32s3-relay-parc/` | MQTT Parc remote I/O | Waveshare ESP32-S3-Relay-1CH-U pool satellite |
+| `esp32-res-pool-link/` | MQTT Parc remote I/O | Res-Pool-Link 4-valve backwash (inlet / outlet / waste / spare) |
+| `dfrobot-edge101-parc/` | MQTT Parc + Ethernet | DFRobot Edge101 (DFR0886) isolated RS-485 chemistry |
 
 Both share the same `mv_st.cpp` interpreter (keep copies in sync when editing).
 
@@ -50,7 +55,7 @@ Both share the same `mv_st.cpp` interpreter (keep copies in sync when editing).
 
 ## Deploy ST program
 
-**HTTP:** MooreVIEW `OptaRemoteDriver.deployProgram()` → `PUT /api/program`.
+**HTTP:** mooreVIEW `OptaRemoteDriver.deployProgram()` → `PUT /api/program`.
 
 **MQTT:** `put_program` command with same JSON body (`src/parc/mqttOptaProgram.js`).
 

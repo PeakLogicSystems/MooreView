@@ -2,7 +2,7 @@
 
 const { encodeGlobalMqttPayload } = require('./globalMqttPayload');
 const { globalTopic } = require('./globalAddressKey');
-const { globalBaseType } = require('./globalTagMeta');
+const { globalBaseType, isGlobalTagMeta } = require('./globalTagMeta');
 
 /**
  * Publish dirty global tags to mooreview/v1/g/{siteKey4}/{tag} (retained QoS1).
@@ -19,7 +19,7 @@ function publishDirtyGlobalTags(hub, tagStore) {
   if (!siteKey) return 0;
   let n = 0;
   for (const tag of tagStore.list()) {
-    if (!tag.global || !tag.dirty) continue;
+    if (!isGlobalTagMeta(tag) || !tag.dirty) continue;
     if (hub.publishGlobalTag(tag.id, tag, siteKey)) n += 1;
   }
   return n;

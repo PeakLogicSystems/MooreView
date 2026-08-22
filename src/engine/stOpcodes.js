@@ -49,6 +49,15 @@ const BUILTIN = {
   OneShot: 13,
   FlowValue: 14,
   FlowReady: 15,
+  AltActiveUnit: 16,
+  AltFault: 18,
+  AltLag: 19,
+  AltOffActive: 20,
+  AltHighActive: 21,
+  AltLowActive: 22,
+  AltPumpUp: 23,
+  AltPumpDown: 24,
+  AltLow2Active: 25,
 };
 
 /** Built-in argc (stack args, bottom-first). */
@@ -69,6 +78,15 @@ const BUILTIN_ARGC = {
   OneShot: 1,
   FlowValue: 1,
   FlowReady: 1,
+  AltActiveUnit: 1,
+  AltFault: 1,
+  AltLag: 1,
+  AltOffActive: 1,
+  AltHighActive: 1,
+  AltLowActive: 1,
+  AltPumpUp: 1,
+  AltPumpDown: 1,
+  AltLow2Active: 1,
 };
 
 const ACTION = {
@@ -90,6 +108,21 @@ const ACTION = {
   FlowTmr: 15,
   FlowK: 16,
   FlowOut: 17,
+  AltEnable: 18,
+  AltAdvance: 19,
+  AltAutoFault: 20,
+  AltLead: 21,
+  AltOnline: 22,
+  AltUnitOut: 23,
+  AltOff: 24,
+  AltHigh: 25,
+  AltLow: 26,
+  AltLeadSel: 27,
+  AltLagSel: 28,
+  AltLag2Sel: 29,
+  AltLevel: 30,
+  AltLevelBands: 31,
+  AltLag2: 32,
 };
 
 const TAG_TYPE = {
@@ -101,6 +134,7 @@ const TAG_TYPE = {
   PID: 5,
   AVG: 6,
   FLOW: 7,
+  ALT: 8,
 };
 
 const MODE_ID = {
@@ -112,11 +146,16 @@ const MODE_ID = {
   PI: 5,
   MOV: 6,
   GPM: 7,
+  ALT2: 8,
+  ALT4: 9,
+  ALT3: 10,
 };
 
 const META_PRESET = 0x01;
 const META_MODE = 0x02;
 const META_PID = 0x04;
+/** Program tag published on mooreview/v1/g/{siteKey}/{id} — keep in sync with firmware mv_bc.h */
+const META_GLOBAL = 0x08;
 const NO_TAG = 0xffff;
 
 module.exports = {
@@ -131,5 +170,6 @@ module.exports = {
   META_PRESET,
   META_MODE,
   META_PID,
+  META_GLOBAL,
   NO_TAG,
 };

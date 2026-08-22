@@ -12,8 +12,8 @@ window.MooreviewTraining = (function () {
       hours: 1,
       level: 'Foundation',
       prereq: '—',
-      outcomes: 'Name appliance vs Cloud Studio vs embedded est; start MVP Suite; open F1 help.',
-      lab: 'npm install → npm run start:pc → http://127.0.0.1:3090 → F1 Getting started.',
+      outcomes: 'Name appliance vs Cloud Studio vs embedded est; start MVP Suite; open dashboard (not MV Draw); open F1 help.',
+      lab: 'npm install → npm start → http://127.0.0.1:3090 (dashboard) → F1 Getting started.',
       help: 'F1 → Getting started',
     },
     {
@@ -22,8 +22,8 @@ window.MooreviewTraining = (function () {
       hours: 1.5,
       level: 'Foundation',
       prereq: 'M0',
-      outcomes: 'Navigate Project ▾ and Tools ▾; create/open/save/export .est projects.',
-      lab: 'New project → Save as → Export .est.json → reopen from data/projects/.',
+      outcomes: 'Navigate Project ▾ and Tools ▾; create/open/import/save/export .est.zip projects.',
+      lab: 'New project → Save as → Export .est.zip → Import on same or second PC.',
       help: 'F1 → Screen layout, Projects',
     },
     {
@@ -52,9 +52,9 @@ window.MooreviewTraining = (function () {
       hours: 2.5,
       level: 'Core',
       prereq: 'M3',
-      outcomes: 'Add/test drivers; apply device template; troubleshoot Modbus RTU.',
-      lab: 'Apply Datexel or mock template → verify tags → Test driver.',
-      help: 'F1 → Drivers + Device guides',
+      outcomes: 'Add/test drivers; apply device template; troubleshoot Modbus RTU; optional BACnet/IP discover and tag import; optional EZ Meter facility PQ two-step apply.',
+      lab: 'Apply Datexel or mock template → verify tags → Test driver. Optional: `bacnet` driver → Discover → Load example tags. Optional: EZ Meter full map + derived PQ set → `MECH_PQ_KW_SUM` live.',
+      help: 'F1 → Drivers + Device guides; docs/BACNET.md; docs/facilities/EZMETER_FACILITY_PQ.md',
     },
     {
       id: 'm5',
@@ -102,9 +102,9 @@ window.MooreviewTraining = (function () {
       hours: 2,
       level: 'Advanced',
       prereq: 'M3',
-      outcomes: 'Configure alarm limits; ack workflow; CMMS MQTT v1 bridge.',
-      lab: 'Trip high-limit alarm, Ack, review CMMS_INTEGRATION.md.',
-      help: 'F1 → Alarms; docs/CMMS_INTEGRATION.md',
+      outcomes: 'Configure alarm limits; ack workflow; use integrated /cmms work orders; distinguish reactive alarm WO vs proactive PdM WO; optional external CMMS MQTT v1 bridge.',
+      lab: 'Trip high-limit alarm, Ack, open /cmms and verify alarm WO; seed PdM demo and verify proactive PM WO (source pdm); review CMMS_APPLIANCE.md and PDM_PROACTIVE_CMMS.md.',
+      help: 'F1 → Alarms, Integrated CMMS; docs/CMMS_APPLIANCE.md',
     },
     {
       id: 'm10',
@@ -112,8 +112,8 @@ window.MooreviewTraining = (function () {
       hours: 2,
       level: 'Specialty',
       prereq: 'M1',
-      outcomes: 'Open MV Draw; scale plan; place symbols; package .mvbundle.',
-      lab: 'Open assisted-living plan; place symbols; save and reload.',
+      outcomes: 'Open MV Draw; scale plan; place symbols; save into .est.zip project.',
+      lab: 'Open assisted-living plan; place symbols; Save to MooreVIEW project; export .est.zip.',
       help: 'F1 → MV Draw; mv-draw/README.md',
     },
     {
@@ -122,9 +122,9 @@ window.MooreviewTraining = (function () {
       hours: 1.5,
       level: 'Specialty',
       prereq: 'M8',
-      outcomes: 'Load PdM asset map; interpret forecast; run ROI calculator.',
-      lab: 'F1 → PdM walkthrough on demo project with Hist data.',
-      help: 'F1 → PdM, ROI calculator',
+      outcomes: 'Configure PdM assets; interpret forecast; run proactive CMMS check; complete PM WO and verify service history; run ROI calculator.',
+      lab: 'Logger config → PdM: seed demo data, build features, run proactive check, open /cmms, download PdM PDF.',
+      help: 'F1 → PdM, Integrated CMMS, ROI calculator; docs/pdm/PDM_PROACTIVE_CMMS.md',
     },
     {
       id: 'm12',
@@ -132,9 +132,9 @@ window.MooreviewTraining = (function () {
       hours: 2,
       level: 'Specialty',
       prereq: 'M0, M7 recommended',
-      outcomes: 'Log into Cloud Studio with organization ID; use Sites and All devices; explain edge vs cloud field buses.',
-      lab: 'Seed cloud; sign in with organization ID; open /sites and /sites/devices; open Assets map; Deploy/Share a project in Studio.',
-      help: 'F1 → Cloud — Sites & devices; mooreview-cloud/docs/USER_GUIDE.md',
+      outcomes: 'Log into Cloud Studio with organization ID; use Sites, All devices, Assets map, and /cmms when entitled; explain edge vs cloud field buses.',
+      lab: 'Local: npm run start:saas && npm run seed; sign in org demo; tour /sites, /sites/devices, /fleet, /cmms; Deploy/Share a project in Studio. Production: see docs/CLOUD_DEPLOY_DO.md.',
+      help: 'F1 → Cloud Studio, Integrated CMMS; docs/CLOUD_USER_GUIDE.md',
     },
     {
       id: 'm13',
@@ -143,7 +143,7 @@ window.MooreviewTraining = (function () {
       level: 'Specialty',
       prereq: 'M6',
       outcomes: 'Commission domain demo end-to-end; present operator HMI + alarms.',
-      lab: 'Open vertical .est demo; complete M2–M6 path; demo to peer.',
+      lab: 'Open vertical .est.zip demo; complete M2–M6 path; demo to peer.',
       help: 'scripts/*/generate-est.js + product-templates/',
     },
     {
@@ -173,7 +173,7 @@ window.MooreviewTraining = (function () {
     { id: 'cbm2', num: 2, title: 'IoT Fundamentals', mapsTo: 'M0, M7, M14', exercise: 'Draw IoT architecture for a commercial building.' },
     { id: 'cbm3', num: 3, title: 'Sensors Used in Condition Monitoring', mapsTo: 'M3, M4, M14', exercise: 'Match each sensor type to the monitored asset.' },
     { id: 'cbm4', num: 4, title: 'Residential Applications', mapsTo: 'M13 vertical', exercise: 'Case study: whole-home monitoring implementation.' },
-    { id: 'cbm5', num: 5, title: 'Commercial Applications', mapsTo: 'M13 vertical', exercise: 'Case study: multi-site office building monitoring.' },
+    { id: 'cbm5', num: 5, title: 'Commercial Applications', mapsTo: 'M13 vertical, M4 BACnet', exercise: 'Case study: multi-site office building monitoring; optional BAS point import.' },
     { id: 'cbm6', num: 6, title: 'Installation & Commissioning', mapsTo: 'M2, M4, M14', exercise: 'Install sensors on demonstration equipment.' },
     { id: 'cbm7', num: 7, title: 'Connectivity & Networking', mapsTo: 'M7, M12, M14', exercise: 'Configure gateway network and cloud reachability.' },
     { id: 'cbm8', num: 8, title: 'Cloud Platforms & Dashboards — MooreVIEW', mapsTo: 'M6, M8, M12, M15', exercise: 'Create HVAC equipment dashboard in MooreVIEW; add camera popup on mechanical room screen.' },
@@ -189,7 +189,7 @@ window.MooreviewTraining = (function () {
     cbm2: 'Sensors, controllers, edge devices, gateways, MooreVIEW cloud, mobile apps; Wi-Fi, Ethernet, Bluetooth, HaLow, cellular.',
     cbm3: 'Temperature, vibration/MCSA, current, voltage, pressure, flow, environmental, leak, occupancy sensors.',
     cbm4: 'Heat pumps, A/C, furnaces, water heaters, sump pumps, IAQ, leak detection, solar, battery storage.',
-    cbm5: 'Commercial HVAC, chillers, towers, boilers, compressors, pumps, refrigeration, BAS, generators.',
+    cbm5: 'Commercial HVAC, chillers, towers, boilers, compressors, pumps, refrigeration, BAS (MooreVIEW BACnet/IP coexistence), generators.',
     cbm6: 'Site surveys, sensor placement, mounting, wiring, wireless survey, gateway install, calibration, functional test.',
     cbm7: 'IP addressing, DHCP, static IP, Wi-Fi, Ethernet, cellular, VPN, firewalls, cloud communications.',
     cbm8: 'Device registration, dashboard design, trend charts, asset management, reports, API integration.',
@@ -201,20 +201,20 @@ window.MooreviewTraining = (function () {
   };
 
   const INSTRUCTOR_MV = [
-    { id: 'm0', title: 'M0 — Product map & first launch', time: '60 min', prep: 'Port 3090 free; demo vertical .est ready.', teach: 'Product map → npm run start:pc → F1 vs F2 → save empty project.', lab: 'Each student saves training-{name}.est.', pitfalls: 'Wrong port; npm PATH.', verify: 'MVP Suite home + saved project.' },
-    { id: 'm1', title: 'M1 — UI layout, roles & projects', time: '90 min', prep: 'Sample .est.json on share.', teach: 'Top bar, Project menu, Tools menu, export/import.', lab: 'New → Save as → Export → reopen.', pitfalls: 'Save vs Save as.', verify: 'Reopened export shows correct name.' },
-    { id: 'm2', title: 'M2 — Commissioning path', time: '120 min', prep: 'Device template + composite in scratch project.', teach: 'F1 Commissioning tutorial; template vs fixture vs composite; spine.', lab: 'Follow tutorial with template + composite.', pitfalls: 'Skipping Validate or System setup Apply.', verify: 'Checkpoint A oral + .est.' },
+    { id: 'm0', title: 'M0 — Product map & first launch', time: '60 min', prep: 'Port 3090 free; sample .est.zip ready.', teach: 'Product map → npm start → dashboard at / → F1 vs F2 → save empty project.', lab: 'Each student saves training-{name}.est.zip.', pitfalls: 'Wrong port; npm PATH; opening /mv-draw instead of dashboard.', verify: 'MVP Suite dashboard + saved project.' },
+    { id: 'm1', title: 'M1 — UI layout, roles & projects', time: '90 min', prep: 'Sample .est.zip on share.', teach: 'Top bar, Project menu, Tools menu, import/export zip and legacy json archives.', lab: 'New → Save as → Export → Import → reopen.', pitfalls: 'Save vs Save as; legacy .est.json needs Import project file, not Open.', verify: 'Reopened export shows correct name and tag count.' },
+    { id: 'm2', title: 'M2 — Commissioning path', time: '120 min', prep: 'Device template + composite in scratch project.', teach: 'F1 Commissioning tutorial; template vs fixture vs composite; spine.', lab: 'Follow tutorial with template + composite.', pitfalls: 'Skipping Validate or System setup Apply.', verify: 'Checkpoint A oral + saved .est.zip.' },
     { id: 'm3', title: 'M3 — Tags, Force & Live I/O', time: '120 min', prep: 'Motor HOA fixture loaded.', teach: 'Tag id/Label; scaling; Force safety; Live I/O.', lab: 'Force input; trace ST; clear Force.', pitfalls: 'Forcing outputs on live plant.', verify: 'Trace shows forced value.' },
-    { id: 'm4', title: 'M4 — Drivers & field buses', time: '150 min', prep: 'Modbus USB or mock; know COM port.', teach: 'Driver Test/Apply; templates; Modbus troubleshooting.', lab: 'Apply template → Test → live tags.', pitfalls: 'Wrong COM/slave ID.', verify: 'Driver Test passes.' },
+    { id: 'm4', title: 'M4 — Drivers & field buses', time: '150 min', prep: 'Modbus USB or mock; know COM port. Optional BACnet/IP on lab VLAN. Optional EZ Meter or Modbus PQ simulator.', teach: 'Driver Test/Apply; templates; Modbus troubleshooting; bacnet Discover/Browse; EZ Meter two-step PQ apply.', lab: 'Apply template → Test → live tags. Optional: bacnet import or EZ Meter PQ derived set.', pitfalls: 'Wrong COM/slave ID; BACnet on wrong VLAN; derived set before full map.', verify: 'Driver Test passes; MECH_PQ_* live when ST running.' },
     { id: 'm5', title: 'M5 — ST & scan cycle', time: '180 min', prep: 'HOA fixture; syntax error for Validate demo.', teach: 'Validate; scan cycle; Start/Pause/Stop; trace.', lab: 'Load fixture, Start, Force inputs.', pitfalls: 'Edit without re-validate.', verify: 'Runtime Running.' },
     { id: 'm6', title: 'M6 — HMI composer', time: '150 min', prep: 'Tags from M5 for bindings.', teach: 'Composites; bindings; Apply; starting screen.', lab: 'Motor/HOA composite bound.', pitfalls: '??? bindings; forgot Apply.', verify: 'Checkpoint B full path.' },
     { id: 'm7', title: 'M7 — Parc hub & Opta', time: '180 min', prep: 'Opta flashed; broker up; BASELINE_TEST on board.', teach: 'Parc topics; hub enable; mqtt_parc; Download & Start.', lab: 'Rotate pairs on Opta bench.', pitfalls: 'Hub off; deviceId typo.', verify: 'Checkpoint C telemetry + remote start.' },
     { id: 'm8', title: 'M8 — Historian & reports', time: '120 min', prep: 'Mongo optional; two changing tags.', teach: 'Hist vs pens; logger; CSV export.', lab: '5 min capture; export CSV.', pitfalls: 'Hist unchecked; runtime stopped.', verify: 'CSV has timestamps.' },
-    { id: 'm9', title: 'M9 — Alarms & CMMS', time: '120 min', prep: 'Tag with IH limit; CMMS doc open.', teach: 'Limits; ack; CMMS bridge overview.', lab: 'Trip alarm; Ack.', pitfalls: 'Wrong tag type for limit.', verify: 'Alarm trips and acks.' },
-    { id: 'm10', title: 'M10 — MV Draw', time: '120 min', prep: 'Assisted-living plan asset.', teach: 'Scale plan; symbols; save.', lab: 'Place symbols; reload.', pitfalls: 'Lost scale factor.', verify: 'Symbols persist after reload.' },
-    { id: 'm11', title: 'M11 — PdM & ROI', time: '90 min', prep: 'Demo with Hist or edge samples.', teach: 'Asset map; health index; ROI calc.', lab: 'F1 PdM walkthrough.', pitfalls: 'No data — use Simulate motor start.', verify: 'Student explains one forecast.' },
-    { id: 'm12', title: 'M12 — Cloud Studio', time: '120 min', prep: 'Cloud seeded; organization ID demo.', teach: 'Organization ID login; Sites, All devices, Assets map symbology; edge vs cloud; Deploy/Share project.', lab: 'Sign in; tour /sites, /sites/devices, /fleet; Deploy/Share in Studio.', pitfalls: 'Cloud down — use slides.', verify: 'Login + device inventory + map colors explained.' },
-    { id: 'm13', title: 'M13 — Vertical lab', time: '180 min', prep: 'Vertical .est per team.', teach: 'Assign vertical; M2–M6 on domain demo.', lab: 'Peer demo 10 min.', pitfalls: 'Team skips alarms.', verify: 'Final demo rubric.' },
+    { id: 'm9', title: 'M9 — Alarms & CMMS', time: '120 min', prep: 'Tag with IH limit; CMMS enabled for student login.', teach: 'Limits; ack; integrated /cmms WO + alarm auto-WO (reactive); PdM proactive PM WO (early warning); external MQTT bridge (optional).', lab: 'Trip alarm; Ack; open CMMS; seed PdM and verify proactive WO.', pitfalls: 'Wrong tag type for limit; confusing integrated CMMS vs MQTT publish; reactive vs proactive WO.', verify: 'Alarm trips, acks, CMMS WO visible; student explains proactive vs reactive.' },
+    { id: 'm10', title: 'M10 — MV Draw', time: '120 min', prep: 'Assisted-living plan asset.', teach: 'Scale plan; symbols; Save to MooreVIEW project; .est.zip includes mv-draw/.', lab: 'Place symbols; save to project; export .est.zip; reload.', pitfalls: 'Lost scale factor; Plan composer mode vs dashboard.', verify: 'Symbols persist after import on second machine.' },
+    { id: 'm11', title: 'M11 — PdM & ROI', time: '90 min', prep: 'Demo with Hist or edge samples; Mongo recommended.', teach: 'Asset setup; health index; forecast; proactive CMMS; ROI calc — proactive not reactive.', lab: 'Seed demo data; build features; proactive check; CMMS WO; PdM PDF.', pitfalls: 'No data — use Seed demo data; proactive disabled in settings.', verify: 'Student explains forecast + proactive PM WO.' },
+    { id: 'm12', title: 'M12 — Cloud Studio', time: '120 min', prep: 'Local: npm run start:saas + npm run seed. Or hosted DO droplet.', teach: 'Organization ID login; Sites, All devices, Assets map, /cmms entitlement; edge vs cloud field buses (Modbus, BACnet/IP); Deploy/Share project. Optional: CLOUD_DEPLOY_DO.md for integrators.', lab: 'Sign in org demo; tour /sites, /sites/devices, /fleet, /cmms; Deploy/Share in Studio; explain appliance + cloud remote uplink.', pitfalls: 'Cloud down — use slides; Modbus/BACnet on cloud fails by design — use edge appliance.', verify: 'Login + device inventory + map colors explained; CMMS entitlement articulated if enabled.' },
+    { id: 'm13', title: 'M13 — Vertical lab', time: '180 min', prep: 'Vertical .est.zip per team.', teach: 'Assign vertical; M2–M6 on domain demo.', lab: 'Peer demo 10 min.', pitfalls: 'Team skips alarms.', verify: 'Final demo rubric.' },
     { id: 'm14', title: 'M14 — Parc edge peers', time: '180 min', prep: 'M7 done; T-HaLow/gateway charged.', teach: 'HaLow setup AP vs data path; T-ETH bridge.', lab: 'Template #2 or cellular bridge.', pitfalls: 'Broker on wrong interface.', verify: 'Checkpoint D peer telemetry.' },
     { id: 'm15', title: 'M15 — IP cameras & vision AI', time: '150 min', prep: 'One ONVIF camera on LAN; Mongo optional; go2rtc download script run.', teach: 'ONVIF discover/probe; go2rtc vs MJPEG; GridFS archive; overlay registry + tag bridge; AI stub vs HTTP.', lab: 'Discover → Probe → Detail overlays → HMI overlay tile → snapshot → infer.', pitfalls: 'ONVIF off on camera; no Mongo for GridFS; overlay tile without registry.', verify: 'Checkpoint E: live HMI video + one BOOL overlay updates + one archived snapshot.' },
   ];
@@ -229,7 +229,7 @@ window.MooreviewTraining = (function () {
     { id: 'cbm7', title: 'CBM-7 — Networking', time: '90 min', teach: 'IP, DHCP, cellular, VPN.', exercise: 'Classroom IP table.', mapsTo: 'M7, M12, M14' },
     { id: 'cbm8', title: 'CBM-8 — Dashboards', time: '120 min', teach: 'MooreVIEW registration + HMI; optional camera popup.', exercise: 'HVAC dashboard lab.', mapsTo: 'M6, M8, M15' },
     { id: 'cbm9', title: 'CBM-9 — Alarms', time: '90 min', teach: 'Thresholds; escalation.', exercise: 'Four alarm types.', mapsTo: 'M9' },
-    { id: 'cbm10', title: 'CBM-10 — PdM analysis', time: '90 min', teach: 'Trends; RUL concept.', exercise: 'Interpret 6-month data.', mapsTo: 'M8, M11' },
+    { id: 'cbm10', title: 'CBM-10 — PdM analysis', time: '90 min', teach: 'Trends; RUL; proactive CMMS before alarm.', exercise: 'Seed PdM demo; verify proactive WO.', mapsTo: 'M8, M11, M9' },
     { id: 'cbm11', title: 'CBM-11 — Cybersecurity', time: '60 min', teach: 'MFA; segmentation; creds on gateway.', exercise: 'Review roles.', mapsTo: 'M1, M12' },
     { id: 'cbm12', title: 'CBM-12 — Troubleshooting', time: '90 min', teach: 'Fault injection lab.', exercise: 'Diagnose injected fault.', mapsTo: 'M4, M7' },
     { id: 'cbm13', title: 'CBM-13 — Capstone', time: '240 min', teach: 'Team roles; full deployment.', exercise: 'Present recommendations.', mapsTo: 'M13 + M2–M9 + M14 + M15 (optional)' },
@@ -288,12 +288,13 @@ window.MooreviewTraining = (function () {
         html: `
           <h4>Software (per laptop)</h4>
           <ul>
-            <li>Node.js LTS; <code>npm install</code>; <code>npm run start:pc</code> → port 3090</li>
+            <li>Node.js LTS; <code>npm install</code>; <code>npm start</code> → port 3090</li>
             <li>Optional MongoDB for historian archive (M8, M10, M11) and camera GridFS (M15)</li>
           </ul>
           <h4>Instructor demo machine</h4>
           <ul>
-            <li>Known-good vertical .est projects; motor HOA fixture</li>
+            <li>Known-good vertical .est.zip projects; motor HOA fixture</li>
+            <li>Optional: portable install bundle (<code>npm run build:portable-install</code>) for handoff labs</li>
             <li>F1 Help and F2 Training tested on projector</li>
           </ul>
           <h4>Hardware bench (integrator track)</h4>
@@ -307,7 +308,7 @@ window.MooreviewTraining = (function () {
           <ol>
             <li>Run BASELINE_TEST end-to-end; label Opta deviceId</li>
             <li>Run <code>npm run go2rtc:download</code> if teaching M15</li>
-            <li>Export gold .est recovery project</li>
+            <li>Export gold .est.zip recovery project</li>
             <li>Print checkpoint rubrics; test HDMI</li>
           </ol>
         `,
@@ -343,7 +344,7 @@ window.MooreviewTraining = (function () {
           <h4>MooreVIEW checkpoints</h4>
           <table class="help-table">
             <tr><th>Gate</th><th>Pass criteria</th></tr>
-            <tr><td>A (M2)</td><td>Template vs fixture vs composite; saved .est</td></tr>
+            <tr><td>A (M2)</td><td>Template vs fixture vs composite; saved .est.zip</td></tr>
             <tr><td>B (M6)</td><td>Tags live; ST running; HMI bound</td></tr>
             <tr><td>C (M7)</td><td>Parc telemetry + Download &amp; Start</td></tr>
             <tr><td>D (M14)</td><td>T-HaLow tags and/or T-ETH cloud bridge</td></tr>
@@ -528,7 +529,7 @@ window.MooreviewTraining = (function () {
             <li>Describe IoT architecture: sensors → gateway → MooreVIEW cloud/HMI</li>
             <li>Install, commission, and troubleshoot MooreVIEW projects</li>
             <li>Build dashboards, historian trends, alarms, and PdM views</li>
-            <li>Commission MQTT Parc hub, Arduino Opta, and edge peers (LilyGO)</li>
+            <li>Commission MQTT Parc hub, Arduino Opta, edge peers (LilyGO), and optional BACnet/IP from campus BAS</li>
           </ul>
           <h4>Commissioning spine</h4>
           <ol>
@@ -660,7 +661,7 @@ window.MooreviewTraining = (function () {
           <h4>MooreVIEW checkpoints</h4>
           <table class="help-table">
             <tr><th>Gate</th><th>Format</th><th>Pass criteria</th></tr>
-            <tr><td>Checkpoint A (after M2)</td><td>Oral</td><td>Explain template vs fixture vs composite; show saved .est</td></tr>
+            <tr><td>Checkpoint A (after M2)</td><td>Oral</td><td>Explain template vs fixture vs composite; show saved .est.zip</td></tr>
             <tr><td>Checkpoint B (after M6)</td><td>Lab</td><td>Commission site: tags live, ST running, HMI bound</td></tr>
             <tr><td>Checkpoint C (after M7)</td><td>Lab</td><td>Parc baseline: telemetry + remote Download &amp; Start</td></tr>
             <tr><td>Checkpoint D (after M14)</td><td>Lab</td><td>Parc edge peer: T-HaLow telemetry and/or T-ETH Opta↔cloud bridge</td></tr>
@@ -691,7 +692,7 @@ window.MooreviewTraining = (function () {
             <tr><th>Term</th><th>Meaning</th></tr>
             <tr><td>CBM</td><td>Condition-Based Monitoring</td></tr>
             <tr><td>IoT</td><td>Internet of Things</td></tr>
-            <tr><td>BAS</td><td>Building Automation System</td></tr>
+            <tr><td>BAS</td><td>Building automation system — MooreVIEW coexists via BACnet/IP import on edge appliances, not BMS rip-replace</td></tr>
             <tr><td>CMMS</td><td>Computerized Maintenance Management System</td></tr>
             <tr><td>CT</td><td>Current Transformer</td></tr>
             <tr><td>MCSA</td><td>Motor Current Signature Analysis</td></tr>
@@ -701,15 +702,16 @@ window.MooreviewTraining = (function () {
             <tr><td>deviceId</td><td>MQTT Parc device identity (e.g. opta_*, thalow_*)</td></tr>
             <tr><td>Position ID</td><td>Stable plant location id (replace-hardware)</td></tr>
             <tr><td>mqtt_parc</td><td>MooreVIEW driver type for Parc MQTT devices</td></tr>
+            <tr><td>bacnet</td><td>BACnet/IP driver — Who-Is discovery, object browse, present-value read/write (edge appliance)</td></tr>
             <tr><td>Download &amp; Start</td><td>Deploy ST bytecode to remote Opta over Parc</td></tr>
             <tr><td>Device template</td><td>Preset driver + tags for an instrument</td></tr>
             <tr><td>HMI composite</td><td>Pre-wired faceplate widget with default bindings</td></tr>
             <tr><td>HaLow</td><td>802.11ah long-range Wi-Fi (LilyGO T-HaLow)</td></tr>
             <tr><td>ONVIF</td><td>IP camera discovery and control standard (UDP 3702)</td></tr>
             <tr><td>go2rtc</td><td>Local RTSP→WebRTC/MSE streaming proxy for camera live view</td></tr>
-            <tr><td>GridFS</td><td>MongoDB file storage for camera snapshots, HMI assets, project bundles</td></tr>
-            <tr><td>.est</td><td>Portable MooreVIEW project snapshot</td></tr>
-            <tr><td>PdM</td><td>Predictive maintenance views on historian/edge features</td></tr>
+            <tr><td>GridFS</td><td>MongoDB file storage for camera snapshots (optional; projects use .est.zip on disk)</td></tr>
+            <tr><td>.est.zip</td><td>Portable MooreVIEW project archive (tags, drivers, ST programs, HMI, MV Draw)</td></tr>
+            <tr><td>PdM</td><td>Predictive maintenance — SCADA + edge features, failure forecast, proactive CMMS PM</td></tr>
           </table>
         </section>
       `,

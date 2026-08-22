@@ -76,6 +76,7 @@
     import * as THREE from 'three';
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
     import { buildEcopod, ECOPOD_E300_DIMS } from './ecopod-3d.js';
+    import { mountNorthIndicator } from './mv-north-indicator.js';
 
     const SITE = {
   "name": "12508 Clendenning Dr — Tampa",
@@ -232,9 +233,12 @@
       showMeta(meta, label || meta.label);
     });
 
+    const north = mountNorthIndicator();
+
     function animate() {
       requestAnimationFrame(animate);
       controls.update();
+      north.update(camera);
       renderer.render(scene, camera);
     }
     animate();

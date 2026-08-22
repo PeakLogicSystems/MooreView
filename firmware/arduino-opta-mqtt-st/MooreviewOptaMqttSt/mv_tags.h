@@ -12,6 +12,7 @@ enum MvTagKind : uint8_t {
   MV_PID = 5,
   MV_AVG = 6,
   MV_FLOW = 7,
+  MV_ALT = 8,
 };
 
 struct MvTag {
@@ -68,10 +69,68 @@ struct MvTag {
   float flowGpm;
   bool flowReady;
   bool flowPrevTmrDone;
+
+  char altEnableId[16];
+  char altAdvanceId[16];
+  char altAutoFaultId[16];
+  char altLeadOutId[16];
+  char altLagOutId[16];
+  char altOffId[16];
+  char altHighId[16];
+  char altLowId[16];
+  char altLow2Id[16];
+  char altLevelId[16];
+  char altOnlineIds[4][16];
+  char altUnitOutIds[4][16];
+  char altLeadSelIds[4][16];
+  char altLagSelIds[4][16];
+  char altLag2SelIds[4][16];
+  float altLevelLowLo;
+  float altLevelLowHi;
+  float altLevelHighLo;
+  float altLevelHighHi;
+  float altLevelOffLo;
+  float altLevelOffHi;
+  uint8_t altLevelInputMode;
+  bool altLevelControlEnabled;
+  bool altEnabled;
+  bool altAdvance;
+  bool altAutoFault;
+  bool altPrevAdvance;
+  bool altAdvancePulse;
+  bool altPrevLeadOnline;
+  bool altOffActive;
+  bool altHighActive;
+  bool altLowActive;
+  bool altLow2Active;
+  uint8_t altPumpStage;
+  int8_t altLeadIndex;
+  int8_t altLagIndex;
+  int8_t altLag2Index;
+  uint8_t altActiveUnit;
+  bool altReady;
+  bool altFault;
+  bool altUnitOnline[4];
+
+  bool forceInput;
+  bool forceOutput;
+  bool forceB;
+  int32_t forceI;
+  float forceR;
+
+  /** P2P global tag — pub/sub on mooreview/v1/g/{siteKey}/{id}. */
+  bool isGlobal;
 };
+
+bool mvTagEffectiveBool(MvTag* t);
+int mvTagEffectiveInt(MvTag* t);
+float mvTagEffectiveReal(MvTag* t);
+
+void mvTagInitDefaults(MvTag* t, MvTagKind kind);
 
 void mvTagsBegin();
 uint8_t mvTagCount();
+MvTag* mvTagAt(uint8_t index);
 MvTag* mvFindTag(const char* id);
 MvTag* mvEnsureTag(const char* id, MvTagKind kind);
 bool mvGetBool(const char* id);
@@ -80,15 +139,25 @@ float mvGetReal(const char* id);
 void mvSetBool(const char* id, bool v);
 void mvSetInt(const char* id, int v);
 void mvSetReal(const char* id, float v);
+/** Apply one HMI/MQTT memory write; coerces JSON numbers to tag kind. */
+bool mvWriteMemoryValue(const char* id, JsonVariantConst v);
 void mvReadPhysicalInputs();
 void mvWritePhysicalOutputs();
+void mvWriteForcedPhysicalOutputs();
+bool mvTagSetForce(const char* id, bool forceInput, bool forceOutput, bool hasValue, bool boolVal, int32_t intVal, float realVal);
+bool mvTagClearForce(const char* id);
 void mvUpdateTimers(uint32_t dtMs);
 void mvUpdateCounters();
 void mvUpdatePids(uint32_t dtMs);
 void mvUpdateAverages();
 void mvUpdateFlowMeters();
+void mvUpdateAlternators();
 void mvTagsToJson(JsonObject out);
 void mvTagsToParcJson(JsonArray out);
+/** FNV-1a fingerprint of live tag values — for MQTT exception reporting. */
+uint32_t mvTagsValueFingerprint();
 bool mvRegisterTagIds(JsonArray ids);
 bool mvApplyTagMeta(JsonArray tags);
+uint8_t mvGlobalTagCount();
+void mvForEachGlobalTag(void (*fn)(MvTag* t, void* ctx), void* ctx);
 void mvSetTagMode(MvTag* t, const char* mode);

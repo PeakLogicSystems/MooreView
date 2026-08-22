@@ -1,12 +1,13 @@
-# MooreVIEW Opta — ST + MQTT Parc
+# mooreVIEW Opta — ST + MQTT Parc
 
-Combines the **ST runtime** from `arduino-opta-st` with **MooreVIEW Parc MQTT** (`mooreview/v1`).
+Combines the **ST runtime** from `arduino-opta-st` with **mooreVIEW Parc MQTT** (`mooreview/v1`).
 
 ## Flash
 
-1. Open `MooreviewOptaMqttSt/MooreviewOptaMqttSt.ino`
-2. Board: Arduino Opta (WiFi variant for setup AP)
-3. Install libraries (**Sketch → Include Library → Manage Libraries**):
+1. Open `MooreviewOptaMqttSt/MooreviewOptaMqttSt.ino` in Arduino IDE 2.x
+2. **Tools → Board → Arduino Opta** (WiFi / Lite / RS485) — required
+3. **Tools → Board Manager** → search **Arduino Opta** → install **mbed_opta** (6.x) if missing
+4. Install libraries (**Sketch → Include Library → Manage Libraries**):
 
 | Library | Required |
 |---------|----------|
@@ -16,11 +17,11 @@ Combines the **ST runtime** from `arduino-opta-st` with **MooreVIEW Parc MQTT** 
 
 HTTP uses **native `EthernetServer`** (`mv_http.cpp`) — same Opta mbed fix as `arduino-opta-st`. **EthernetWebServer is no longer required.**
 
-**Sketch sources** (all under `MooreviewOptaMqttSt/`):
+**Sketch sources** (all under `mooreVIEWOptaMqttSt/`):
 
 | File | Role |
 |------|------|
-| `MooreviewOptaMqttSt.ino` | Main loop, HTTP routes, MQTT config |
+| `mooreVIEWOptaMqttSt.ino` | Main loop, HTTP routes, MQTT config |
 | `mv_st.cpp`, `mv_bc.cpp`, `mv_base64.cpp` | ST bytecode VM |
 | `mv_mqtt.cpp` | Parc MQTT client |
 | `mv_tags.cpp`, `mv_io.cpp`, `mv_expansions.cpp` | I/O and tags |
@@ -30,12 +31,19 @@ HTTP uses **native `EthernetServer`** (`mv_http.cpp`) — same Opta mbed fix as 
 
 Optional library: **Arduino_Portenta_OTA** (Board Manager) for HTTP `/api/firmware` OTA uploads.
 
-4. Set broker IP and `deviceId` in `g_mqttCfg`
-5. Upload
+5. Set broker IP and `deviceId` in `g_mqttCfg` (or configure on `/setup` after flash)
+6. Upload
+
+### If `PortentaEthernet.h: No such file or directory`
+
+- **Board must be Arduino Opta** — not Uno, Mega, or a generic Portenta board without the Opta core.
+- Install **Arduino Opta** in **Board Manager** (`mbed_opta`). Restart Arduino IDE after install.
+- Do **not** install the standalone **Ethernet** library from Library Manager — the Opta core ships `PortentaEthernet.h` + `Ethernet.h`. Remove `Documents/Arduino/libraries/Ethernet` if present (conflicts with the core).
+- Confirm **Tools → Board** shows **Arduino Opta (WiFi)** (or Lite/RS485), then compile again.
 
 ## ST environment
 
-- Full on-device ST executor (`mv_st.cpp`) — same AST as MooreVIEW PC parser
+- Full on-device ST executor (`mv_st.cpp`) — same AST as mooreVIEW PC parser
 - Tag model: `I1`–`I8`, `R1`–`R4`, `I1_RAW`–`I8_RAW`, PID/AVG/TIMER/COUNTER
 - Expansion modules via setup GUI (AFX00005, AFX00007)
 - Programs: `st/opta/*.st` — see `st/opta-mqtt/README.md`
@@ -60,7 +68,7 @@ Optional library: **Arduino_Portenta_OTA** (Board Manager) for HTTP `/api/firmwa
 | POST `/api/firmware` | Flash `.bin` (reboots) |
 | GET `/setup` | Ethernet/WiFi/expansion config |
 
-## MooreVIEW PC
+## mooreVIEW PC
 
 Driver type **`mqtt_parc`** — use template **Arduino Opta — MQTT Parc ST runtime**. Enable **Remote execution**, **Connect**, **Start** (same as `opta_remote`). See `st/opta-mqtt/README.md`.
 

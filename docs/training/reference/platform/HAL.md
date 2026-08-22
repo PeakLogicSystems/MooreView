@@ -1,4 +1,4 @@
-# MooreVIEW HAL — built-in I/O driver
+# mooreVIEW HAL — built-in I/O driver
 
 The **`hal`** driver exposes on-board digital, analog, and hardware counter I/O through a small hardware abstraction layer. Use it on embedded Linux (with a board plugin) or everywhere in **`sim`** mode for development.
 

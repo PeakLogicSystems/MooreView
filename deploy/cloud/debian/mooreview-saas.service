@@ -11,8 +11,10 @@ EnvironmentFile=/etc/mooreview/saas.env
 Environment=NODE_ENV=production
 Environment=MOOREVIEW_DEPLOYMENT=cloud
 Environment=MOOREVIEW_PRODUCT=cloud
+Environment=PORT=3100
+Environment=MOOREVIEW_PORT=3100
 Environment=MOOREVIEW_DATA=/var/lib/mooreview
-ExecStart=/usr/bin/node src/server.js
+ExecStart=/usr/bin/node scripts/start-saas.js
 Restart=on-failure
 RestartSec=5
 

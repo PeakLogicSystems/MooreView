@@ -1,6 +1,36 @@
-# MooreVIEW Cloud VM (DigitalOcean)
+# mooreVIEW Cloud (DigitalOcean)
 
-Headless MooreVIEW stack for initial cloud testing: **MongoDB**, **Mosquitto MQTT**, and the **MooreVIEW Node app** (API + historian + MQTT Parc hub + tenant telemetry ingest).
+Three deployment paths on DigitalOcean:
+
+| Path | Port | Guide | Use |
+|------|------|-------|-----|
+| **Phase 1 ATL (recommended)** | **3100** + **8883** + **8090** | [docs/CLOUD_DEPLOY_DO_PHASE1_ATL-MQTT.md](../../docs/CLOUD_DEPLOY_DO_PHASE1_ATL-MQTT.md) | SaaS + **dedicated MQTT** + archive |
+| **Phase 1 production (legacy)** | **3100** + **8090** | [phase1/WINSCP-DEPLOY.md](phase1/WINSCP-DEPLOY.md) | MQTT colocated on SaaS |
+| **Phase 1 ATL legacy** | **3100** + **8090** | [docs/CLOUD_DEPLOY_DO_PHASE1_ATL.md](../../docs/CLOUD_DEPLOY_DO_PHASE1_ATL.md) | Atlanta prod + `test.mooreview.io` sandbox |
+| **Cloud SaaS only** | **3100** | [docs/CLOUD_DEPLOY_DO.md](../../docs/CLOUD_DEPLOY_DO.md) | Single droplet, no archive server |
+| **Cloud VM / hub** | 3090 | This README (Docker / debian install) | MQTT Parc ingest, headless hub, local Mongo |
+
+Build Phase 1 bundles from Windows:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\create-phase1-bundles.ps1
+# Upload dist/mooreview-cloud-*d.tgz → cloud-1-saas
+# Upload dist/mooreview-archive-*.tgz → cloud-2-archive
+```
+
+SaaS-only bundle:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\create-saas-bundle.ps1
+```
+
+See also: [docs/CLOUD_SAAS.md](../../docs/CLOUD_SAAS.md), [debian/INSTALL-SAAS.txt](debian/INSTALL-SAAS.txt).
+
+---
+
+# mooreVIEW Cloud VM (DigitalOcean) — port 3090 hub
+
+Headless mooreVIEW stack for initial cloud testing: **MongoDB**, **Mosquitto MQTT**, and the **mooreVIEW Node app** (API + historian + MQTT Parc hub + tenant telemetry ingest).
 
 Target: **Ubuntu 22.04** droplet with Docker Compose.
 
@@ -11,10 +41,12 @@ Target: **Ubuntu 22.04** droplet with Docker Compose.
 | Service | Role | Host port |
 |---------|------|-----------|
 | `mongodb` | Config store (`mooreview_config`) + historian | internal only |
-| `mosquitto` | Parc + global + appliance uplink MQTT | **1883** |
+| `mosquitto` | Parc + global + appliance uplink MQTT | **1883** (plain), **8883** (TLS when `MOSQUITTO_TLS=true`) |
 | `mooreview` | `server.js` with `MOOREVIEW_DEPLOYMENT=cloud` | **3090** |
 
 The app is the same codebase as the PC appliance (`est-pc`), not a separate cloud app. Site appliances relay Parc telemetry via `cloudRemote` → `applianceCloudRelay.js` to tenant topics `mooreview/v1/{tenantId}/{deviceId}/telemetry`.
+
+**MQTT credentials, TLS, and topic layout:** see **[MQTT.md](MQTT.md)**.
 
 ## Prerequisites
 
@@ -43,8 +75,9 @@ Health should report `ok: true`, Mongo connected, and MQTT hub status when enabl
 
 ```bash
 sudo ufw allow OpenSSH
-sudo ufw allow 3090/tcp comment 'MooreVIEW API'
+sudo ufw allow 3090/tcp comment 'mooreVIEW API'
 sudo ufw allow 1883/tcp comment 'MQTT Parc + cloud uplink'
+sudo ufw allow 8883/tcp comment 'MQTT TLS'
 # Do NOT expose 27017 — Mongo stays on the Docker network
 sudo ufw enable
 ```
@@ -55,15 +88,16 @@ For production, terminate TLS on 443 (nginx/Caddy) and restrict 1883 to known ap
 
 1. Copy `deploy/cloud/.env.example` → `.env` and adjust.
 2. First boot seeds Mongo config from empty `data/` if needed (`configStore` migration).
-3. Open `http://<droplet-ip>:3090/health` — use MooreVIEW PC client or REST `/api/*` for setup.
+3. Open `http://<droplet-ip>:3090/health` — use mooreVIEW PC client or REST `/api/*` for setup.
 4. **MQTT Parc hub**: enabled by default when drivers exist; broker URL should be `mqtt://<droplet-ip>:1883` for field devices.
 5. **Global P2P tags**: set matching `globalSiteKey` in System setup (PC) and on each Opta `/setup` (firmware **v2.3.48+**).
 
 ### Appliance → cloud uplink
 
-On each site MooreVIEW appliance (`MOOREVIEW_DEPLOYMENT=appliance`):
+On each site mooreVIEW appliance (`MOOREVIEW_DEPLOYMENT=appliance`):
 
-- System setup → **Cloud remote**: `enabled`, `tenantId`, `gatewayId`, `brokerUrl=mqtt://<droplet-ip>:1883`
+- System setup → **Cloud remote**: `enabled`, `tenantId`, `gatewayId`, `brokerUrl=mqtts://mooreview.io:8883` (or plain `mqtt://<droplet-ip>:1883`)
+- Set **Cloud MQTT username/password** in System setup to match `MOSQUITTO_USER` / `MOSQUITTO_PASS` on the droplet.
 - Parc hub stays on local broker; `applianceCloudRelay` forwards telemetry to cloud tenant topics.
 
 ### Mosquitto authentication (production)
@@ -75,12 +109,12 @@ By default the cloud bundle **requires MQTT credentials**. Set in `.env`:
 | `MOSQUITTO_ALLOW_ANONYMOUS` | `false` | Set `true` for dev/LAN anonymous broker |
 | `MOSQUITTO_USER` | — | Broker username (required when anonymous off) |
 | `MOSQUITTO_PASS` | — | Broker password |
-| `MOSQUITTO_TLS` | `false` | Enable TLS listener on port 8883 |
+| `MOSQUITTO_TLS` | `true` | Enable TLS listener on port 8883 (self-signed cert auto-generated in Docker if `./certs/` empty) |
 | `MOSQUITTO_TLS_PORT` | `8883` | Host port for TLS listener |
 
 Mount TLS certs under `deploy/cloud/certs/` (`server.crt`, `server.key`, optional `ca.crt`) when `MOSQUITTO_TLS=true`.
 
-Configure matching credentials on MooreVIEW (System setup → MQTT Parc username/password) and on appliances (`cloudRemote.username` / `cloudRemote.password` in settings).
+Configure matching credentials on mooreVIEW (System setup → MQTT Parc username/password) and on appliances (`cloudRemote.username` / `cloudRemote.password` in settings).
 
 Self-signed test certs on a DO droplet:
 
@@ -103,7 +137,7 @@ mosquitto_pub -h localhost -t 'mooreview/v1/demo-tenant/opta_01/telemetry' \
 
 ## Cloud sim management (virtual devices)
 
-MooreVIEW Cloud includes a **sim management** system for demo and integration testing without physical Opta hardware.
+mooreVIEW Cloud includes a **sim management** system for demo and integration testing without physical Opta hardware.
 
 | Item | Detail |
 |------|--------|
@@ -122,6 +156,11 @@ curl -s -X POST http://127.0.0.1:3090/api/cloud/sims \
 
 # Copy sim id from response, then:
 curl -s -X POST http://127.0.0.1:3090/api/cloud/sims/<sim-id>/start | jq .
+
+# Website demo — JXCT soil ×4 + pool chemistry (both start automatically)
+curl -s -X POST http://127.0.0.1:3090/api/cloud/sims/seed-website-demo \
+  -H 'Content-Type: application/json' -d '{"start":true}' | jq .
+# Or: node scripts/seed-website-demo-sims.js
 
 # Verify Parc registry ingests tenant telemetry
 curl -s http://127.0.0.1:3090/api/parc/devices | jq '.devices[] | select(.deviceId|startswith("sim_opta"))'
@@ -213,5 +252,5 @@ Data volumes: `mongo-data`, `mooreview-data`, `mosquitto-data`.
 
 ## Production blockers
 
-- TLS termination on 443 (nginx/Caddy) for MooreVIEW API still manual.
+- TLS termination on 443 (nginx/Caddy) for mooreVIEW API still manual.
 - Single-node Mongo — no replica set / backup automation in this compose file.

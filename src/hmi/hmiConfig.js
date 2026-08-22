@@ -123,6 +123,11 @@ function reindexHmiScreens(screens, bindings = [], activeScreen = '') {
       offsetY: s.offsetY,
       naturalWidth: s.naturalWidth,
       naturalHeight: s.naturalHeight,
+      ...(s.inheritProjectLayout === false ? { inheritProjectLayout: false } : {}),
+      ...(String(s.facility3dUrl || '').trim()
+        ? { facility3dUrl: String(s.facility3dUrl).trim() }
+        : {}),
+      navHidden: s.navHidden === true,
     };
   });
   remapNavTargetsInScreens(out, idMap);
@@ -173,7 +178,7 @@ function normalizeBinding(raw, validTagIds, defaultScreenId = '') {
     if (out.max - out.min > 4 || out.max > 4) out.max = 4;
   }
   if (property === 'fill8') out.colors = normalizeFill8Colors(raw?.colors);
-  if (property === 'text' && (out.format === 'state5' || out.format === 'tpoSta' || out.format === 'poolBwSta' || out.format === 'poolLightOp')) {
+  if (property === 'text' && (out.format === 'state5' || out.format === 'tpoSta' || out.format === 'poolBwSta' || out.format === 'poolLightOp' || out.format === 'stationSta')) {
     out.colors = normalizeFill5Colors(raw?.colors);
     out.min = Number.isFinite(Number(raw.min)) ? Number(raw.min) : 0;
     out.max = Number.isFinite(Number(raw.max)) ? Number(raw.max) : 4;
@@ -682,6 +687,7 @@ function normalizeRoomPopup(raw) {
 
 function applyLayoutToScreen(screen, layout) {
   if (!screen || !layout) return screen;
+  if (screen.inheritProjectLayout === false) return screen;
   screen.gridCols = layout.gridCols;
   screen.gridRows = layout.gridRows;
   screen.cellWidth = layout.cellWidth;
@@ -695,8 +701,23 @@ function applyLayoutToScreen(screen, layout) {
   return screen;
 }
 
+/** Copy layout plant 3D URL onto home when it has no tiles (Putnam combined screen 1). */
+function pinHomeScreenFacility3dUrl(screens, layout) {
+  const layout3d = String(layout?.facility3dUrl || '').trim();
+  if (!layout3d || !Array.isArray(screens)) return screens;
+  for (const sc of screens) {
+    if (!sc || (sc.tiles || []).length) continue;
+    const isHome = sc.number === 1 || sc.isHome === true || sc.id === HOME_SCREEN_ID;
+    if (!isHome) continue;
+    if (String(sc.facility3dUrl || '').trim()) continue;
+    sc.facility3dUrl = layout3d;
+  }
+  return screens;
+}
+
 function pruneScreenTilesToLayout(screen, layout) {
   if (!screen || !layout) return;
+  if (screen.inheritProjectLayout === false) return;
   const cols = layout.gridCols;
   const rows = layout.gridRows;
   screen.tiles = (screen.tiles || []).filter((t) => {
@@ -936,6 +957,8 @@ function normalizeTile(raw, publicRoot = null, gridDims = null) {
   } else if (String(raw?.compositeId || '').trim()) {
     out.compositeId = String(raw.compositeId).trim();
   }
+  const tagPrefix = String(raw?.compositeTagPrefix || '').trim();
+  if (tagPrefix) out.compositeTagPrefix = tagPrefix;
   if (sorted[0]?.svg) out.svg = sorted[0].svg;
   const textLayer = sorted.find((l) => l.kind === 'staticText' || l.kind === 'dynamicText');
   if (textLayer?.label) out.label = textLayer.label;
@@ -991,8 +1014,8 @@ function normalizeScreen(raw, publicRoot = null) {
     cellWidth,
     cellHeight,
     gridSize: Math.max(gridDims.cols, gridDims.rows),
-    width: gridDims.cols * cellWidth,
-    height: gridDims.rows * cellHeight,
+    width,
+    height,
     displayMaxWidth: Math.max(100, Math.min(4096, Math.round(
       Number(raw?.displayMaxWidth) || Number(raw?.displayLimitX) || width
     ))),
@@ -1008,6 +1031,10 @@ function normalizeScreen(raw, publicRoot = null) {
     naturalHeight: Number.isFinite(Number(raw?.naturalHeight)) ? Number(raw.naturalHeight) : null,
     isHome: raw?.isHome === true || number === 1,
     navHidden: raw?.navHidden === true,
+    ...(raw?.inheritProjectLayout === false ? { inheritProjectLayout: false } : {}),
+    ...(String(raw?.facility3dUrl || '').trim()
+      ? { facility3dUrl: String(raw.facility3dUrl).trim() }
+      : {}),
   };
 }
 
@@ -1064,6 +1091,7 @@ function normalizeHmi(hmi, tags = [], publicRoot = null) {
       .map((id) => idMap.get(String(id || '').trim()) || String(id || '').trim())
       .filter(Boolean);
   }
+  pinHomeScreenFacility3dUrl(screens, layout);
   for (const sc of screens) {
     applyLayoutToScreen(sc, layout);
     pruneScreenTilesToLayout(sc, layout);
@@ -1279,10 +1307,12 @@ function listHmiFileAssets(publicRoot) {
 
 function listHmiAssets(publicRoot, dataDir = null) {
   const { listHmiComposites } = require('./hmiComposites');
+  const { listMvDrawHmiAssets } = require('../../mv-draw/src/symbolBridge');
   const files = listHmiFileAssets(publicRoot);
   const composites = listHmiComposites(publicRoot);
   const user = dataDir ? require('./hmiUserAssets').listUserHmiAssets(dataDir) : [];
-  return [...composites, ...user, ...files].sort((a, b) => a.path.localeCompare(b.path));
+  const mvDraw = listMvDrawHmiAssets();
+  return [...mvDraw, ...composites, ...user, ...files].sort((a, b) => a.path.localeCompare(b.path));
 }
 
 module.exports = {
@@ -1305,6 +1335,7 @@ module.exports = {
   MAX_SCREENS,
   MAX_ROOM_NUM,
   applyLayoutToScreen,
+  pinHomeScreenFacility3dUrl,
   normalizeHmi,
   hmiRichnessScore,
   defaultBlankHmi,

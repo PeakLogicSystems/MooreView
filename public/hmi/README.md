@@ -1,4 +1,4 @@
-# MooreVIEW HMI — SVG graphics
+# mooreVIEW HMI — SVG graphics
 
 Graphics are organized under `svg/library/` by function, with demo screens in `svg/demos/`.
 
@@ -6,7 +6,7 @@ Graphics are organized under `svg/library/` by function, with demo screens in `s
 
 | Group | Path | Contents |
 |-------|------|----------|
-| **Demos** | `demos/` | Built-in MooreVIEW demo screens |
+| **Demos** | `demos/` | Built-in mooreVIEW demo screens |
 | **Controls — Pilot lights** | `library/controls/pilot-lights/` | MV `light_symbol*`, `pl_*` |
 | **Controls — Push buttons** | `library/controls/push-buttons/` | MV `roundsymbol_*`, `pb_*` |
 | **Controls — Switches** | `library/controls/selector-switches/` | MV selector switches |
@@ -23,7 +23,7 @@ Full index: `svg/graphics-catalog.json` · Legacy path redirects: `svg/path-alia
 
 ## PID faceplate
 
-MooreVIEW includes a ready-made PID loop faceplate:
+mooreVIEW includes a ready-made PID loop faceplate:
 
 **`/hmi/svg/library/pid-faceplates/mooreview/pid_loop_standard.svg`**
 

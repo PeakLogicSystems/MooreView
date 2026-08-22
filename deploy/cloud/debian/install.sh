@@ -288,6 +288,17 @@ else
   log "Warning: MOSQUITTO_ALLOW_ANONYMOUS=false but MOSQUITTO_USER/PASS unset — MQTT clients cannot connect"
 fi
 
+MOSQUITTO_TLS="${MOSQUITTO_TLS:-false}"
+MOSQUITTO_TLS="${MOSQUITTO_TLS//$'\r'/}"
+MOOREVIEW_DOMAIN="${MOOREVIEW_DOMAIN:-mooreview.io}"
+if [[ "$MOSQUITTO_TLS" == "true" ]]; then
+  log "Mosquitto: enabling TLS listener on port ${MOSQUITTO_TLS_PORT:-8883}"
+  bash "$SCRIPT_DIR/setup-mosquitto-tls.sh"
+  if [[ -f "$SCRIPT_DIR/mosquitto-tls.conf" ]]; then
+    grep -q '^listener 8883' "$MOSQUITTO_CONFD" 2>/dev/null || cat "$SCRIPT_DIR/mosquitto-tls.conf" >> "$MOSQUITTO_CONFD"
+  fi
+fi
+
 # Validate by (re)starting the service — the real test. Standalone `mosquitto -t`
 # was removed in 2.0.18, and a manual smoke test collides with the live 1883 listener.
 systemctl enable mosquitto >/dev/null 2>&1 || true
@@ -326,3 +337,9 @@ log "  Health: curl -s http://127.0.0.1:3090/health"
 log "  Env:    $ENV_FILE"
 log "  Logs:   journalctl -u mooreview -f"
 log "  Edit MOSQUITTO_PASS in $ENV_FILE and re-run this script to rotate MQTT credentials."
+if [[ "${MOSQUITTO_TLS:-false}" == "true" ]]; then
+  log "  MQTT TLS: mqtts://${MOOREVIEW_DOMAIN:-mooreview.io}:${MOSQUITTO_TLS_PORT:-8883} (user ${MOSQUITTO_USER:-?})"
+else
+  log "  MQTT: mqtt://${MOOREVIEW_DOMAIN:-<host>}:1883 (set MOSQUITTO_TLS=true for mqtts://:8883)"
+fi
+log "  Docs: deploy/cloud/MQTT.md"

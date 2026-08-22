@@ -5,8 +5,46 @@ const { version: APP_VERSION } = require('../../package.json');
 /** Must match MV_PROTOCOL_VERSION in firmware/.../mv_version.h */
 const OPTA_PROTOCOL_VERSION = 2;
 
-/** Max bytecode deploy payload (wire JSON); firmware MV_BC_MAX */
-const OPTA_PROGRAM_MAX_BYTES = 32768;
+/** Max compiled ST bytecode on Opta (firmware MV_BC_MAX). */
+const OPTA_PROGRAM_MAX_BYTES = 16384;
+/** Max MQTT/HTTP put_program JSON wire size (firmware MV_PROGRAM_JSON_MAX). */
+const OPTA_PROGRAM_MAX_WIRE_BYTES = 16384;
+
+function optaDeployLimitsFromDeviceStatus(status) {
+  const ps = status?.programStats;
+  const bcLimit = Number(status?.programMaxBytes) || Number(ps?.maxBytes) || OPTA_PROGRAM_MAX_BYTES;
+  const wireLimit = Number(ps?.deployMaxBytes) || OPTA_PROGRAM_MAX_WIRE_BYTES;
+  return {
+    bcLimit: bcLimit > 0 ? bcLimit : OPTA_PROGRAM_MAX_BYTES,
+    wireLimit: wireLimit > 0 ? wireLimit : OPTA_PROGRAM_MAX_WIRE_BYTES,
+  };
+}
+
+/**
+ * @param {{ bcBytes?: number, wireBytes?: number, bcLimit?: number, wireLimit?: number }} sizes
+ */
+function assessOptaDeployLimits(sizes = {}) {
+  const bc = Math.max(0, Number(sizes.bcBytes) || 0);
+  const wire = Math.max(0, Number(sizes.wireBytes) || 0);
+  const bcLimit = Number(sizes.bcLimit) > 0 ? Number(sizes.bcLimit) : OPTA_PROGRAM_MAX_BYTES;
+  const wireLimit = Number(sizes.wireLimit) > 0 ? Number(sizes.wireLimit) : OPTA_PROGRAM_MAX_WIRE_BYTES;
+  const bcOver = bc >= bcLimit;
+  const wireOver = wire >= wireLimit;
+  const errors = [];
+  if (bcOver) errors.push(`Program bytecode is ${bc} bytes (Opta limit ${bcLimit})`);
+  if (wireOver) errors.push(`Program deploy wire size is ${wire} bytes (Opta limit ${wireLimit})`);
+  return {
+    bcLimit,
+    wireLimit,
+    bcOver,
+    wireOver,
+    overLimit: bcOver || wireOver,
+    bcHeadroom: Math.max(0, bcLimit - bc),
+    wireHeadroom: Math.max(0, wireLimit - wire),
+    pct: bcLimit > 0 ? Math.min(100, Math.round((bc / bcLimit) * 100)) : 0,
+    errors,
+  };
+}
 
 function parseSemver(v) {
   const m = String(v || '').match(/^(\d+)\.(\d+)\.(\d+)/);
@@ -86,6 +124,9 @@ module.exports = {
   APP_VERSION,
   OPTA_PROTOCOL_VERSION,
   OPTA_PROGRAM_MAX_BYTES,
+  OPTA_PROGRAM_MAX_WIRE_BYTES,
+  optaDeployLimitsFromDeviceStatus,
+  assessOptaDeployLimits,
   OPTA_RECOMMENDED_FIRMWARE,
   parseSemver,
   semverCompare,

@@ -26,7 +26,7 @@ function buildOptaProgramBody(source, tagStore, driverId, opts = {}) {
   const tags = tagIds.map((id) => {
     const existing = storeById.get(id);
     if (opts.fullTagMeta && existing) return tagMetaForDevice(existing);
-    return slimTagMetaForDeploy(existing, id, driverId);
+    return { ...slimTagMetaForDeploy(existing, id, driverId), global: true };
   });
 
   let bc;
@@ -48,12 +48,17 @@ function estimateOptaDeploy(source, tagStore, driverId, opts = {}) {
   if (!built.ok) {
     return { ok: false, errors: built.errors || ['Program invalid'] };
   }
-  const { clientDeployMeta, OPTA_PROGRAM_MAX_BYTES } = require('../drivers/optaProtocol');
+  const {
+    clientDeployMeta,
+    OPTA_PROGRAM_MAX_BYTES,
+    OPTA_PROGRAM_MAX_WIRE_BYTES,
+    assessOptaDeployLimits,
+  } = require('../drivers/optaProtocol');
   const body = {
     ...built.body,
     ...clientDeployMeta(opts.programName ? { programName: opts.programName } : {}),
   };
-  const bytes = Buffer.byteLength(JSON.stringify(body));
+  const wireBytes = Buffer.byteLength(JSON.stringify(body));
   const bcBuf = Buffer.from(built.body.bc, 'base64');
   const bcBytes = bcBuf.length;
   const { parseBytecodeStats } = require('../engine/stBytecode');
@@ -63,20 +68,36 @@ function estimateOptaDeploy(source, tagStore, driverId, opts = {}) {
     dataBytes: bcBytes,
     totalBytes: bcBytes,
   };
-  const limit = Number(opts.limitBytes) > 0 ? Number(opts.limitBytes) : OPTA_PROGRAM_MAX_BYTES;
+  const bcLimit = Number(opts.bcLimitBytes) > 0
+    ? Number(opts.bcLimitBytes)
+    : (Number(opts.limitBytes) > 0 ? Number(opts.limitBytes) : OPTA_PROGRAM_MAX_BYTES);
+  const wireLimit = Number(opts.wireLimitBytes) > 0
+    ? Number(opts.wireLimitBytes)
+    : OPTA_PROGRAM_MAX_WIRE_BYTES;
+  const sizing = assessOptaDeployLimits({
+    bcBytes: bcStats.totalBytes,
+    wireBytes,
+    bcLimit,
+    wireLimit,
+  });
   return {
     ok: true,
-    bytes,
+    bytes: wireBytes,
+    wireBytes,
     bcBytes,
     astBytes: bcBytes,
     codeBytes: bcStats.codeBytes,
     dataBytes: bcStats.dataBytes,
     bcTotalBytes: bcStats.totalBytes,
     tagCount: built.tagIds.length,
-    limit,
-    overLimit: bytes >= limit,
-    headroom: limit - bytes,
-    pct: Math.min(100, Math.round((bytes / limit) * 100)),
+    limit: sizing.bcLimit,
+    wireLimit: sizing.wireLimit,
+    overLimit: sizing.overLimit,
+    bcOverLimit: sizing.bcOver,
+    wireOverLimit: sizing.wireOver,
+    headroom: sizing.bcHeadroom,
+    wireHeadroom: sizing.wireHeadroom,
+    pct: sizing.pct,
   };
 }
 

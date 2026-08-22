@@ -1,8 +1,8 @@
-# Arduino Opta Modbus RTU (MooreVIEW)
+# Arduino Opta Modbus RTU (mooreVIEW)
 
-Matches the **Opta Modbus RTU slave** sketch (slave ID **2**, **9600 8N1**):
+Matches the **Opta Modbus RTU slave** sketch (slave ID **2**, **9600 8N1**). Shipped firmware: `firmware/arduino-opta-rtu-slave/MooreviewOptaRtuSlave/` (extended IR 0–23 for Dragino / pseudo-AI).
 
-| Modbus | Address | MooreVIEW tags |
+| Modbus | Address | mooreVIEW tags |
 |--------|---------|----------------|
 | Discrete inputs | 0–7 | `I1`–`I8` |
 | Coils (relays) | 0–3 | `R1`–`R4` |
@@ -24,15 +24,15 @@ ST on device; deploy over **MQTT** (no HTTP to Opta required for programming). S
 
 ## PC setup (Ethernet ST on Opta)
 
-ST logic runs **on the Opta**; MooreVIEW deploys the program over HTTP.
+ST logic runs **on the Opta**; mooreVIEW deploys the program over HTTP.
 
-1. Flash firmware: `firmware/arduino-opta-st/MooreviewOptaSt/` (see README there).
+1. Flash firmware: `firmware/arduino-opta-st/mooreVIEWOptaSt/` (see README there).
 2. **Drivers → Apply device template → Arduino Opta — Ethernet ST runtime** (or `fixtures/drivers.opta_eth.json`).
 3. Set **Host** to the Opta IP, enable driver, **Save drivers**.
 4. Load `opta/01_i1_to_r1.st` with fixtures `tags.opta_eth.json`.
 5. **Validate** → **Start** — program AST is sent to the Opta; scan cycles run remotely.
 
-Commission Ethernet and expansions on the device first: connect to WiFi AP `MooreVIEW-Opta` → `http://192.168.4.1:8080/setup`, or open `/setup` on the Ethernet IP. Configure AFX00005 (slot 1) and AFX00007 (slot 2) as needed, then use `tags.opta_eth_exp.json` for `X1_` / `X2_` tags.
+Commission Ethernet and expansions on the device first: connect to WiFi AP `mooreVIEW-Opta` → `http://192.168.4.1:8080/setup`, or open `/setup` on the Ethernet IP. Configure AFX00005 (slot 1) and AFX00007 (slot 2) as needed, then use `tags.opta_eth_exp.json` for `X1_` / `X2_` tags.
 
 ## Programs
 
@@ -48,6 +48,7 @@ Each program header lists **required tags**. **Load matching fixtures** loads on
 | `06_flow_gpm.st` | Pulse flow → GPM (1 min window + K factor) | `I1`, `VPB_RUN`, `OS1`, `CTR1`, `TMR1`, `FLOW1`, `H1`, `H2`, `R1` |
 | `07_leak_ct_thermistor.st` | Leak `I1`, moisture `I1_RAW` (2-level), 4× CT, 3× NTC → `R1`–`R4`, `MOIST_ALM`, `SUBMERGED_ALM` | `I1`, `I1_RAW`, `I2_RAW`–`I8_RAW`, `R1`–`R4`, `H1`, `H2`, `MOIST_PCT`, `H_WET_RAW`, `H_DRY_RAW`, `H_MOIST_RAW`, `H_SUB_RAW`, `MOIST_ALM`, `SUBMERGED_ALM` |
 | `08_ntc_piecewise.st` | Piecewise °C from one NTC (`I6_RAW` → `T1_C`); optional `R3` high-temp | `I6_RAW`, `T1_C`, `R3` |
+| `09_moisture_ntc_ct.st` | 3-input test bench: moisture `I1_RAW`, 10K NTC `I2_RAW`, 0–5 A CT `I3_RAW` | `I1_RAW`–`I3_RAW`, `R1`–`R4`, `MOIST_PCT`, `T1_F`, `T1_C`, `CT_AMPS`, moisture/CT/temp alarms — **°F display/alarm** |
 
 ## Leak + moisture + CT + thermistor demo
 
@@ -70,3 +71,18 @@ Wiring on the base Opta unit:
 6. **Validate** → **Start** — program deploys to the Opta over MQTT.
 
 Relay outputs: `R1` leak, `R2` current overload, `R3` high temperature, `R4` system OK (clears when any alarm including `MOIST_ALM` / `SUBMERGED_ALM` is active).
+
+## 3-input sensor test bench
+
+Minimal wiring for bench testing moisture, temperature, and current on inputs 1–3:
+
+| Input | Sensor | Tag | Notes |
+|-------|--------|-----|-------|
+| I1 (analog) | Resistive moisture probe | `I1_RAW` | raw 0 dry, 70 moist, 700 submerged |
+| I2 (analog) | 10K NTC, Opta 24 V divider | `I2_RAW` | Cal **°F**, adcMax **1023**; ~670 raw @ 75°F |
+| I3 (analog 0–10 V) | 0–1 V CT (0–5 A) | `I3_RAW` | scale 0.048875 (1 V ≈ 5 A) |
+
+1. Load `opta/09_moisture_ntc_ct.st` with **Load matching fixtures** (`tags.opta_sensor_test.json`).
+2. Enable MQTT Parc driver (`drivers.opta_mqtt_st.json`) or Ethernet ST runtime.
+3. Tune `H1` (CT overload raw, default 82 ≈ 4 A) and `H2` (high-temp **°F**, default **131**) in Tags.
+4. **Validate** → **Start**.

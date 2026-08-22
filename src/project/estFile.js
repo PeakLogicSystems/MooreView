@@ -1,35 +1,21 @@
 'use strict';
 
 const programStore = require('../programs/programStore');
-const mongoTagLogger = require('../logger/mongoTagLogger');
 const persistence = require('../persistence');
 const { DEFAULT_SCAN_MS, MAX_TAGS, DEFAULT_MQTT_PARC_BROKER } = require('../config');
 const { defaultBlankHmi } = require('../hmi/hmiConfig');
-const { defaultMongoLogger } = require('../settings/mongoLoggerSettings');
+const { defaultMongoLogger, effectiveMongoLogger } = require('../settings/mongoLoggerSettings');
+const { DEFAULT_CLOUD_REMOTE } = require('../settings/cloudRemoteSettings');
+const { stripLegacyProjectHwDefaults } = require('../settings/portableSettings');
 const { registry: cameraRegistry } = require('../cameras/cameraRegistry');
+
 const EST_FORMAT = 'mooreview-est';
 const EST_VERSION = 1;
+const ARCHIVE_FORMAT = 'mooreview-est-archive';
+const ARCHIVE_VERSION = 1;
 
 const BLANK_PROGRAM = '(* New MooreVIEW project — load an ST program or write logic here *)\n';
-const BLANK_ACTIVE_PROGRAM = '';
 
-function pack(deps, meta = {}) {
-  const { tagStore, driverManager, persistence } = deps;
-  return {
-    format: EST_FORMAT,
-    version: EST_VERSION,
-    savedAt: new Date().toISOString(),
-    project: { name: meta.name || 'untitled', ...meta },
-    tags: tagStore.list(),
-    drivers: driverManager.list(),
-    program: programStore.readActive(),
-    activeProgram: programStore.activeRel(),
-    settings: persistence.readJson('settings.json', {}),
-    cameras: cameraRegistry.exportForProject(),
-  };
-}
-
-/** Map legacy est export / fixture fields onto current tag shape. */
 function mapLegacyRole(tag) {
   if (tag.role) return tag.role;
   const d = String(tag.direction || '').toLowerCase();
@@ -50,97 +36,88 @@ function normalizeTagImport(tag) {
   return { ...tag, type, role };
 }
 
-/**
- * Accept mooreview-est, est config bundles ({ tags, drivers, program }), or a bare tags array.
- * @returns {object} normalized import document; null fields mean "do not replace this section"
- */
 function coerceImportDoc(raw) {
   if (!raw || typeof raw !== 'object') {
-    throw Object.assign(new Error('Invalid JSON object'), { status: 400 });
+    throw Object.assign(new Error('Invalid project document'), { status: 400 });
   }
-  if (Array.isArray(raw)) {
-    return {
-      format: EST_FORMAT,
-      version: EST_VERSION,
-      project: { name: 'imported' },
-      tags: raw.map(normalizeTagImport),
-      drivers: null,
-      program: null,
-      activeProgram: null,
-      settings: null,
-      cameras: null,
-    };
+  if (raw.format !== EST_FORMAT) {
+    throw Object.assign(new Error(`Expected format "${EST_FORMAT}"`), { status: 400 });
   }
-  if (raw.format === EST_FORMAT) {
-    if (raw.version !== EST_VERSION) {
-      throw Object.assign(new Error(`Unsupported version ${raw.version}`), { status: 400 });
-    }
-    return {
-      ...raw,
-      tags: Array.isArray(raw.tags) ? raw.tags.map(normalizeTagImport) : [],
-      drivers: Array.isArray(raw.drivers) ? raw.drivers : null,
-      program: typeof raw.program === 'string' ? raw.program : null,
-      cameras: raw.cameras && typeof raw.cameras === 'object' ? raw.cameras : null,
-    };
+  if (raw.version !== EST_VERSION) {
+    throw Object.assign(new Error(`Unsupported project version ${raw.version}`), { status: 400 });
   }
-  const hasTags = Array.isArray(raw.tags);
-  const hasDrivers = Array.isArray(raw.drivers);
-  const hasProgram = typeof raw.program === 'string';
-  if (hasTags || hasDrivers || hasProgram) {
-    return {
-      format: EST_FORMAT,
-      version: EST_VERSION,
-      savedAt: raw.savedAt,
-      project: raw.project || { name: raw.name || 'imported' },
-      tags: hasTags ? raw.tags.map(normalizeTagImport) : null,
-      drivers: hasDrivers ? raw.drivers : null,
-      program: hasProgram ? raw.program : null,
-      activeProgram: raw.activeProgram,
-      settings: raw.settings,
-    };
-  }
-  throw Object.assign(
-    new Error(`Expected "${EST_FORMAT}" or JSON with tags, drivers, and/or program`),
-    { status: 400 }
-  );
+  return {
+    ...raw,
+    tags: Array.isArray(raw.tags) ? raw.tags.map(normalizeTagImport) : [],
+    drivers: Array.isArray(raw.drivers) ? raw.drivers : null,
+    activeProgram: raw.activeProgram ?? null,
+    settings: raw.settings ?? null,
+    cameras: raw.cameras && typeof raw.cameras === 'object' ? raw.cameras : null,
+    mvDraw: raw.mvDraw ?? null,
+  };
 }
 
-function validate(doc) {
-  if (!doc || typeof doc !== 'object') return 'Invalid JSON object';
-  if (doc.format !== EST_FORMAT) return `Expected format "${EST_FORMAT}"`;
-  if (doc.version !== EST_VERSION) return `Unsupported version ${doc.version}`;
-  if (!Array.isArray(doc.tags)) return 'Missing tags array';
-  if (doc.tags.length > MAX_TAGS) return `Tag limit ${MAX_TAGS} exceeded`;
-  if (!Array.isArray(doc.drivers)) return 'Missing drivers array';
-  if (typeof doc.program !== 'string') return 'Missing program string';
-  return null;
+function mergePortableSettings(incoming) {
+  const stored = incoming && typeof incoming === 'object' ? incoming : {};
+  const defaults = {
+    scanMs: DEFAULT_SCAN_MS,
+    graphMaxPoints: 600,
+    graphPens: [],
+    hmi: defaultBlankHmi(),
+    mongoLogger: effectiveMongoLogger({}),
+    remoteExecution: false,
+    mqttParc: {
+      enabled: true,
+      brokerUrl: DEFAULT_MQTT_PARC_BROKER,
+      topicPrefix: 'mooreview/v1',
+    },
+    cloudRemote: { ...DEFAULT_CLOUD_REMOTE },
+  };
+  return stripLegacyProjectHwDefaults({
+    ...defaults,
+    ...stored,
+    hmi: stored.hmi && typeof stored.hmi === 'object' ? stored.hmi : defaults.hmi,
+    mongoLogger: effectiveMongoLogger(stored.mongoLogger),
+    mqttParc: { ...defaults.mqttParc, ...(stored.mqttParc || {}) },
+    cloudRemote: { ...DEFAULT_CLOUD_REMOTE, ...(stored.cloudRemote || {}) },
+  });
+}
+
+function packProjectDoc(deps, meta = {}) {
+  const { tagStore, driverManager } = deps;
+  const settings = stripLegacyProjectHwDefaults(persistence.readJson('settings.json', {}));
+  return {
+    format: EST_FORMAT,
+    version: EST_VERSION,
+    savedAt: new Date().toISOString(),
+    project: { name: meta.name || settings.project?.name || 'untitled', ...meta },
+    tags: tagStore.list(),
+    drivers: driverManager.list(),
+    activeProgram: programStore.activeRel() || null,
+    settings,
+    cameras: cameraRegistry.exportForProject(),
+  };
+}
+
+/** @deprecated use packProjectDoc — kept for internal callers during transition */
+function pack(deps, meta = {}) {
+  return packProjectDoc(deps, meta);
 }
 
 function blankProjectDoc(name) {
   const projectName = String(name || 'untitled').trim() || 'untitled';
+  const activeProgram = programStore.suggestRelFromFilename(`${projectName}.st`);
   return {
     format: EST_FORMAT,
     version: EST_VERSION,
     project: { name: projectName },
     tags: [],
     drivers: [],
-    program: BLANK_PROGRAM,
-    activeProgram: null,
-    settings: {
+    activeProgram,
+    settings: mergePortableSettings({
       project: { name: projectName },
-      scanMs: DEFAULT_SCAN_MS,
-      graphMaxPoints: 600,
-      graphPens: [],
-      activeProgram: null,
-      hmi: defaultBlankHmi(),
-      mongoLogger: defaultMongoLogger(),
-      remoteExecution: false,
-      mqttParc: {
-        enabled: true,
-        brokerUrl: DEFAULT_MQTT_PARC_BROKER,
-        topicPrefix: 'mooreview/v1',
-      },
-    },
+      activeProgram,
+    }),
   };
 }
 
@@ -149,7 +126,6 @@ function isProjectSnapshot(doc) {
   return d.format === EST_FORMAT
     && Array.isArray(d.tags)
     && Array.isArray(d.drivers)
-    && typeof d.program === 'string'
     && d.settings != null && typeof d.settings === 'object';
 }
 
@@ -157,16 +133,17 @@ function validateImport(doc) {
   if (!Array.isArray(doc.tags)) return 'Missing tags array';
   if (doc.tags.length > MAX_TAGS) return `Tag limit ${MAX_TAGS} exceeded`;
   if (doc.drivers != null && !Array.isArray(doc.drivers)) return 'Invalid drivers array';
-  if (doc.program != null && typeof doc.program !== 'string') return 'Invalid program';
   return null;
 }
 
-async function apply(doc, deps, opts = {}) {
+async function applyProjectDoc(doc, deps, opts = {}) {
   const normalized = coerceImportDoc(doc);
   const err = validateImport(normalized);
   if (err) throw Object.assign(new Error(err), { status: 400 });
-  const { tagStore, driverManager, scanEngine, persistence, graphHistory } = deps;
+
+  const { tagStore, driverManager, scanEngine, graphHistory } = deps;
   const snapshot = isProjectSnapshot(normalized);
+  const importWarnings = [];
 
   if (snapshot && scanEngine.running) await scanEngine.stop();
 
@@ -180,46 +157,75 @@ async function apply(doc, deps, opts = {}) {
     driverManager.save(normalized.drivers);
     await driverManager.rebuild();
   }
+
+  const programs = opts.programs && typeof opts.programs === 'object' ? opts.programs : null;
   let activeRel = programStore.activeRel();
-  if (normalized.activeProgram === null || normalized.activeProgram === '') {
+
+  if (programs && Object.keys(programs).length) {
+    const manifestActive = programStore.sanitizeRel(
+      opts.programsManifest?.active || normalized.activeProgram || '',
+    );
+    for (const [relPath, source] of Object.entries(programs)) {
+      programStore.writeProgram(relPath, source);
+    }
+    if (manifestActive && programs[manifestActive] != null) {
+      activeRel = programStore.setActive(manifestActive);
+    } else if (normalized.activeProgram) {
+      activeRel = programStore.setActive(normalized.activeProgram);
+    } else {
+      const first = Object.keys(programs).sort()[0];
+      activeRel = first ? programStore.setActive(first) : programStore.clearActive();
+    }
+  } else if (normalized.activeProgram === null || normalized.activeProgram === '') {
     programStore.clearActive();
     activeRel = '';
   } else if (normalized.activeProgram) {
     activeRel = programStore.setActive(normalized.activeProgram);
   }
-  if (typeof normalized.program === 'string' && activeRel) {
-    programStore.writeProgram(activeRel, normalized.program);
-  }
+
   if (opts.prunePrograms) {
     programStore.pruneProgramsExcept(activeRel);
   }
+
   if (normalized.settings) {
-    persistence.writeJson('settings.json', normalized.settings);
-    const cfg = normalized.settings?.mongoLogger;
-    if (cfg && typeof cfg === 'object' && cfg.uri) await mongoTagLogger.setConfig(cfg);
-    else await mongoTagLogger.clearConfig();
+    persistence.writeJson('settings.json', mergePortableSettings(normalized.settings));
+    const cfg = persistence.readJson('settings.json', {}).mongoLogger;
+    const { applyMongoLoggerConfig } = require('../logger/mongoServicesInit');
+    if (cfg?.uri) await applyMongoLoggerConfig(cfg);
+    else await applyMongoLoggerConfig(null);
   }
+
   if (normalized.cameras) {
     cameraRegistry.importFromProject(normalized.cameras);
   }
+
   if (snapshot) {
     if (graphHistory) graphHistory.clear();
     scanEngine._programTrace = [];
     if (scanEngine._oneShotFired) scanEngine._oneShotFired.clear();
     scanEngine.errors = [];
-    persistence.writeJson('project.est.json', pack(deps, normalized.project || {}));
+    persistence.writeJson('project.est.json', packProjectDoc(deps, normalized.project || {}));
   }
+
   scanEngine.loadSettings();
   scanEngine.loadProgram();
-  return pack(deps, normalized.project || {});
+
+  return {
+    ...packProjectDoc(deps, normalized.project || {}),
+    importWarnings,
+  };
+}
+
+/** @deprecated use applyProjectDoc */
+async function apply(doc, deps, opts = {}) {
+  return applyProjectDoc(doc, deps, opts);
 }
 
 function exportFilename(name) {
   const base = String(name || 'project').trim().replace(/[^\w.-]+/g, '_').replace(/^\.+/, '') || 'project';
-  return `${base}.est.json`;
+  return `${base}.est.zip`;
 }
 
-/** Keep workspace.est.json drivers in sync when drivers.json is saved. */
 function patchWorkspaceDrivers(drivers) {
   const ws = persistence.readJson('workspace.est.json', null);
   if (!ws || ws.format !== EST_FORMAT || !Array.isArray(ws.drivers)) return false;
@@ -232,14 +238,18 @@ function patchWorkspaceDrivers(drivers) {
 module.exports = {
   EST_FORMAT,
   EST_VERSION,
+  ARCHIVE_FORMAT,
+  ARCHIVE_VERSION,
   exportFilename,
+  packProjectDoc,
   pack,
-  validate,
   validateImport,
   coerceImportDoc,
   normalizeTagImport,
   blankProjectDoc,
   isProjectSnapshot,
+  mergePortableSettings,
   patchWorkspaceDrivers,
+  applyProjectDoc,
   apply,
 };

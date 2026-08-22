@@ -5,6 +5,8 @@ const DEFAULT_SECTIONS = {
   chart: true,
   penTable: true,
   statistics: true,
+  forecast: true,
+  assetSetup: true,
   notes: true,
 };
 
@@ -39,6 +41,8 @@ function normalizeReportConfig(raw) {
       chart: sections.chart !== false,
       penTable: sections.penTable !== false,
       statistics: sections.statistics !== false,
+      forecast: sections.forecast !== false,
+      assetSetup: sections.assetSetup !== false,
       notes: sections.notes !== false,
     },
     notes: String(src.notes ?? '').slice(0, 4000),

@@ -67,6 +67,7 @@ function scadaStatsForWindow(penDocs, windowStart, windowEnd) {
 
 function edgeStatsForWindow(edgeDocs, windowStart, windowEnd) {
   const scores = [];
+  const startMsValues = [];
   const labels = new Set();
   const models = new Set();
   let inferenceCount = 0;
@@ -80,12 +81,16 @@ function edgeStatsForWindow(edgeDocs, windowStart, windowEnd) {
     if (label) labels.add(label);
     const modelId = doc.modelId ?? doc.metadata?.modelId;
     if (modelId) models.add(modelId);
+    const startMs = doc.features?.startMs;
+    if (Number.isFinite(startMs)) startMsValues.push(Number(startMs));
   }
   const scoreStats = numericStats(scores);
+  const startMsStats = numericStats(startMsValues);
   return {
     inferenceCount,
     maxScore: scoreStats.max,
     avgScore: scoreStats.avg,
+    startMsStats,
     labels: [...labels],
     models: [...models],
   };
@@ -94,6 +99,45 @@ function edgeStatsForWindow(edgeDocs, windowStart, windowEnd) {
 function healthIndexFromEdge(edge) {
   if (edge.maxScore == null || !Number.isFinite(edge.maxScore)) return null;
   return Math.round((1 - Math.min(Math.max(edge.maxScore, 0), 1)) * 1000) / 1000;
+}
+
+function deriveWindowMetrics(scada, tagStats) {
+  const derived = {};
+  const hrsKeys = Object.keys(tagStats).filter((k) => /_HRS$/i.test(k));
+  const startKeys = Object.keys(tagStats).filter((k) => /_STARTS$/i.test(k));
+  const ampKeys = Object.keys(tagStats).filter((k) => /(_RAW|_AMPS|CURRENT)/i.test(k));
+
+  if (hrsKeys.length >= 2) {
+    const vals = hrsKeys.map((k) => tagStats[k].avg).filter((v) => v != null);
+    if (vals.length >= 2) derived.deltaRunHours = Math.round((Math.max(...vals) - Math.min(...vals)) * 1000) / 1000;
+  } else if (hrsKeys.length === 1 && tagStats[hrsKeys[0]].max != null && tagStats[hrsKeys[0]].min != null) {
+    derived.deltaRunHours = Math.round((tagStats[hrsKeys[0]].max - tagStats[hrsKeys[0]].min) * 1000) / 1000;
+  }
+
+  if (startKeys.length) {
+    const maxStarts = Math.max(...startKeys.map((k) => tagStats[k].max ?? tagStats[k].avg ?? 0));
+    const minStarts = Math.min(...startKeys.map((k) => tagStats[k].min ?? tagStats[k].avg ?? 0));
+    derived.startsInWindow = Math.max(0, Math.round(maxStarts - minStarts));
+  }
+
+  if (derived.deltaRunHours != null && derived.startsInWindow > 0) {
+    derived.runtimePerStartMin = Math.round((derived.deltaRunHours * 60 / derived.startsInWindow) * 100) / 100;
+  }
+
+  if (ampKeys.length) {
+    const avgs = ampKeys.map((k) => tagStats[k].avg).filter((v) => Number.isFinite(v));
+    if (avgs.length) {
+      derived.avgRunAmps = Math.round((avgs.reduce((a, b) => a + b, 0) / avgs.length) * 100) / 100;
+      derived.maxRunAmps = Math.round(Math.max(...ampKeys.map((k) => tagStats[k].max ?? 0)) * 100) / 100;
+    }
+  }
+
+  derived.sampleCount = scada?.sampleCount ?? 0;
+  derived.dutyCycle = derived.sampleCount > 0 && derived.deltaRunHours != null
+    ? Math.min(1, Math.round((derived.deltaRunHours / (scada.windowMinHours || 1)) * 1000) / 1000)
+    : null;
+
+  return derived;
 }
 
 /**
@@ -106,12 +150,23 @@ function alignPdmFeatures({
   windowMin,
   penDocs = [],
   edgeDocs = [],
+  assetContext = null,
 }) {
   const winMs = normalizeWindowMs(windowMin);
   const windows = buildWindows(fromMs, toMs, winMs);
   const features = windows.map(({ start, end }) => {
     const scada = scadaStatsForWindow(penDocs, start, end);
+    scada.windowMinHours = winMs / 3600000;
     const edge = edgeStatsForWindow(edgeDocs, start, end);
+    const derived = deriveWindowMetrics(scada, scada.tagStats || {});
+    const pumpIdx = assetContext?.pumpIndex || assetContext?.unitIndex;
+    if (pumpIdx && edge.startMsStats?.avg != null) {
+      scada.tagStats[`MOTOR${pumpIdx}_START_MS`] = edge.startMsStats;
+    }
+    const contextFromEdge = edgeDocs.find((d) => {
+      const ts = docTimestampMs(d);
+      return Number.isFinite(ts) && ts >= start && ts < end && d.context;
+    })?.context;
     return {
       at: new Date(start).toISOString(),
       windowStartMs: start,
@@ -120,6 +175,8 @@ function alignPdmFeatures({
       assetId,
       scada,
       edge,
+      derived,
+      context: assetContext || contextFromEdge || null,
       healthIndex: healthIndexFromEdge(edge),
     };
   });
@@ -151,6 +208,7 @@ module.exports = {
   normalizeWindowMs,
   alignPdmFeatures,
   resolveTagIdsForAsset,
+  deriveWindowMetrics,
   scadaStatsForWindow,
   edgeStatsForWindow,
   healthIndexFromEdge,

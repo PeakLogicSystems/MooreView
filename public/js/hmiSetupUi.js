@@ -565,9 +565,13 @@ window.MooreviewHmi = (function () {
     if (!grid) return;
     grid.innerHTML = assets.map((a) => {
       const selected = a.path === hmiSelectedAssetPath;
-      const rawThumb = a.type === 'composite' ? (a.preview || a.composite?.preview || '') : a.path;
+      const rawThumb = a.type === 'composite'
+        ? (a.preview || a.composite?.preview || '')
+        : (a.type === 'mvdraw' ? (a.preview || mvDrawPreviewPath(a.path)) : a.path);
       const thumb = resolveHmiAssetUrl(rawThumb);
-      const badge = a.type === 'composite' ? '<span class="hmi-asset-badge">composite</span>' : '';
+      const badge = a.type === 'composite'
+        ? '<span class="hmi-asset-badge">composite</span>'
+        : (a.type === 'mvdraw' ? '<span class="hmi-asset-badge">plan</span>' : '');
       return `<button type="button" class="hmi-asset-tile${selected ? ' selected' : ''}" role="option" aria-selected="${selected ? 'true' : 'false'}" draggable="true" data-hmi-asset-path="${esc(a.path)}" title="${esc(a.label || a.name)}">
         <span class="hmi-asset-thumb">${badge}<img src="${esc(thumb)}" alt="" loading="lazy"></span>
         <span class="hmi-asset-label">${esc(a.label || a.name)}</span>
@@ -875,6 +879,14 @@ window.MooreviewHmi = (function () {
       if (!a.preview) a.preview = a.composite.preview;
       return a;
     }
+    if (a.type === 'mvdraw') {
+      if (!a.group) a.group = 'Site plan (MV Draw)';
+      if (!a.preview && a.mvDrawType) {
+        a.preview = `/api/mv-draw/symbols/${encodeURIComponent(a.mvDrawType)}/preview.svg`;
+      }
+      if (!a.label && a.mvDrawType) a.label = a.mvDrawType.replace(/_/g, ' ');
+      return a;
+    }
     const meta = inferHmiAssetMeta(a.path || a.name);
     if (!a.group) a.group = meta.group;
     if (!a.subgroup) a.subgroup = meta.subgroup;
@@ -901,6 +913,7 @@ window.MooreviewHmi = (function () {
   let hmiPreviewSvg = '';
   let hmiPreviewTilesKey = '';
   let hmiConfigReady = false;
+  let hmiMainInitialized = false;
   let hmiServerSettingsKey = '';
   let hmiLiveLoadToken = 0;
   let hmiSelectedAssetPath = '';
@@ -909,6 +922,18 @@ window.MooreviewHmi = (function () {
   let hmiCompositeByPath = new Map();
 
   const HMI_COMPOSITE_PATH_PREFIX = '@composite/';
+  const MV_DRAW_ASSET_PREFIX = '@mvdraw/';
+
+  function isMvDrawAssetPath(path) {
+    return String(path || '').startsWith(MV_DRAW_ASSET_PREFIX);
+  }
+
+  function mvDrawPreviewPath(path) {
+    const asset = hmiAssetByPath(path);
+    if (asset?.preview) return asset.preview;
+    const type = String(path || '').slice(MV_DRAW_ASSET_PREFIX.length).trim();
+    return type ? `/api/mv-draw/symbols/${encodeURIComponent(type)}/preview.svg` : '';
+  }
 
   function isCompositeAssetPath(path) {
     return String(path || '').startsWith(HMI_COMPOSITE_PATH_PREFIX);
@@ -984,7 +1009,8 @@ window.MooreviewHmi = (function () {
   function isCompositeFaceplatePath(path) {
     return isPidFaceplatePath(path) || isMotorFaceplatePath(path) || isTpoFaceplatePath(path)
       || isPoolFaceplatePath(path)
-      || isAlternatorFaceplatePath(path);
+      || isAlternatorFaceplatePath(path)
+      || HmiView.isLiftStationFaceplateAssetPath?.(path);
   }
 
   function pickTagForCompositeRole(manifest, role) {
@@ -1093,6 +1119,53 @@ window.MooreviewHmi = (function () {
     return HmiView.isHoaSwitchAssetPath?.(path) || /switch_hoa_(auto|off|hand)\.svg$/i.test(String(path || ''));
   }
 
+  function explodeCompositeToEdit(tile, manifest) {
+    if (!tile || !manifest?.parts?.length) return false;
+    tile.compositeId = manifest.id;
+    tile.layers = manifest.parts.filter((p) => p?.svg).map((part) => {
+      const kind = HMI_OBJ_KINDS.includes(part.kind) ? part.kind : inferObjKindFromAsset(part.svg);
+      return { kind, z: part.z ?? 0, svg: part.svg };
+    });
+    syncTileLegacyFields(tile);
+    return true;
+  }
+
+  function compositeTileNeedsExplode(tile, manifest) {
+    if (!tile?.compositeId || !manifest?.parts?.length) return false;
+    const layers = screenTileLayers(tile);
+    if (layers.length !== manifest.parts.length) return true;
+    for (const part of manifest.parts) {
+      const match = layers.some((l) => (l.z ?? 0) === (part.z ?? 0) && l.svg === part.svg);
+      if (!match) return true;
+    }
+    return false;
+  }
+
+  function ensureCompositeTileExploded(tile) {
+    const compositeId = String(tile?.compositeId || '').trim();
+    if (!compositeId) return false;
+    const manifest = compositeManifestFromAsset(`@composite/${compositeId}`);
+    if (!manifest || !compositeTileNeedsExplode(tile, manifest)) return false;
+    return explodeCompositeToEdit(tile, manifest);
+  }
+
+  function ensureAllCompositeTilesExploded(cfg) {
+    if (!cfg?.screens?.length) return false;
+    let changed = false;
+    for (const screen of cfg.screens) {
+      for (const tile of screen.tiles || []) {
+        if (ensureCompositeTileExploded(tile)) changed = true;
+      }
+    }
+    return changed;
+  }
+
+  function compositeManifestForTile(tile) {
+    const compositeId = String(tile?.compositeId || '').trim();
+    if (!compositeId) return null;
+    return compositeManifestFromAsset(`@composite/${compositeId}`);
+  }
+
   function compositeBindingElementId(col, row, manifest, bindingDef) {
     const role = String(bindingDef?.elementId || '').trim();
     if (role === 'hoa_switch') return `t${col + 1}_${row + 1}__hoa_switch`;
@@ -1127,6 +1200,11 @@ window.MooreviewHmi = (function () {
   function addCompositeDefaultBindings(col, row, manifest) {
     if (!manifest?.defaultBindings?.length) return { added: 0, tagId: '' };
     const screenId = hmiEditScreenId || hmiConfig.activeScreen;
+    const scr = activeHmiScreen();
+    const tile = getScreenTile(scr, col, row);
+    const prefixMap = buildCompositeInstancePrefixMap(scr);
+    const tilePrefix = resolveCompositeInstanceTagPrefix(tile, col, row, prefixMap);
+    if (tilePrefix && tile && !tile.compositeTagPrefix) tile.compositeTagPrefix = tilePrefix;
     const other = (hmiConfig.bindings || []).filter((b) => b.screenId !== screenId);
     const rows = (hmiConfig.bindings || []).filter((b) => b.screenId === screenId);
     const tagByRole = new Map();
@@ -1135,7 +1213,11 @@ window.MooreviewHmi = (function () {
       const tagRole = def.tagRole || 'pv';
       let tagId = tagByRole.get(tagRole);
       if (!tagId) {
-        tagId = pickTagForCompositeRole(manifest, tagRole);
+        tagId = remapManifestTagId(
+          pickTagForCompositeRole(manifest, tagRole),
+          manifest,
+          tilePrefix || compositeInstanceTagPrefix(tile),
+        );
         tagByRole.set(tagRole, tagId);
       }
       const elementId = compositeBindingElementId(col, row, manifest, def);
@@ -1188,23 +1270,39 @@ window.MooreviewHmi = (function () {
 
   function initMainHmi() {
     if (!domGet('hmi-viewport')) return;
-    wireHmiRoomPopupOnce();
-    syncHmiConfigForSetupOpen();
-    const settingsHmi = lastSettings()?.hmi;
-    if (settingsHmi?.screens?.length) {
-      if (!upgradeHmiFromServerIfRicher(settingsHmi)) {
-        applyServerHmiSettingsIfChanged(settingsHmi);
+    try {
+      wireHmiRoomPopupOnce();
+      syncHmiConfigForSetupOpen();
+      const settingsHmi = lastSettings()?.hmi;
+      if (settingsHmi?.screens?.length) {
+        if (!upgradeHmiFromServerIfRicher(settingsHmi)) {
+          applyServerHmiSettingsIfChanged(settingsHmi);
+        }
       }
+      syncComposerModeFromSettings({ skipReload: true });
+      syncFacility3dButton();
+      hmiViewScreenId = startingHmiScreenId();
+      renderHmiNavBar();
+      syncHmiScreenBarVisibility();
+      syncHmiLiveDisplayHint();
+      syncHmiTestModeUi();
+      loadHmiScreen(true).catch((e) => {
+        console.error('[HMI] load screen:', e);
+        const viewport = domGet('hmi-viewport');
+        if (viewport) {
+          viewport.innerHTML = `<p class="panel-hint err">HMI load failed: ${esc(e.message || String(e))}</p>`;
+        }
+      });
+      refreshHmiAlarmSidebar();
+    } catch (e) {
+      console.error('[HMI] init:', e);
+      const viewport = domGet('hmi-viewport');
+      if (viewport && !viewport.querySelector('.hmi-screen-stage, .hmi-live-3d-frame, .hmi-live-plan-frame, svg')) {
+        viewport.innerHTML = `<p class="panel-hint err">HMI setup failed: ${esc(e.message || String(e))}</p>`;
+      }
+    } finally {
+      hmiMainInitialized = true;
     }
-    syncComposerModeFromSettings();
-    syncFacility3dButton();
-    hmiViewScreenId = startingHmiScreenId();
-    renderHmiNavBar();
-    syncHmiScreenBarVisibility();
-    syncHmiLiveDisplayHint();
-    syncHmiTestModeUi();
-    loadHmiScreen(true).catch(console.error);
-    refreshHmiAlarmSidebar();
   }
 
   let hmi3dFrameMessagesWired = false;
@@ -1220,6 +1318,13 @@ window.MooreviewHmi = (function () {
         const key = `area:${data.screenId}`;
         if (hmiPopupMessageIsDuplicate(key)) return;
         ensureHmiConfigLoaded();
+        const sid = String(data.screenId || '').trim();
+        const screen = hmiConfig.screens?.find((s) => s.id === sid);
+        if (screen && (screen.inheritProjectLayout === false || screenHasCompositeTiles(screen))) {
+          closeHmiRoomPopup();
+          navigateHmiView(sid);
+          return;
+        }
         openHmiAreaPopup(data.screenId, { force: true }).catch(console.error);
       } else if (data.type === 'mv-hmi-open-room' && data.roomNum) {
         const n = Math.trunc(Number(data.roomNum));
@@ -1227,8 +1332,22 @@ window.MooreviewHmi = (function () {
         if (hmiPopupMessageIsDuplicate(key)) return;
         ensureHmiConfigLoaded();
         openHmiRoomPopup(data.roomNum).catch(console.error);
+      } else if (data.type === 'mv-composer-mode' && data.mode) {
+        void openComposerEditing(data.mode);
       }
     });
+  }
+
+  async function openComposerEditing(mode) {
+    const m = normalizeComposerMode(mode);
+    if (!isHmiSetupOpen()) {
+      openSetupPopup();
+      await openSetupPopupLoad();
+    }
+    if (!isHmiSetupOpen()) return;
+    if (m === 'grid') focusComposer2dEdit();
+    else if (m === '3d') focusComposer3dPreview();
+    else focusComposerPlanPreview();
   }
 
   function wireHmiRoomPopupOnce() {
@@ -2170,6 +2289,19 @@ window.MooreviewHmi = (function () {
     }
   }
 
+  function pinHomeScreenFacility3dUrlClient(cfg) {
+    const layout3d = String(cfg?.layout?.facility3dUrl || '').trim();
+    if (!layout3d || !cfg?.screens?.length) return cfg;
+    for (const sc of cfg.screens) {
+      if (!sc || (sc.tiles || []).length) continue;
+      const isHome = sc.number === 1 || sc.isHome === true || sc.id === HOME_SCREEN_ID;
+      if (!isHome) continue;
+      if (String(sc.facility3dUrl || '').trim()) continue;
+      sc.facility3dUrl = layout3d;
+    }
+    return cfg;
+  }
+
   function copyScreenForReindex(s, number, id) {
     return {
       id,
@@ -2194,6 +2326,11 @@ window.MooreviewHmi = (function () {
       offsetY: s.offsetY,
       naturalWidth: s.naturalWidth,
       naturalHeight: s.naturalHeight,
+      ...(s.inheritProjectLayout === false ? { inheritProjectLayout: false } : {}),
+      ...(String(s.facility3dUrl || '').trim()
+        ? { facility3dUrl: String(s.facility3dUrl).trim() }
+        : {}),
+      ...(s.navHidden === true ? { navHidden: true } : {}),
     };
   }
 
@@ -2337,7 +2474,8 @@ window.MooreviewHmi = (function () {
       const screen = hmiConfig.screens.find((s) => s.id === sid);
       if (composerPreviewUses3d(screen)) {
         const viewport = domGet('hmi-viewport');
-        if (viewport?.querySelector('.hmi-live-3d-frame')) return;
+        const loadKey = hmiLive3dLoadKey();
+        if (viewport?.querySelector('.hmi-live-3d-frame') && hmiLoadedUrl === loadKey) return;
       } else if (composerPreviewUsesPlan(screen)) {
         const viewport = domGet('hmi-viewport');
         if (viewport?.querySelector('.hmi-live-plan-frame')) return;
@@ -2927,6 +3065,7 @@ window.MooreviewHmi = (function () {
       fit: layout.fit,
     };
     for (const s of cfg.screens) {
+      if (s.inheritProjectLayout === false) continue;
       Object.assign(s, patch);
       if (opts.prune) pruneTilesToGrid(s);
     }
@@ -2981,7 +3120,7 @@ window.MooreviewHmi = (function () {
     applyProjectLayoutToAllScreens(cfg, cfg.layout);
   }
 
-  const HMI_COMPOSER_MODE_IDS = ['proj-hmi-composer-mode', 'hmi-composer-mode'];
+  const HMI_COMPOSER_MODE_IDS = ['hmi-composer-mode'];
   const HMI_3D_DEFAULT_URL = '/samples/assisted-living-ortho-3d.html';
   const HMI_PLAN_DEFAULT_URL = '/mv-draw?embedded=1';
 
@@ -2992,16 +3131,42 @@ window.MooreviewHmi = (function () {
     return 'grid';
   }
 
-  function hmi3dFrameUrl() {
-    const url = String(
+  function layoutFacility3dUrl() {
+    return String(
       hmiConfig?.layout?.facility3dUrl
       || lastSettings()?.hmi?.layout?.facility3dUrl
-      || HMI_3D_DEFAULT_URL,
+      || '',
     ).trim();
+  }
+
+  /** Screen-level 3D URL with no tile grid (Putnam fleet map, cloud home fleet view). */
+  function screenUsesDedicated3d(screen) {
+    if (!screen) return false;
+    const url = String(screen.facility3dUrl || '').trim();
+    if (!url) return false;
+    return !(screen.tiles || []).length;
+  }
+
+  /** Home / plant overview — layout facility3dUrl when screen has no tiles of its own. */
+  function screenUsesHomeLayout3d(screen) {
+    if (!screen || screenUsesDedicated3d(screen)) return false;
+    const isHome = screen.id === 'screen_1' || screen.isHome === true;
+    if (!isHome) return false;
+    const layout3d = layoutFacility3dUrl();
+    if (!layout3d) return false;
+    if (getComposerMode() === '3d') return true;
+    return !(screen.tiles || []).length;
+  }
+
+  function hmi3dFrameUrl(screen) {
+    screen = screen ?? (typeof viewedHmiScreen === 'function' ? viewedHmiScreen() : null);
+    const screenUrl = String(screen?.facility3dUrl || '').trim();
+    if (screenUrl) return screenUrl;
+    const url = String(layoutFacility3dUrl() || HMI_3D_DEFAULT_URL).trim();
     return url || HMI_3D_DEFAULT_URL;
   }
 
-  function resolveFacility3dSrc(url) {
+  function resolveFacility3dSrc(url, opts = {}) {
     const raw = String(url || '').trim();
     if (!raw) return '';
     if (/^https?:\/\//i.test(raw)) return raw;
@@ -3009,26 +3174,38 @@ window.MooreviewHmi = (function () {
     const path = raw.startsWith('/') ? raw : `/${raw}`;
     const apiBase = base || '/api';
     const sep = path.includes('?') ? '&' : '?';
-    return `${path}${sep}mvApi=${encodeURIComponent(apiBase)}`;
+    const parts = [`mvApi=${encodeURIComponent(apiBase)}`];
+    const screenId = String(opts.screenId || '').trim();
+    if (screenId) parts.push(`mvScreen=${encodeURIComponent(screenId)}`);
+    if (opts.bust) parts.push(`mvBust=${Date.now()}`);
+    return `${path}${sep}${parts.join('&')}`;
   }
 
   function syncFacility3dButton() {
     const btn = domGet('btn-hmi-open-3d');
     if (!btn) return;
-    const url = String(hmi3dFrameUrl() || '').trim();
+    const screen = typeof viewedHmiScreen === 'function' ? viewedHmiScreen() : null;
+    if (isHmiViewActive() && screen && composerPreviewUses3d(screen)) {
+      btn.classList.add('view-hidden');
+      btn.disabled = true;
+      return;
+    }
+    const url = String(hmi3dFrameUrl(screen) || '').trim();
     btn.classList.toggle('view-hidden', !url);
     btn.disabled = !url;
   }
 
   function openFacility3dWindow() {
-    const url = hmi3dFrameUrl();
+    const screen = typeof viewedHmiScreen === 'function' ? viewedHmiScreen() : null;
+    const url = hmi3dFrameUrl(screen);
     if (!url) return;
-    const src = resolveFacility3dSrc(url);
+    const src = resolveFacility3dSrc(url, { screenId: screen?.id });
     window.open(src, 'mooreview-facility-3d', 'noopener,noreferrer');
   }
 
   function hmiLive3dLoadKey() {
-    return `3d|${hmi3dFrameUrl()}|display`;
+    const screen = typeof viewedHmiScreen === 'function' ? viewedHmiScreen() : null;
+    return `3d|${screen?.id || ''}|${hmi3dFrameUrl(screen)}|display`;
   }
 
   function hmiPlanFrameUrl() {
@@ -3065,17 +3242,23 @@ window.MooreviewHmi = (function () {
 
   /** Force iframe load — lazy/hidden iframes stay blank after hard refresh otherwise. */
   function ensureHmi3dFrameLoaded(frameEl, opts = {}) {
-    if (!frameEl) return;
-    const url = resolveFacility3dSrc(hmi3dFrameUrl());
+    if (!frameEl) return false;
+    const screen = opts.screen ?? (typeof viewedHmiScreen === 'function' ? viewedHmiScreen() : null);
+    const url = resolveFacility3dSrc(hmi3dFrameUrl(screen), {
+      screenId: screen?.id,
+      bust: !!opts.forceReload,
+    });
+    if (!url) return false;
     if (opts.defer) {
       scheduleHmiFrameSrc(frameEl, url, 'hmi3dSrc');
-      return;
+      return true;
     }
     const resolved = frameEl.dataset.hmi3dSrc;
     if (resolved !== url || !frameEl.getAttribute('src')) {
       frameEl.dataset.hmi3dSrc = url;
       frameEl.src = url;
     }
+    return true;
   }
 
   function ensureHmiPlanFrameLoaded(frameEl, opts = {}) {
@@ -3092,6 +3275,31 @@ window.MooreviewHmi = (function () {
     }
   }
 
+  function wireHmiPlanFrameLoadState(wrap, iframe) {
+    if (!wrap || !iframe || wrap.dataset.planLoadWired === '1') return;
+    wrap.dataset.planLoadWired = '1';
+    const clearPending = () => wrap.classList.remove('hmi-live-plan-pending');
+    const showErr = (msg) => {
+      clearPending();
+      let el = wrap.querySelector('.hmi-live-plan-error-msg');
+      if (!el) {
+        el = document.createElement('p');
+        el.className = 'panel-hint err hmi-live-plan-error-msg';
+        wrap.appendChild(el);
+      }
+      el.textContent = msg;
+    };
+    iframe.addEventListener('load', clearPending, { once: true });
+    iframe.addEventListener('error', () => {
+      showErr('Site plan failed to load. Open MV Draw from the top bar or reload the page.');
+    }, { once: true });
+    setTimeout(() => {
+      if (wrap.classList.contains('hmi-live-plan-pending')) {
+        showErr('Site plan is still loading — if this persists, restart the server and reload (Ctrl+F5).');
+      }
+    }, 20000);
+  }
+
   function syncHmiLiveDisplayHint() {
     const hint = document.querySelector('.hmi-display-hint');
     if (!hint) return;
@@ -3099,7 +3307,7 @@ window.MooreviewHmi = (function () {
     if (composerPreviewUses3d(screen)) {
       hint.innerHTML = 'Live 3D facility view — click zones for tag detail. Open <strong>Setup…</strong> for composer settings.';
     } else if (composerPreviewUsesPlan(screen)) {
-      hint.innerHTML = 'Live MV Draw site plan — open <strong>Setup…</strong> for composer settings or edit in <strong>Tools → MV Draw</strong>.';
+      hint.innerHTML = 'Live MV Draw site plan — open <strong>Setup…</strong> for composer settings or edit via the top bar <strong>MV Draw</strong> link.';
     } else if (getComposerMode() === '3d' && screen) {
       hint.innerHTML = `Live display — ${esc(screenLabel(screen))}. Area screens use the tile grid; screen 1 shows the 3D overview. Open <strong>Setup…</strong> to edit.`;
     } else {
@@ -3117,11 +3325,66 @@ window.MooreviewHmi = (function () {
       const el = domGet(id);
       if (el && el.value !== m) el.value = m;
     }
+    syncComposerPreviewModeButtons(m);
+  }
+
+  function syncComposerPreviewModeButtons(mode) {
+    const m = normalizeComposerMode(mode ?? getComposerMode());
+    document.querySelectorAll('[data-hmi-preview-mode]').forEach((btn) => {
+      const on = btn.dataset.hmiPreviewMode === m;
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
+
+  function firstComposerScreenWithTiles(cfg = hmiConfig) {
+    const areaId = cfg?.layout?.areaPopupScreens?.[0];
+    if (areaId) {
+      const area = cfg?.screens?.find((s) => s.id === areaId);
+      if (area && (area.tiles || []).length) return area;
+    }
+    return (cfg?.screens || []).find((s) => (s.tiles || []).length > 0) || null;
+  }
+
+  function screenHasCompositeTiles(screen) {
+    return !!(screen?.tiles || []).some((t) => String(t?.compositeId || '').trim());
+  }
+
+  /** Jump to 2D grid editing — composites, symbols, bindings. */
+  function focusComposer2dEdit() {
+    setComposerMode('grid');
+    const screen = activeHmiScreen();
+    const needsScreen = !screen || !(screen.tiles || []).length;
+    if (needsScreen) {
+      const target = firstComposerScreenWithTiles();
+      if (target?.id) navigateHmiPreviewEdit(target.id);
+    }
+    ensureAllCompositeTilesExploded(hmiConfig);
+    if (screenHasCompositeTiles(activeHmiScreen())) {
+      showHmiSetupMsg(
+        '2D grid — click a composite tile, then use Object type → Composite faceplate for tag prefix and bindings.',
+        false,
+      );
+    }
+  }
+
+  function focusComposer3dPreview() {
+    setComposerMode('3d');
+    const home = homeHmiScreen();
+    if (home?.id && hmiEditScreenId !== home.id) navigateHmiPreviewEdit(home.id);
+  }
+
+  function focusComposerPlanPreview() {
+    setComposerMode('plan');
+    const home = homeHmiScreen();
+    if (home?.id && hmiEditScreenId !== home.id) navigateHmiPreviewEdit(home.id);
   }
 
   function composerPreviewUses3d(screen) {
+    if (!screen) return getComposerMode() === '3d';
+    if (screenUsesDedicated3d(screen)) return true;
+    if (screenUsesHomeLayout3d(screen)) return true;
     if (getComposerMode() !== '3d') return false;
-    if (!screen) return true;
     return screen.id === 'screen_1' || screen.isHome === true;
   }
 
@@ -3129,6 +3392,13 @@ window.MooreviewHmi = (function () {
     if (getComposerMode() !== 'plan') return false;
     if (!screen) return true;
     return screen.id === 'screen_1' || screen.isHome === true;
+  }
+
+  /** True when the setup preview is showing the editable tile grid (not 3D/plan iframe). */
+  function composerTileGridEditable(screen) {
+    if (!isHmiSetupOpen()) return false;
+    screen = screen || activeHmiScreen();
+    return !composerPreviewUses3d(screen) && !composerPreviewUsesPlan(screen);
   }
 
   function applyComposerPreviewPanels(screen) {
@@ -3148,7 +3418,7 @@ window.MooreviewHmi = (function () {
       preview3d?.classList.remove('view-hidden');
       previewPlan?.classList.add('view-hidden');
       if (isHmiSetupOpen()) {
-        ensureHmi3dFrameLoaded(domGet('hmi-setup-3d-frame'), { defer: true });
+        ensureHmi3dFrameLoaded(domGet('hmi-setup-3d-frame'), { defer: true, screen });
       }
       if (headerTitle) headerTitle.textContent = '3D facility view';
       if (gridHint) {
@@ -3173,9 +3443,11 @@ window.MooreviewHmi = (function () {
       if (gridHint) {
         const mode = getComposerMode();
         if (mode === '3d') {
-          gridHint.textContent = 'Tile editor for this screen. Select screen 1 (Facility Overview) for the 3D spatial preview.';
+          gridHint.textContent = 'Tile editor for this screen — drag composites and symbols, set spans, wire bindings. Screen 1 uses the 3D preview when selected.';
         } else if (mode === 'plan') {
           gridHint.textContent = 'Tile editor for this screen. Select screen 1 (Facility Overview) for the MV Draw site plan preview.';
+        } else if (screenHasCompositeTiles(screen)) {
+          gridHint.textContent = '2D grid — composite faceplates explode to editable layers. Select a composite tile → Object type → Composite faceplate for MOTOR1/MOTOR2 prefix and bindings.';
         } else {
           gridHint.textContent = 'Grid with row/column labels — for editing only. The live HMI hides grid lines.';
         }
@@ -3189,24 +3461,42 @@ window.MooreviewHmi = (function () {
     chrome?.classList.toggle('hmi-composer-mode-3d', mode === '3d');
     chrome?.classList.toggle('hmi-composer-mode-plan', mode === 'plan');
     chrome?.classList.toggle('hmi-composer-mode-grid', mode === 'grid');
+    syncComposerPreviewModeButtons(mode);
     applyComposerPreviewPanels(screen || activeHmiScreen());
     document.querySelectorAll('.hmi-composer-mode-grid-only').forEach((el) => {
       el.classList.toggle('view-hidden', mode === '3d' || mode === 'plan');
     });
   }
 
+  function refreshLiveHmiWorkspaceFromComposer(opts = {}) {
+    if (!isHmiViewActive()) return;
+    ensureHmiConfigLoaded();
+    if (opts.syncFromSettings) {
+      syncComposerModeFromSettings({ skipReload: true });
+    }
+    syncFacility3dButton();
+    syncHmiLiveDisplayHint();
+    hmiLoadedUrl = '';
+    loadHmiScreen(true).catch(console.error);
+  }
+
   function setComposerMode(mode, opts = {}) {
     ensureHmiConfigLoaded();
     ensureHmiLayout(hmiConfig);
+    const prev = getComposerMode();
     hmiConfig.layout.composerMode = normalizeComposerMode(mode);
     syncComposerModeFields(hmiConfig.layout.composerMode);
     applyComposerModeUi();
     syncHmiLiveDisplayHint();
     if (!opts.skipDirty) markHmiDirty();
     if (isHmiSetupOpen()) scheduleHmiPreview(true);
+    if (isHmiViewActive() && prev !== getComposerMode()) {
+      hmiLoadedUrl = '';
+      loadHmiScreen(true).catch(console.error);
+    }
   }
 
-  function syncComposerModeFromSettings() {
+  function syncComposerModeFromSettings(opts = {}) {
     const prev = getComposerMode();
     const fromSettings = lastSettings()?.hmi?.layout?.composerMode;
     if (fromSettings != null && hmiConfig?.layout) {
@@ -3215,7 +3505,7 @@ window.MooreviewHmi = (function () {
     syncComposerModeFields(getComposerMode());
     applyComposerModeUi();
     syncHmiLiveDisplayHint();
-    if (isHmiViewActive() && prev !== getComposerMode()) {
+    if (!opts.skipReload && isHmiViewActive() && prev !== getComposerMode()) {
       hmiLoadedUrl = '';
       loadHmiScreen(true).catch(console.error);
     }
@@ -3238,6 +3528,25 @@ window.MooreviewHmi = (function () {
 
   function ensureScreenGridDefaults(screen) {
     if (!screen) return;
+    if (screen.inheritProjectLayout === false) {
+      const g = screenGridSpecFromScreen(screen);
+      if (!Number.isFinite(Number(screen.gridCols)) || screen.gridCols < 1) screen.gridCols = g.cols;
+      if (!Number.isFinite(Number(screen.gridRows)) || screen.gridRows < 1) screen.gridRows = g.rows;
+      if (!Number.isFinite(Number(screen.cellWidth)) || screen.cellWidth < 8) screen.cellWidth = g.cellWidth;
+      if (!Number.isFinite(Number(screen.cellHeight)) || screen.cellHeight < 8) screen.cellHeight = g.cellHeight;
+      if (!Number.isFinite(Number(screen.width)) || screen.width < 200) screen.width = g.width;
+      if (!Number.isFinite(Number(screen.height)) || screen.height < 150) screen.height = g.height;
+      if (!Number.isFinite(Number(screen.gridSize)) || screen.gridSize < 1) {
+        screen.gridSize = Math.max(g.cols, g.rows);
+      }
+      if (!Number.isFinite(Number(screen.displayMaxWidth)) || screen.displayMaxWidth < 100) {
+        screen.displayMaxWidth = g.width;
+      }
+      if (!Number.isFinite(Number(screen.displayMaxHeight)) || screen.displayMaxHeight < 100) {
+        screen.displayMaxHeight = g.height;
+      }
+      return;
+    }
     if (hmiConfig?.layout) {
       applyProjectLayoutToAllScreens(hmiConfig, hmiConfig.layout);
       return;
@@ -4093,7 +4402,15 @@ window.MooreviewHmi = (function () {
         const n = tile ? screenTileLayers(tile).length : 0;
         const placeKind = domGet('hmi-place-kind')?.value || '';
         const overlayHint = hoverCell && isRegionOverlayKind(placeKind) ? ' · placing' : '';
-        tileLabel.textContent = `Cell: row ${row + 1}, col ${col + 1} · ${n} layer(s)${overlayHint}`;
+        if (tile?.compositeId) {
+          const manifest = compositeManifestForTile(tile);
+          const label = manifest?.label || tile.compositeId;
+          const prefix = compositeInstanceTagPrefix(tile);
+          const prefixHint = prefix ? ` · prefix ${prefix}` : '';
+          tileLabel.textContent = `Cell: row ${row + 1}, col ${col + 1} · ${label}${prefixHint} · ${n} layer(s)${overlayHint}`;
+        } else {
+          tileLabel.textContent = `Cell: row ${row + 1}, col ${col + 1} · ${n} layer(s)${overlayHint}`;
+        }
       }
     }
   }
@@ -4285,6 +4602,11 @@ window.MooreviewHmi = (function () {
     updateHmiGaugeColumnPanel();
     updateHmiPushButtonPanel();
     updateHmiPilotLightPanel();
+    if (tile?.compositeId && ensureCompositeTileExploded(tile)) {
+      markHmiDirty();
+      refreshSetupTileCell(col, row, activeHmiScreen()).catch(console.error);
+    }
+    updateHmiCompositePanel();
     renderHmiObjectBindingsPanel();
     if (activeHmiComposerSection() !== 'object-type') showHmiComposerSection('object-type');
   }
@@ -4299,7 +4621,127 @@ window.MooreviewHmi = (function () {
     updateHmiGaugeColumnPanel();
     updateHmiPushButtonPanel();
     updateHmiPilotLightPanel();
+    updateHmiCompositePanel();
     renderHmiObjectBindingsPanel();
+  }
+
+  function updateHmiCompositePanel() {
+    const panel = domGet('hmi-composite-panel');
+    const idEl = domGet('hmi-composite-panel-id');
+    const hint = domGet('hmi-composite-panel-hint');
+    const prefixWrap = domGet('hmi-composite-prefix-wrap');
+    const prefixInput = domGet('hmi-composite-tag-prefix');
+    if (!panel) return;
+    if (!hmiSelectedTileCell) {
+      panel.classList.add('view-hidden');
+      if (prefixInput) prefixInput.value = '';
+      return;
+    }
+    const { col, row } = hmiSelectedTileCell;
+    const tile = getScreenTile(activeHmiScreen(), col, row);
+    const manifest = compositeManifestForTile(tile);
+    if (!tile?.compositeId || !manifest) {
+      panel.classList.add('view-hidden');
+      if (prefixInput) prefixInput.value = '';
+      return;
+    }
+    panel.classList.remove('view-hidden');
+    if (idEl) idEl.textContent = `@composite/${manifest.id} — ${manifest.label || manifest.id}`;
+    const prefix = compositeInstanceTagPrefix(tile);
+    const showPrefix = !!(manifest.defaultInstancePrefix || manifest.instanceTagPrefix
+      || Object.values(manifest.tagRoles || {}).some((r) => r.pick === 'tagId'));
+    if (prefixWrap) prefixWrap.classList.toggle('view-hidden', !showPrefix);
+    if (prefixInput && document.activeElement !== prefixInput) prefixInput.value = prefix;
+    if (hint) {
+      hint.textContent = showPrefix
+        ? 'Set tag prefix for this instance (e.g. MOTOR1 vs MOTOR2), then refresh bindings. Use Re-explode if manifest layers changed.'
+        : 'Composite faceplate — refresh bindings after manifest edits, or re-explode to reload SVG layers.';
+    }
+  }
+
+  function applyCompositeTagPrefixFromFields() {
+    if (!hmiSelectedTileCell) return false;
+    const { col, row } = hmiSelectedTileCell;
+    const tile = getScreenTile(activeHmiScreen(), col, row);
+    if (!tile?.compositeId) return false;
+    const prefixInput = domGet('hmi-composite-tag-prefix');
+    const next = String(prefixInput?.value || '').trim().toUpperCase().replace(/[^A-Z0-9_]/g, '');
+    const prev = compositeInstanceTagPrefix(tile);
+    if (next === prev) return false;
+    if (next) tile.compositeTagPrefix = next;
+    else delete tile.compositeTagPrefix;
+    repairCompositeBindings(hmiConfig);
+    markHmiDirty();
+    refreshHmiBindings(hmiSetupBindingRoot());
+    renderHmiBindingsTable();
+    renderHmiObjectBindingsPanel();
+    scheduleHmiPreview();
+    updateHmiCompositePanel();
+    return true;
+  }
+
+  function refreshSelectedCompositeBindings() {
+    if (!hmiSelectedTileCell) return;
+    applyCompositeTagPrefixFromFields();
+    repairCompositeBindings(hmiConfig);
+    markHmiDirty();
+    refreshHmiBindings(hmiSetupBindingRoot());
+    renderHmiBindingsTable();
+    renderHmiObjectBindingsPanel();
+    scheduleHmiPreview();
+    showHmiSetupMsg('Composite bindings refreshed from manifest.', false);
+  }
+
+  async function reexplodeSelectedComposite() {
+    if (!hmiSelectedTileCell) return;
+    const { col, row } = hmiSelectedTileCell;
+    const scr = activeHmiScreen();
+    const tile = getScreenTile(scr, col, row);
+    const manifest = compositeManifestForTile(tile);
+    if (!tile || !manifest) return;
+    applyCompositeTagPrefixFromFields();
+    explodeCompositeToEdit(tile, manifest);
+    markHmiDirty();
+    const cs = Math.max(1, Number(tile.colSpan) || 1);
+    const rs = Math.max(1, Number(tile.rowSpan) || 1);
+    const finish = async () => {
+      for (const part of manifest.parts) {
+        if (part?.svg && HmiView.ensureCellBindingIds) {
+          HmiView.ensureCellBindingIds(setupGridCell(col, row), col, row, part.z ?? 0);
+        }
+      }
+      repairCompositeBindings(hmiConfig);
+      refreshSetupElementIds();
+      refreshHmiBindings(hmiSetupBindingRoot());
+      renderHmiBindingsTable();
+      renderHmiObjectBindingsPanel();
+      updateHmiCompositePanel();
+      scheduleHmiPreview(true);
+      showHmiSetupMsg(`Composite “${manifest.label || manifest.id}” re-exploded at ${formatHmiCellLabel(col, row)}.`, false);
+    };
+    if (cs > 1 || rs > 1) {
+      hmiPreviewTilesKey = '';
+      await refreshHmiSetupPreview(true);
+      await finish();
+    } else {
+      await refreshSetupTileCell(col, row, scr);
+      await finish();
+    }
+  }
+
+  function bindHmiCompositePanel() {
+    const panel = domGet('hmi-composite-panel');
+    if (!panel || panel.dataset.bound === '1') return;
+    panel.dataset.bound = '1';
+    domGet('hmi-composite-tag-prefix')?.addEventListener('change', () => {
+      applyCompositeTagPrefixFromFields();
+    });
+    domGet('btn-hmi-composite-refresh-bindings')?.addEventListener('click', () => {
+      refreshSelectedCompositeBindings();
+    });
+    domGet('btn-hmi-composite-reexplode')?.addEventListener('click', () => {
+      reexplodeSelectedComposite().catch(console.error);
+    });
   }
 
   function hmiCellHasEditableLabel(cell) {
@@ -4448,17 +4890,14 @@ window.MooreviewHmi = (function () {
       tile.layers = [];
     }
     applyTileSpanToConfig(tile, colSpan, rowSpan);
-    for (const part of manifest.parts) {
-      if (!part?.svg) continue;
-      const kind = HMI_OBJ_KINDS.includes(part.kind) ? part.kind : inferObjKindFromAsset(part.svg);
-      addScreenTileLayer(scr, col, row, {
-        kind,
-        z: part.z ?? 0,
-        svg: part.svg,
-        tagId: options.tagId,
-      });
+    const tagPrefix = String(options.compositeTagPrefix || options.tagPrefix || '').trim();
+    if (tagPrefix) tile.compositeTagPrefix = tagPrefix;
+    explodeCompositeToEdit(tile, manifest);
+    if (!tile.compositeTagPrefix) {
+      const prefixMap = buildCompositeInstancePrefixMap(scr);
+      const inferred = resolveCompositeInstanceTagPrefix(tile, col, row, prefixMap);
+      if (inferred) tile.compositeTagPrefix = inferred;
     }
-    syncTileLegacyFields(tile);
     recordHmiRecentAsset(asset?.path || path);
     markHmiDirty();
     clearHmiTileSelection();
@@ -4669,6 +5108,9 @@ window.MooreviewHmi = (function () {
       return;
     }
     if (!path) return;
+    if (isMvDrawAssetPath(path)) {
+      path = mvDrawPreviewPath(path);
+    }
     if (col < 0 || col >= g.cols || row < 0 || row >= g.rows) return;
     if (isHoaSwitchAssetPath(path)) {
       assignHmiTileComposite(col, row, '@composite/switch_hoa', scr, { ...options, colSpan, rowSpan });
@@ -4868,16 +5310,21 @@ window.MooreviewHmi = (function () {
     }
   }
 
-  function moveHmiTile(fromCol, fromRow, toCol, toRow, screen) {
+  function moveHmiTile(fromCol, fromRow, toCol, toRow, screen, options = {}) {
     const scr = screen || activeHmiScreen();
-    if (!scr) return;
+    if (!scr) return false;
     const tile = ensureScreenTiles(scr).find((t) => Number(t.col) === fromCol && Number(t.row) === fromRow);
-    if (!tile) return;
+    if (!tile) return false;
     const cs = tile.colSpan || 1;
     const rs = tile.rowSpan || 1;
     if (!canPlaceTileAt(scr, toCol, toRow, cs, rs, tile)) {
-      alert('That area is occupied or the span does not fit. Choose empty cells or reduce span.');
-      return;
+      if (!options.quiet) {
+        showHmiSetupMsg(
+          `Cannot move — tile span ${cs}×${rs} does not fit at row ${toRow + 1}, column ${toCol + 1}. Try another cell or reduce span.`,
+          true,
+        );
+      }
+      return false;
     }
     clearScreenTile(scr, fromCol, fromRow);
     remapBindingsForCell(scr.id, fromCol, fromRow, toCol, toRow);
@@ -4887,7 +5334,8 @@ window.MooreviewHmi = (function () {
     ensureScreenTiles(scr).push(copy);
     syncTileLegacyFields(copy);
     markHmiDirty();
-    clearHmiTileSelection();
+    if (options.keepSelection) selectHmiTileCell(toCol, toRow);
+    else clearHmiTileSelection();
     const afterMove = () => {
       updateHmiPreviewMeta(scr);
       refreshSetupElementIds();
@@ -4903,6 +5351,21 @@ window.MooreviewHmi = (function () {
       ]).then(afterMove).catch(console.error);
     }
     refreshMainTileGrid(true);
+    return true;
+  }
+
+  function nudgeHmiTile(dCol, dRow) {
+    if (!hmiSelectedTileCell || !isHmiSetupOpen()) return false;
+    if (!composerTileGridEditable()) return false;
+    const { col, row } = hmiSelectedTileCell;
+    const ok = moveHmiTile(col, row, col + dCol, row + dRow, activeHmiScreen(), {
+      keepSelection: true,
+      quiet: true,
+    });
+    if (!ok) {
+      showHmiSetupMsg('Cannot move — blocked by grid edge or another tile.', true);
+    }
+    return ok;
   }
 
   function deleteHmiTile(col, row, screen) {
@@ -5301,6 +5764,9 @@ window.MooreviewHmi = (function () {
               classOff: 'hmi-off',
             };
             if (def.interaction) binding.interaction = def.interaction;
+            if (def.hoaValue != null) binding.hoaValue = def.hoaValue;
+            if (def.pumpIndex != null) binding.pumpIndex = def.pumpIndex;
+            if (def.tagField) binding.tagField = def.tagField;
             if (def.colors) binding.colors = [...def.colors];
             if (def.flashStates) binding.flashStates = [...def.flashStates];
             cfg.bindings.push(binding);
@@ -5310,18 +5776,30 @@ window.MooreviewHmi = (function () {
           else if (tagId && !String(binding.tagId || '').trim()) binding.tagId = tagId;
           if (def.format) binding.format = def.format;
           if (def.interaction) binding.interaction = def.interaction;
+          if (def.hoaValue != null) binding.hoaValue = def.hoaValue;
+          if (def.pumpIndex != null) binding.pumpIndex = def.pumpIndex;
+          if (def.tagField) binding.tagField = def.tagField;
           if (def.min != null) binding.min = def.min;
           if (def.max != null) binding.max = def.max;
           backfillBindingPaint(binding, def);
         }
 
         const suffixes = new Set(manifest.defaultBindings.map((d) => d.elementId));
+        const manifestPropsBySuffix = new Map();
+        for (const def of manifest.defaultBindings) {
+          if (!manifestPropsBySuffix.has(def.elementId)) {
+            manifestPropsBySuffix.set(def.elementId, new Set());
+          }
+          manifestPropsBySuffix.get(def.elementId).add(def.property);
+        }
         cfg.bindings = cfg.bindings.filter((b) => {
           if (b.screenId !== screenId) return true;
           const suf = bindingElementSuffix(b.elementId);
           if (!suffixes.has(suf)) return true;
           const parsed = HmiView.parseCellElementId?.(b.elementId);
           if (!parsed || parsed.col !== col || parsed.row !== row) return true;
+          const manifestProps = manifestPropsBySuffix.get(suf);
+          if (manifestProps && !manifestProps.has(b.property)) return true;
           return validKeys.has(`${b.elementId}|${b.property}`);
         });
       }
@@ -5337,20 +5815,28 @@ window.MooreviewHmi = (function () {
 
   function migrateHmiConfig(cfg) {
     if (!cfg || typeof cfg !== 'object') return cfg;
-    for (const s of cfg.screens || []) {
-      if (s?.svg) s.svg = resolveHmiAssetUrl(s.svg);
-      ensureScreenTiles(s);
-      ensureScreenGridDefaults(s);
-      for (const tile of s.tiles || []) syncTileLegacyFields(tile);
+    try {
+      for (const s of cfg.screens || []) {
+        if (s?.svg) s.svg = resolveHmiAssetUrl(s.svg);
+        ensureScreenTiles(s);
+        ensureScreenGridDefaults(s);
+        for (const tile of s.tiles || []) syncTileLegacyFields(tile);
+      }
+      if (window.HmiAssetPaths) window.HmiAssetPaths.migrateHmiConfigPaths(cfg);
+      migrateRoomPageHotspotsToPopup(cfg);
+      ensureAllCompositeTilesExploded(cfg);
+      repairCompositeBindings(cfg);
+      repairInvalidHmiBindings(cfg);
+      migrateZeroBasedBindingElementIds(cfg);
+      migrateBareBindingElementIds(cfg);
+      ensureHmiLayout(cfg);
+      const reindexed = reindexHmiScreensClient(cfg);
+      pinHomeScreenFacility3dUrlClient(reindexed);
+      return reindexed;
+    } catch (e) {
+      console.error('[HMI] migrate config:', e);
+      return cfg;
     }
-    if (window.HmiAssetPaths) window.HmiAssetPaths.migrateHmiConfigPaths(cfg);
-    migrateRoomPageHotspotsToPopup(cfg);
-    repairCompositeBindings(cfg);
-    repairInvalidHmiBindings(cfg);
-    migrateZeroBasedBindingElementIds(cfg);
-    migrateBareBindingElementIds(cfg);
-    ensureHmiLayout(cfg);
-    return reindexHmiScreensClient(cfg);
   }
 
   function hmiSettingsFingerprint(hmi) {
@@ -5670,40 +6156,69 @@ window.MooreviewHmi = (function () {
   }
 
   function applyServerHmiSettingsIfChanged(settingsHmi) {
-    if (!settingsHmi?.screens?.length) return false;
-    const normalized = normalizeServerHmi(settingsHmi);
-    const newCount = hmiScreenCount(normalized);
-    const curCount = hmiScreenCount(hmiConfig);
-    const newScore = hmiConfigRichness(normalized);
-    const curScore = hmiConfigRichness(hmiConfig);
-    if (newCount < curCount || (newCount === curCount && newScore <= curScore)) return false;
-    const key = hmiSettingsFingerprint(normalized);
-    if (key && key === hmiServerSettingsKey) return false;
-    hmiConfig = normalized;
-    hmiServerSettingsKey = key;
-    markHmiConfigReady();
-    hmiLoadedUrl = '';
-    d().patchLastSettings?.({ hmi: JSON.parse(JSON.stringify(hmiConfig)) });
-    syncHmiScreenBarVisibility();
-    syncComposerModeFields(getComposerMode());
-    applyComposerModeUi();
-    syncHmiLiveDisplayHint();
-    syncHmiScreenCatalogTo3dFrame();
-    return true;
+    try {
+      if (!settingsHmi?.screens?.length) return false;
+      const normalized = normalizeServerHmi(settingsHmi);
+      const newCount = hmiScreenCount(normalized);
+      const curCount = hmiScreenCount(hmiConfig);
+      const newScore = hmiConfigRichness(normalized);
+      const curScore = hmiConfigRichness(hmiConfig);
+      if (newCount < curCount || (newCount === curCount && newScore <= curScore)) return false;
+      const key = hmiSettingsFingerprint(normalized);
+      if (key && key === hmiServerSettingsKey) return false;
+      hmiConfig = normalized;
+      hmiServerSettingsKey = key;
+      markHmiConfigReady();
+      hmiLoadedUrl = '';
+      d().patchLastSettings?.({ hmi: JSON.parse(JSON.stringify(hmiConfig)) });
+      syncHmiScreenBarVisibility();
+      syncComposerModeFields(getComposerMode());
+      applyComposerModeUi();
+      syncHmiLiveDisplayHint();
+      syncHmiScreenCatalogTo3dFrame();
+      return true;
+    } catch (e) {
+      console.error('[HMI] apply server settings:', e);
+      return false;
+    }
   }
 
   function applyServerHmiSettingsForced(settingsHmi) {
-    if (!settingsHmi?.screens?.length) return false;
-    const normalized = normalizeServerHmi(settingsHmi);
-    const picked = pickRichestHmiConfig(normalized, hmiConfig);
-    if (!applyPickedHmiConfig(picked || normalized)) return false;
-    hmiLoadedUrl = '';
-    syncHmiScreenBarVisibility();
-    syncComposerModeFields(getComposerMode());
-    applyComposerModeUi();
-    syncHmiLiveDisplayHint();
-    syncHmiScreenCatalogTo3dFrame();
-    return true;
+    try {
+      if (!settingsHmi?.screens?.length) return false;
+      const normalized = normalizeServerHmi(settingsHmi);
+      const picked = pickRichestHmiConfig(normalized, hmiConfig);
+      if (!applyPickedHmiConfig(picked || normalized)) return false;
+      hmiLoadedUrl = '';
+      syncHmiScreenBarVisibility();
+      syncComposerModeFields(getComposerMode());
+      applyComposerModeUi();
+      syncHmiLiveDisplayHint();
+      syncHmiScreenCatalogTo3dFrame();
+      return true;
+    } catch (e) {
+      console.error('[HMI] force server settings:', e);
+      return false;
+    }
+  }
+
+  /** Replace in-memory HMI entirely (project open/import — never keep a richer prior project). */
+  function applyServerHmiSettingsReplace(settingsHmi) {
+    try {
+      if (!settingsHmi?.screens?.length) return false;
+      const normalized = normalizeServerHmi(settingsHmi);
+      if (!applyPickedHmiConfig(normalized)) return false;
+      hmiLoadedUrl = '';
+      syncHmiScreenBarVisibility();
+      syncComposerModeFields(getComposerMode());
+      applyComposerModeUi();
+      syncHmiLiveDisplayHint();
+      syncHmiScreenCatalogTo3dFrame();
+      return true;
+    } catch (e) {
+      console.error('[HMI] replace server settings:', e);
+      return false;
+    }
   }
 
   /** When setup opens, prefer the richest known HMI (avoid stale lastSettings wiping screens). */
@@ -5745,37 +6260,47 @@ window.MooreviewHmi = (function () {
   }
 
   function ensureHmiConfigLoaded() {
-    if (hmiConfig.screens?.length) {
-      if (!hmiConfigReady) {
-        hmiConfig = migrateHmiConfig(hmiConfig);
+    try {
+      if (hmiConfig.screens?.length) {
+        if (!hmiConfigReady) {
+          hmiConfig = migrateHmiConfig(hmiConfig);
+          repairInvalidHmiBindings(hmiConfig);
+          migrateBareBindingElementIds(hmiConfig);
+          markHmiConfigReady();
+        }
+        repairCompositeBindings(hmiConfig);
+        return;
+      }
+      if (lastSettings()?.hmi?.screens?.length) {
+        const src = lastSettings().hmi;
+        hmiConfig = migrateHmiConfig({
+          activeScreen: src.activeScreen,
+          layout: src.layout ? JSON.parse(JSON.stringify(src.layout)) : undefined,
+          screens: [...(src.screens || [])],
+          bindings: [...(src.bindings || [])],
+        });
         repairInvalidHmiBindings(hmiConfig);
         migrateBareBindingElementIds(hmiConfig);
         markHmiConfigReady();
+        repairCompositeBindings(hmiConfig);
+        return;
       }
-      repairCompositeBindings(hmiConfig);
-      return;
-    }
-    if (lastSettings()?.hmi?.screens?.length) {
-      const src = lastSettings().hmi;
-      hmiConfig = migrateHmiConfig({
-        activeScreen: src.activeScreen,
-        layout: src.layout ? JSON.parse(JSON.stringify(src.layout)) : undefined,
-        screens: [...(src.screens || [])],
-        bindings: [...(src.bindings || [])],
-      });
-      repairInvalidHmiBindings(hmiConfig);
-      migrateBareBindingElementIds(hmiConfig);
+      hmiConfig = demoHmiConfig();
       markHmiConfigReady();
-      repairCompositeBindings(hmiConfig);
-      return;
+    } catch (e) {
+      console.error('[HMI] config load:', e);
+      if (!hmiConfig.screens?.length) {
+        hmiConfig = demoHmiConfig();
+        markHmiConfigReady();
+      }
     }
-    hmiConfig = demoHmiConfig();
-    markHmiConfigReady();
   }
 
   function hoaCycleContext(cell) {
     if (cell?.closest('#hmi-setup-preview')) return 'setup';
-    if (cell?.closest('#hmi-viewport') || cell?.closest('#hmi-room-popup')) return 'live';
+    if (cell?.closest('#hmi-viewport') || cell?.closest('#hmi-room-popup') || cell?.closest('#hmi-room-popup-main')) {
+      return 'live';
+    }
     return null;
   }
 
@@ -5802,8 +6327,10 @@ window.MooreviewHmi = (function () {
     const onNavigate = hmiNavigateHandlerForRoot(root);
     const onOpenRoom = hmiOpenRoomHandlerForRoot(root);
     HmiView.wireNavButtons?.(grid, onNavigate, onOpenRoom);
+    if (grid.classList.contains('hmi-tile-grid-editable')) return;
     const tagTypeFor = (tagId) => hmiBindingTagType(tagId);
     HmiView.wireHoaSwitches?.(grid, handleHoaSwitchCycle);
+    HmiView.wireHoaModeButtons?.(grid, bindings, tagTypeFor, handleHoaModeSelect);
     HmiView.wireBoolCommandButtons?.(grid, bindings, tagTypeFor, handleBoolCommandPulse);
     HmiView.wireBoolToggleButtons?.(grid, bindings, tagTypeFor, handleBoolCommandToggle);
     HmiView.wireState3Readouts?.(grid, bindings, tagTypeFor, handleHoaSwitchCycle);
@@ -5861,9 +6388,11 @@ window.MooreviewHmi = (function () {
     const stage = root.closest?.('.hmi-screen-stage') || root;
     const map = new Map();
     for (const b of bindings || []) {
-      if (b.property !== 'state3' || !b.tagId) continue;
+      if (b.property !== 'state3' && b.property !== 'fill5') continue;
+      if (!b.tagId) continue;
       const parsed = HmiView.parseCellElementId?.(b.elementId);
       if (!parsed || parsed.col == null || parsed.row == null) continue;
+      if (b.property === 'fill5') continue;
       map.set(`${parsed.col},${parsed.row}`, b.tagId);
       const cell = stage.querySelector(
         `.hmi-tile-cell[data-col="${parsed.col}"][data-row="${parsed.row}"]`
@@ -5875,6 +6404,31 @@ window.MooreviewHmi = (function () {
       grid._hmiHoaTagByCell = map;
       HmiView.markHoaSwitchCellsInteractive?.(grid);
     }
+  }
+
+  function handleHoaModeSelect(tagId, value, el) {
+    if (!tagId) return;
+    const idx = Math.max(0, Math.min(2, Math.trunc(Number(value) || 0)));
+    const ctx = hmiInteractionContext(el);
+    if (ctx === 'setup') {
+      hmiBindingTestValues[tagId] = idx;
+      const previewRoot = hmiSetupBindingRoot();
+      if (previewRoot) refreshHmiBindings(previewRoot);
+      return;
+    }
+    if (ctx !== 'live') return;
+    pendingHoaModeValues.set(tagId, idx);
+    applyHmiTagWrite(tagId, idx)
+      .then(() => {
+        pendingHoaModeValues.delete(tagId);
+        if (hmiAreaPopupScreenId && hmiAreaPopupGrid) refreshHmiAreaPopupBindings();
+        else if (hmiSvgRoot) refreshHmiBindings(hmiSvgRoot);
+      })
+      .catch((err) => {
+        pendingHoaModeValues.delete(tagId);
+        console.error(err);
+        if (hmiSvgRoot) refreshHmiBindings(hmiSvgRoot);
+      });
   }
 
   function handleHoaSwitchCycle(tagId, nextValue, cell) {
@@ -5907,6 +6461,27 @@ window.MooreviewHmi = (function () {
   }
 
   const hmiBoolPulseWriteChains = new Map();
+  /** Optimistic HOA after Hand/Auto/Off click until live telemetry catches up. */
+  const pendingHoaModeValues = new Map();
+
+  function liveHoaModeValue(motorNum) {
+    const hoaTag = motorNum === 2 ? 'MOTOR2_HOA' : 'MOTOR1_HOA';
+    if (pendingHoaModeValues.has(hoaTag)) return pendingHoaModeValues.get(hoaTag);
+    return liveNumericTagValue(hoaTag);
+  }
+
+  /** Hand START/STOP: prefer faceplate HOA state over stale telemetry. */
+  function hoaModeForPumpPulse(tagId, el) {
+    const motorNum = String(tagId || '').startsWith('MOTOR2_') ? 2 : 1;
+    const hoaTag = motorNum === 2 ? 'MOTOR2_HOA' : 'MOTOR1_HOA';
+    if (pendingHoaModeValues.has(hoaTag)) return pendingHoaModeValues.get(hoaTag);
+    const cell = el?.closest?.('.hmi-tile-cell');
+    if (cell?.dataset?.hoaState != null && cell.dataset.hoaState !== '') {
+      const st = Math.trunc(Number(cell.dataset.hoaState));
+      if (st >= 0 && st <= 2) return st;
+    }
+    return liveNumericTagValue(hoaTag);
+  }
 
   function queueHmiBoolPulseWrite(tagId, value) {
     const prev = hmiBoolPulseWriteChains.get(tagId) || Promise.resolve();
@@ -5934,6 +6509,30 @@ window.MooreviewHmi = (function () {
       return;
     }
     if (ctx !== 'live') return;
+
+    const handWrite = HmiView.resolveHandModePumpWrite?.(
+      tagId,
+      pressed,
+      hoaModeForPumpPulse(tagId, el),
+    );
+    if (handWrite?.skip) return;
+    if (handWrite?.tagId) {
+      const handChain = handWrite.hoaTag
+        ? applyHmiTagWrite(handWrite.hoaTag, 2)
+          .then(() => applyHmiTagWrite(handWrite.tagId, handWrite.value))
+        : applyHmiTagWrite(handWrite.tagId, handWrite.value);
+      handChain
+        .then(() => {
+          if (hmiAreaPopupScreenId && hmiAreaPopupGrid) refreshHmiAreaPopupBindings();
+          else if (hmiSvgRoot) refreshHmiBindings(hmiSvgRoot);
+        })
+        .catch((err) => {
+          console.error(err);
+          if (hmiSvgRoot) refreshHmiBindings(hmiSvgRoot);
+        });
+      return;
+    }
+
     queueHmiBoolPulseWrite(tagId, !!pressed);
   }
 
@@ -6173,7 +6772,9 @@ window.MooreviewHmi = (function () {
     }
     const loadKey = hmiLive3dLoadKey();
     if (!force && hmiLoadedUrl === loadKey && viewport.querySelector('.hmi-live-3d-frame')) {
-      return;
+      const frame = viewport.querySelector('.hmi-live-3d-frame');
+      const want = resolveFacility3dSrc(hmi3dFrameUrl(screen), { screenId: screen?.id });
+      if (frame?.dataset?.hmi3dSrc === want && frame.getAttribute('src')) return;
     }
     const token = ++hmiLiveLoadToken;
     viewport.innerHTML = '';
@@ -6184,11 +6785,40 @@ window.MooreviewHmi = (function () {
     iframe.title = '3D facility view';
     wrap.appendChild(iframe);
     viewport.appendChild(wrap);
-    ensureHmi3dFrameLoaded(iframe);
+    const url = resolveFacility3dSrc(hmi3dFrameUrl(screen), {
+      screenId: screen?.id,
+      bust: !!force,
+    });
+    if (!url) {
+      wrap.classList.remove('hmi-live-3d-pending');
+      wrap.innerHTML = '<p class="panel-hint err">No 3D view URL for this screen. Re-import <strong>putnam-county.est.json</strong> or set <strong>facility3dUrl</strong> in HMI Setup.</p>';
+      hmiLoadedUrl = loadKey;
+      hmiSvgRoot = null;
+      syncHmiLiveDisplayHint();
+      updateMainHmiTitle(screen);
+      renderHmiNavBar();
+      refreshHmiAlarmSidebar();
+      return;
+    }
+    if (!ensureHmi3dFrameLoaded(iframe, { screen, forceReload: force })) {
+      wrap.classList.remove('hmi-live-3d-pending');
+      wrap.innerHTML = '<p class="panel-hint err">3D view URL is invalid. Check HMI Setup composer settings.</p>';
+      return;
+    }
     iframe.addEventListener('load', () => {
       wrap.classList.remove('hmi-live-3d-pending');
       syncHmiPollConfigTo3dFrame();
     }, { once: false });
+    iframe.addEventListener('error', () => {
+      wrap.classList.remove('hmi-live-3d-pending');
+      let el = wrap.querySelector('.hmi-live-3d-error-msg');
+      if (!el) {
+        el = document.createElement('p');
+        el.className = 'panel-hint err hmi-live-3d-error-msg';
+        wrap.appendChild(el);
+      }
+      el.textContent = `3D view failed to load (${url}). Hard refresh (Ctrl+F5) or open ${url} in a new tab.`;
+    }, { once: true });
     syncHmiPollConfigTo3dFrame();
     if (token !== hmiLiveLoadToken) return;
     hmiLoadedUrl = loadKey;
@@ -6217,13 +6847,14 @@ window.MooreviewHmi = (function () {
     const token = ++hmiLiveLoadToken;
     viewport.innerHTML = '';
     const wrap = document.createElement('div');
-    wrap.className = 'hmi-live-plan-wrap';
+    wrap.className = 'hmi-live-plan-wrap hmi-live-plan-pending';
     const iframe = document.createElement('iframe');
     iframe.className = 'hmi-live-plan-frame';
     iframe.title = 'MV Draw site plan';
     wrap.appendChild(iframe);
     viewport.appendChild(wrap);
     ensureHmiPlanFrameLoaded(iframe);
+    wireHmiPlanFrameLoadState(wrap, iframe);
     if (token !== hmiLiveLoadToken) return;
     hmiLoadedUrl = loadKey;
     hmiSvgRoot = null;
@@ -6338,7 +6969,7 @@ window.MooreviewHmi = (function () {
     }
     ensureScreenTiles(screen);
     ensureScreenGridDefaults(screen);
-    if (getComposerMode() === '3d' && composerPreviewUses3d(screen)) {
+    if (composerPreviewUses3d(screen)) {
       applyComposerPreviewPanels(screen);
       if (meta) {
         meta.textContent = `3D composer · ${screenLabel(screen)} · spatial facility preview`;
@@ -9194,8 +9825,11 @@ window.MooreviewHmi = (function () {
 
   function handleHmiGridCellClick(col, row, e) {
     if (!Number.isFinite(col) || !Number.isFinite(row)) return;
-    if (getComposerMode() !== 'grid') {
-      showHmiSetupMsg('Tile editing is disabled in 3D composer mode. Switch to Grid in Project ▾ menu.', true);
+    if (!composerTileGridEditable()) {
+      showHmiSetupMsg(
+        'Tile editing is disabled while the 3D or plan preview is active. Use 2D grid or select an area screen.',
+        true,
+      );
       return;
     }
     const placeKind = domGet('hmi-place-kind')?.value || '';
@@ -9243,6 +9877,13 @@ window.MooreviewHmi = (function () {
       return;
     }
 
+    if (hmiSelectedTileCell) {
+      const { col: fromCol, row: fromRow } = hmiSelectedTileCell;
+      if (fromCol === col && fromRow === row) return;
+      moveHmiTile(fromCol, fromRow, col, row, scr);
+      return;
+    }
+
     if (isDirectPlaceKind(placeKind)) {
       if (canDirectPlaceKind(placeKind)) {
         assignHmiTileAsset(col, row, '', scr, {
@@ -9251,13 +9892,6 @@ window.MooreviewHmi = (function () {
           clickRow,
         });
       }
-      return;
-    }
-
-    if (hmiSelectedTileCell) {
-      const { col: fromCol, row: fromRow } = hmiSelectedTileCell;
-      if (fromCol === col && fromRow === row) return;
-      moveHmiTile(fromCol, fromRow, col, row, scr);
       return;
     }
 
@@ -9398,10 +10032,17 @@ window.MooreviewHmi = (function () {
     if (document.body.dataset.hmiSetupTileKeysBound === '1') return;
     document.body.dataset.hmiSetupTileKeysBound = '1';
     document.addEventListener('keydown', (e) => {
-      if (!isHmiSetupOpen() || !hmiSelectedTileCell) return;
-      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      if (!isHmiSetupOpen() || !hmiSelectedTileCell || !composerTileGridEditable()) return;
       const ae = document.activeElement;
       if (ae && (ae.matches('input, select, textarea') || ae.isContentEditable)) return;
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        const dCol = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0;
+        const dRow = e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0;
+        nudgeHmiTile(dCol, dRow);
+        return;
+      }
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
       e.preventDefault();
       deleteHmiTile(hmiSelectedTileCell.col, hmiSelectedTileCell.row, activeHmiScreen());
     });
@@ -9474,6 +10115,12 @@ window.MooreviewHmi = (function () {
       showGridChrome: readShowGridFromField(),
       showLiveStatus: readShowLiveStatusFromField(),
       composerMode: normalizeComposerMode(domGet('hmi-composer-mode')?.value || cur.composerMode),
+      ...(String(cur.facility3dUrl || '').trim() ? { facility3dUrl: String(cur.facility3dUrl).trim() } : {}),
+      ...(String(cur.facilityPlanUrl || '').trim() ? { facilityPlanUrl: String(cur.facilityPlanUrl).trim() } : {}),
+      ...(Array.isArray(cur.areaPopupScreens) && cur.areaPopupScreens.length
+        ? { areaPopupScreens: [...cur.areaPopupScreens] }
+        : {}),
+      ...(cur.roomPopup && typeof cur.roomPopup === 'object' ? { roomPopup: { ...cur.roomPopup } } : {}),
     };
     hmiConfig.layout = layout;
     applyProjectLayoutToAllScreens(hmiConfig, layout);
@@ -10380,6 +11027,8 @@ window.MooreviewHmi = (function () {
     bindHmiComposerColSplitter();
     syncHmiConfigForSetupOpen();
     if (!hmiConfig.screens?.length) hmiConfig = demoHmiConfig();
+    ensureAllCompositeTilesExploded(hmiConfig);
+    repairCompositeBindings(hmiConfig);
     if (!hmiEditScreenId || !hmiConfig.screens.some((s) => s.id === hmiEditScreenId)) {
       hmiEditScreenId = HOME_SCREEN_ID;
     }
@@ -10400,11 +11049,12 @@ window.MooreviewHmi = (function () {
     for (const screen of hmiConfig.screens) {
       ensureScreenTiles(screen);
       ensureScreenGridDefaults(screen);
-      pruneTilesToGrid(screen);
+      if (screen.inheritProjectLayout !== false) pruneTilesToGrid(screen);
     }
     repairCompositeBindings(hmiConfig);
     syncMultiPageDisplayLayout(hmiConfig);
     hmiConfig = reindexHmiScreensClient(hmiConfig);
+    pinHomeScreenFacility3dUrlClient(hmiConfig);
     ensureHmiLayout(hmiConfig);
     hmiConfig.activeScreen = readStartingScreenFromSetup();
     return true;
@@ -10727,8 +11377,13 @@ window.MooreviewHmi = (function () {
     domGet('hmi-composer-mode')?.addEventListener('change', (e) => {
       setComposerMode(e.target.value);
     });
-    domGet('proj-hmi-composer-mode')?.addEventListener('change', (e) => {
-      setComposerMode(e.target.value);
+    document.querySelectorAll('[data-hmi-preview-mode]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const mode = btn.dataset.hmiPreviewMode;
+        if (mode === 'grid') focusComposer2dEdit();
+        else if (mode === '3d') focusComposer3dPreview();
+        else if (mode === 'plan') focusComposerPlanPreview();
+      });
     });
     ['hmi-screen-fit', 'hmi-place-kind'].forEach((id) => {
       domGet(id)?.addEventListener('change', () => {
@@ -10846,6 +11501,7 @@ window.MooreviewHmi = (function () {
     bindHmiGaugeColumnPanel();
     bindHmiPushButtonPanel();
     bindHmiPilotLightPanel();
+    bindHmiCompositePanel();
     bindHmiObjectBindingsPanel();
     domGet('btn-hmi-delete-tile')?.addEventListener('click', () => {
       if (!hmiSelectedTileCell) {
@@ -10981,6 +11637,7 @@ window.MooreviewHmi = (function () {
     const shell = hmiSetupShell();
     if (shell) shell.classList.add('view-hidden');
     showHmiSetupMsg('');
+    refreshLiveHmiWorkspaceFromComposer({ syncFromSettings: true });
     return true;
   }
 
@@ -10988,11 +11645,8 @@ window.MooreviewHmi = (function () {
     hmiDirty = false;
     invalidateHmiConfigReady();
     const settingsHmi = data?.settings?.hmi;
-    const picked = pickRichestHmiConfig(settingsHmi, hmiConfig);
-    if (picked && applyPickedHmiConfig(picked)) {
-      /* applied richest snapshot */
-    } else if (settingsHmi?.screens?.length) {
-      applyServerHmiSettingsForced(settingsHmi);
+    if (settingsHmi?.screens?.length) {
+      applyServerHmiSettingsReplace(settingsHmi);
     } else {
       hmiConfig = demoHmiConfig();
       markHmiConfigReady();
@@ -11020,6 +11674,15 @@ window.MooreviewHmi = (function () {
   }
 
   function handleDashboardPoll(data) {
+    if (!hmiMainInitialized) return;
+    try {
+      handleDashboardPollInner(data);
+    } catch (e) {
+      console.error('[HMI] dashboard poll:', e);
+    }
+  }
+
+  function handleDashboardPollInner(data) {
     let hmiSettingsChanged = false;
     const settingsHmi = data.settings?.hmi;
     if (settingsHmi?.screens?.length && shouldUpgradeHmiFromServer(settingsHmi)) {
@@ -11119,6 +11782,11 @@ window.MooreviewHmi = (function () {
     navigateHmiView(sid);
   }
 
+  /** After returning from MV Draw or bfcache restore — resync plan/3D with current project. */
+  function refreshAfterPageRestore() {
+    refreshLiveHmiWorkspaceFromComposer({ syncFromSettings: true });
+  }
+
   return {
     init,
     initMainHmi,
@@ -11150,7 +11818,9 @@ window.MooreviewHmi = (function () {
     reindexHmiScreensClient,
     getComposerMode,
     setComposerMode,
+    openComposerEditing,
     syncComposerModeFromSettings,
+    refreshAfterPageRestore,
     HOME_SCREEN_ID,
     HMI_COMPOSER_VERSION,
   };

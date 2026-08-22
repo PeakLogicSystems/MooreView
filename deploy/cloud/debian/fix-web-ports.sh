@@ -34,6 +34,7 @@ if command -v ufw >/dev/null 2>&1; then
   ufw allow 443/tcp comment 'HTTPS'
   ufw allow "${MOOREVIEW_PORT}/tcp" comment 'MooreVIEW direct' || true
   ufw allow 1883/tcp comment 'MQTT' || true
+  ufw allow 8883/tcp comment 'MQTT TLS' || true
   ufw --force enable || true
   ufw status verbose || ufw status
 else
@@ -53,8 +54,9 @@ log "=== nginx ==="
 apt-get update -qq
 apt-get install -y -qq nginx
 
-if [[ -f "${INSTALL_DIR}/deploy/cloud/debian/nginx-mooreview-saas.conf" ]] && [[ "$MOOREVIEW_PORT" == "3100" ]]; then
-  cp "${INSTALL_DIR}/deploy/cloud/debian/nginx-mooreview-saas.conf" "$NGINX_SITE"
+if [[ -f "${INSTALL_DIR}/deploy/cloud/debian/write-nginx-saas-site.sh" ]] && [[ "$MOOREVIEW_PORT" == "3100" ]]; then
+  MOOREVIEW_DOMAIN="$DOMAIN" MOOREVIEW_SAAS_PORT="$MOOREVIEW_PORT" \
+    bash "${INSTALL_DIR}/deploy/cloud/debian/write-nginx-saas-site.sh"
 elif [[ -f "${INSTALL_DIR}/deploy/cloud/debian/nginx-mooreview-domain.conf" ]]; then
   cp "${INSTALL_DIR}/deploy/cloud/debian/nginx-mooreview-domain.conf" "$NGINX_SITE"
   sed -i "s/mooreview.io/${DOMAIN}/g" "$NGINX_SITE"

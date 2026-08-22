@@ -7,17 +7,23 @@ window.MvDrawHelp = (function () {
       title: 'Getting started',
       html: `
         <p>MV Draw is a scaled site-plan editor for septic and DWTS layouts. Place tanks, lift stations, ATU trains, and drip dispersal on a calibrated background, then export PDF or DXF for submittals.</p>
-        <h4>Typical workflow</h4>
+        <h4>Typical workflow (blank sheet)</h4>
         <ol>
-          <li><strong>File → Open</strong> or start a new layout.</li>
-          <li><strong>Background…</strong> — import a scanned site plan (PNG/JPG).</li>
-          <li><strong>Calibrate</strong> — click two points with a known distance to set scale.</li>
-          <li><strong>Extents</strong> — click opposite corners of the plot boundary (used for Fit and export crop).</li>
-          <li>Pick symbols from the library, <strong>Place</strong> on canvas, <strong>Connect</strong> ports for piping.</li>
-          <li><strong>File → Save</strong> or <strong>Save as…</strong>, then <strong>PDF</strong> / <strong>DXF</strong> export.</li>
-          <li><strong>File → Save to MooreVIEW project…</strong> — embed the site plan in the open <code>.est</code> snapshot and link it to the HMI composer (<strong>Plan</strong> mode).</li>
+          <li><strong>File → New</strong> (or <strong>Save as…</strong> to name the file).</li>
+          <li><strong>Workspace</strong> — pick sheet <strong>A–D</strong> and plot scale (<em>1 in =</em> ft). This sets drawing size and scale. New projects start on <strong>Arch D</strong> at 1 in = 10 ft.</li>
+          <li><strong>Place</strong> symbols from the library and <strong>Connect</strong> ports (pipes or electric).</li>
+          <li><strong>File → Save</strong>, then <strong>PDF</strong> / <strong>DXF</strong> when ready.</li>
         </ol>
-        <p>Projects use the <code>mooreview-mvdraw</code> JSON format. MooreVIEW <code>.est</code> files may embed the same data under <code>mvDraw</code>.</p>
+        <h4>Over a scanned site plan</h4>
+        <ol>
+          <li><strong>Background…</strong> — import PNG/JPG.</li>
+          <li><strong>Calibrate</strong> — two known points + distance (sets true-world scale).</li>
+          <li>Optional: <strong>Extents</strong> or sheet <strong>A–D</strong> for export crop.</li>
+          <li>Place and connect symbols as above.</li>
+        </ol>
+        <p>Projects use the <code>mooreview-mvdraw</code> JSON format. Portable MooreVIEW <code>.est.zip</code> archives store layouts under <code>mv-draw/doc.json</code>.</p>
+        <h4>Top bar</h4>
+        <p>Left to right: <strong>File</strong> and <strong>Composer</strong> mode, project name, drawing tools (Select, Connect, Snap, export…), then <strong>Help</strong> and <strong>Close</strong> on the right.</p>
       `,
     },
     {
@@ -79,7 +85,7 @@ window.MvDrawHelp = (function () {
           <tr><td><strong>Open…</strong></td><td>Saved server projects or a local <code>.mvdraw.json</code> file.</td></tr>
           <tr><td><strong>Save</strong></td><td>Writes the active session project.</td></tr>
           <tr><td><strong>Save as…</strong></td><td>Named copy under <code>data/mv-draw/projects</code>.</td></tr>
-          <tr><td><strong>Save to MooreVIEW project…</strong></td><td>Aligns name with the open MooreVIEW project, updates <code>project.est.json</code>, and links the HMI composer to this plan.</td></tr>
+          <tr><td><strong>Save to MooreVIEW project…</strong></td><td>Aligns name with the open MooreVIEW project, embeds the plan in the active <code>.est.zip</code>, and links the HMI composer to Plan mode.</td></tr>
           <tr><td><strong>Load from MooreVIEW project</strong></td><td>Replace the active layout with the <code>mvDraw</code> section from the open <code>.est</code> snapshot.</td></tr>
           <tr><td><strong>PDF</strong></td><td>Vector layout download (respects extents). Use the <strong>Landscape</strong> / <strong>Portrait</strong> selector beside the export buttons.</td></tr>
           <tr><td><strong>DXF</strong></td><td>CAD export (basic R12-style polylines). Plot boundary respects the same orientation.</td></tr>

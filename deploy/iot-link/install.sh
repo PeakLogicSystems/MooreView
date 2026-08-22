@@ -13,7 +13,7 @@ INSTALL_DIR="${MOOREVIEW_INSTALL_DIR:-/opt/mooreview}"
 SOURCE_DIR="${MOOREVIEW_SOURCE:-$REPO_ROOT}"
 ENV_FILE="${MOOREVIEW_ENV_FILE:-/etc/mooreview/env}"
 SERVICE_USER="${MOOREVIEW_USER:-mooreview}"
-IOT_LINK_ENV_EXAMPLE="$SCRIPT_DIR/.env.example"
+IOT_LINK_ENV_EXAMPLE="${MOOREVIEW_IOT_LINK_ENV_EXAMPLE:-$SCRIPT_DIR/.env.example}"
 
 log() { printf '[iot-link-install] %s\n' "$*"; }
 die() { printf '[iot-link-install] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -57,9 +57,14 @@ bash "$DEBIAN_INSTALL"
 log "Granting serial port access to $SERVICE_USER"
 usermod -aG dialout "$SERVICE_USER" 2>/dev/null || true
 
+UNIT_SRC="$SCRIPT_DIR/mooreview-iot-link.service"
+if grep -qE '^[[:space:]]*MOOREVIEW_PRODUCT=res-pool-link' "$ENV_FILE" 2>/dev/null; then
+  UNIT_SRC="$SCRIPT_DIR/mooreview-res-pool-link.service"
+  log "Product res-pool-link — using $(basename "$UNIT_SRC")"
+fi
 log "Installing mooreview-iot-link.service"
-strip_crlf "$SCRIPT_DIR/mooreview-iot-link.service"
-sed "s|@MOOREVIEW_INSTALL_DIR@|${INSTALL_DIR}|g" "$SCRIPT_DIR/mooreview-iot-link.service" \
+strip_crlf "$UNIT_SRC"
+sed "s|@MOOREVIEW_INSTALL_DIR@|${INSTALL_DIR}|g" "$UNIT_SRC" \
   > /etc/systemd/system/mooreview-iot-link.service
 chmod 0644 /etc/systemd/system/mooreview-iot-link.service
 

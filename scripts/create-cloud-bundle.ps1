@@ -144,17 +144,19 @@ try {
 }
 
 $sizeMb = [math]::Round((Get-Item $BundlePath).Length / 1MB, 1)
+$entryMode = if ($preferCloudDeploy) { 'MongoDB multitenant SaaS (createCloudApp)' } else { 'Hybrid Studio runtime (server.js stub)' }
 $manifest = @"
-MooreVIEW Cloud SaaS droplet bundle (older fleet/sites layout)
+MooreVIEW Cloud SaaS droplet bundle
 Built: $(Get-Date -Format o)
 Archive: $BundleName
 Size: $sizeMb MB
 Source: $CloudRoot
+Mode: $entryMode
 
 Includes:
-  - Older SaaS/fleet shell: login, Sites, Assets/fleet map, Team, CMMS, Studio
+  - MongoDB multitenant platform: login, Sites, fleet, Team, CMMS, Studio
   - Entry: node src/server.js (createCloudApp) on port 3100
-  - Remote cameras / site agent hub APIs
+  - Remote cameras / site agent hub APIs (HMI iframe + cloud player)
   - install-saas.sh -> mooreview-saas.service (ExecStart=src/server.js)
 
 WinSCP: upload to /tmp/, then:

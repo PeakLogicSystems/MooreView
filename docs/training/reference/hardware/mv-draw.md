@@ -1,6 +1,6 @@
 # MV Draw
 
-Scaled site-plan layout editor for septic system design. Ships as a MooreVIEW module with a standalone UI at `/mv-draw` and optional embed in `.est` project files.
+Scaled site-plan layout editor for septic system design. Ships as a mooreVIEW module with a standalone UI at `/mv-draw` and optional embed in `.est` project files.
 
 ## Features (current)
 
@@ -14,16 +14,28 @@ Scaled site-plan layout editor for septic system design. Ships as a MooreVIEW mo
 - Background image upload (PNG/JPG)
 - **File menu** — New, Open (server library or local `.mvdraw.json`), Save, Save as, **Help**
 - In-app **Help** dialog (<kbd>F1</kbd>) — tools, symbols, snap/align, shortcuts
-- Save/load `.mvdraw` projects and MooreVIEW `.est` integration (`mvDraw` section)
+- Save/load `.mvdraw` projects and mooreVIEW `.est` integration (`mvDraw` section)
 - PDF export (vector layout + optional background)
 - DXF export (lines, polylines, blocks — basic R12-style)
+
+## Top bar layout
+
+The header reads left to right:
+
+1. **mooreVIEW** (home link) · **File** menu · **Composer** mode (2D grid / 3D / Plan)
+2. Current project name and saved path
+3. **MV Draw** title
+4. **Drawing toolbar** — Select, Rotate, Stretch, Place, Connect, Calibrate, Extents, Snap, Undo/Redo, export (PDF/DXF), etc.
+5. **Help**, version, **Close** (right)
+
+Tools flow from the left; status and Close stay pinned on the right. Press **F1** for in-app help.
 
 ## Roadmap
 
 - DXF/DWG background import
 - Dimension annotations and title block templates
 - Setback advisory overlays
-- Link diagram nodes to MooreVIEW tags / Parc devices
+- Link diagram nodes to mooreVIEW tags / Parc devices
 
 ## API
 
@@ -58,7 +70,7 @@ Scaled site-plan layout editor for septic system design. Ships as a MooreVIEW mo
 
 One JSON file carries the full project plus embedded MV Draw background images:
 
-- **MooreVIEW:** **Project → Export project file…** → `name.mvbundle` (tags, drivers, program, HMI, settings, site plan, backgrounds)
+- **mooreVIEW:** **Project → Export project file…** → `name.mvbundle` (tags, drivers, program, HMI, settings, site plan, backgrounds)
 - **MV Draw:** **File → Export package…** → `name.mvbundle` (layout + backgrounds)
 - **Import:** accepts `.mvbundle`, legacy `.est.json`, and `.mvdraw.json`
 
@@ -73,4 +85,4 @@ One JSON file carries the full project plus embedded MV Draw background images:
 }
 ```
 
-MooreVIEW `.est` files may still include an optional top-level `mvDraw` object (same shape as inside a bundle `doc`).
+mooreVIEW `.est` files may still include an optional top-level `mvDraw` object (same shape as inside a bundle `doc`).

@@ -17,8 +17,8 @@ const WIZARD_TRANSPORT_GROUPS = [
   },
   {
     id: 'mqtt_parc',
-    label: 'MQTT Parc — Arduino Opta',
-    hint: 'Remote ST on Opta; MooreVIEW syncs tags from device telemetry',
+    label: 'MQTT Parc — Opta / ESP32 / Waveshare',
+    hint: 'Opta, LilyGO, Waveshare ESP32-S3-Relay-1CH-U, and other Parc peers',
   },
   {
     id: 'mqtt',
@@ -84,10 +84,12 @@ function connectionFieldSpec(preset) {
     return [
       {
         id: 'deviceId',
-        label: 'Opta device ID',
+        label: 'Parc device ID',
         type: 'text',
         default: defs.deviceId || preset?.driverId || 'opta_st_01',
-        hint: 'ATECC serial id (opta_…) from firmware /setup, or legacy opta_st_01',
+        hint: transport === 'mqtt_parc_telemetry'
+          ? 'Must match MQTT topic / uplink (e.g. dragino_01 for dragino/01/uplink)'
+          : 'Must match firmware /setup deviceId (Waveshare ws_relay_…, Opta opta_…, LilyGO eth_parc_…)',
       },
       {
         id: 'driverId',

@@ -1,15 +1,27 @@
 #include "mv_tags.h"
+#include "mv_io.h"
 #include "mv_config.h"
 #include "mv_io.h"
+#include "mv_expansions.h"
 #include <string.h>
+#include <math.h>
 
 static MvTag g_tags[MV_MAX_TAGS];
 static uint8_t g_tagCount = 0;
 static char g_registered[MV_MAX_TAGS][16];
 static uint8_t g_registeredCount = 0;
 
+static bool isGlobalTypeStr(const char* type) {
+  if (!type) return false;
+  return strcmp(type, "GLOBAL_BOOL") == 0 || strcmp(type, "GLOBAL_INT") == 0 || strcmp(type, "GLOBAL_REAL") == 0
+    || strcmp(type, "GB") == 0 || strcmp(type, "GI") == 0 || strcmp(type, "GR") == 0;
+}
+
 static MvTagKind kindFromType(const char* type) {
   if (!type) return MV_BOOL;
+  if (strcmp(type, "GLOBAL_INT") == 0 || strcmp(type, "GI") == 0) return MV_INT;
+  if (strcmp(type, "GLOBAL_REAL") == 0 || strcmp(type, "GR") == 0) return MV_REAL;
+  if (strcmp(type, "GLOBAL_BOOL") == 0 || strcmp(type, "GB") == 0) return MV_BOOL;
   if (strcmp(type, "INT") == 0) return MV_INT;
   if (strcmp(type, "REAL") == 0) return MV_REAL;
   if (strcmp(type, "TIMER") == 0) return MV_TIMER;
@@ -17,10 +29,11 @@ static MvTagKind kindFromType(const char* type) {
   if (strcmp(type, "PID") == 0) return MV_PID;
   if (strcmp(type, "AVG") == 0) return MV_AVG;
   if (strcmp(type, "FLOW") == 0) return MV_FLOW;
+  if (strcmp(type, "ALT") == 0) return MV_ALT;
   return MV_BOOL;
 }
 
-static void initTagDefaults(MvTag* t, MvTagKind kind) {
+void mvTagInitDefaults(MvTag* t, MvTagKind kind) {
   memset(t, 0, sizeof(MvTag));
   t->kind = kind;
   t->outMin = 0.0f;
@@ -39,7 +52,124 @@ static void initTagDefaults(MvTag* t, MvTagKind kind) {
   } else if (kind == MV_FLOW) {
     strcpy(t->mode, "GPM");
     t->preset = 100;
+  } else if (kind == MV_ALT) {
+    strcpy(t->mode, "ALT2");
+    t->preset = 2;
+    t->altEnabled = true;
+    t->altLevelInputMode = 0;
   }
+}
+
+static bool tagLogicBool(MvTag* t) {
+  if (!t) return false;
+  switch (t->kind) {
+    case MV_BOOL: return t->b;
+    case MV_INT: return t->i != 0;
+    case MV_TIMER: return t->tmrDone;
+    case MV_COUNTER: return t->ctrDone;
+    case MV_PID: return t->pidEnabled;
+    case MV_AVG: return t->avgReady;
+    case MV_FLOW: return t->flowReady;
+    case MV_ALT: return t->altReady;
+    default: return t->b;
+  }
+}
+
+static int tagLogicInt(MvTag* t) {
+  if (!t) return 0;
+  if (t->kind == MV_INT) return t->i;
+  if (t->kind == MV_COUNTER) return t->count;
+  if (t->kind == MV_TIMER) return (int)t->elapsed;
+  if (t->kind == MV_ALT) return (int)t->altActiveUnit;
+  return tagLogicBool(t) ? 1 : 0;
+}
+
+static float tagLogicReal(MvTag* t) {
+  if (!t) return 0.0f;
+  if (t->kind == MV_REAL) return t->r;
+  if (t->kind == MV_PID) return t->out;
+  if (t->kind == MV_AVG) return t->avgVal;
+  if (t->kind == MV_FLOW) return t->flowGpm;
+  if (t->kind == MV_ALT) return (float)t->altActiveUnit;
+  if (t->kind == MV_INT) return (float)t->i;
+  return tagLogicBool(t) ? 1.0f : 0.0f;
+}
+
+bool mvTagEffectiveBool(MvTag* t) {
+  if (!t) return false;
+  if (t->forceInput || t->forceOutput) return t->forceB;
+  return tagLogicBool(t);
+}
+
+int mvTagEffectiveInt(MvTag* t) {
+  if (!t) return 0;
+  if (t->forceInput || t->forceOutput) return t->forceI;
+  return tagLogicInt(t);
+}
+
+float mvTagEffectiveReal(MvTag* t) {
+  if (!t) return 0.0f;
+  if (t->forceInput || t->forceOutput) return t->forceR;
+  return tagLogicReal(t);
+}
+
+static void tagSetForceValue(MvTag* t, bool boolVal, int32_t intVal, float realVal) {
+  if (!t) return;
+  switch (t->kind) {
+    case MV_BOOL:
+      t->forceB = boolVal;
+      t->forceI = boolVal ? 1 : 0;
+      t->forceR = boolVal ? 1.0f : 0.0f;
+      break;
+    case MV_INT:
+      t->forceI = intVal;
+      t->forceB = intVal != 0;
+      t->forceR = (float)intVal;
+      break;
+    case MV_REAL:
+    case MV_PID:
+    case MV_AVG:
+    case MV_FLOW:
+    case MV_ALT:
+    default:
+      t->forceR = realVal;
+      t->forceB = realVal != 0.0f;
+      t->forceI = (int32_t)realVal;
+      break;
+  }
+}
+
+bool mvTagSetForce(const char* id, bool forceInput, bool forceOutput, bool hasValue, bool boolVal, int32_t intVal, float realVal) {
+  if (!id || !id[0]) return false;
+  MvTag* t = mvFindTag(id);
+  if (!t) {
+    if (mvIsPhysicalOutput(id) || mvIsPhysicalInput(id)) t = mvEnsureTag(id, MV_BOOL);
+    else return false;
+  }
+  t->forceInput = forceInput;
+  t->forceOutput = forceOutput;
+  if (hasValue) tagSetForceValue(t, boolVal, intVal, realVal);
+  // Mirror forced value into tag storage so ST bytecode sees it (TurnOFF cannot strip forced hand/HOA).
+  if ((forceInput || forceOutput) && hasValue) {
+    switch (t->kind) {
+      case MV_BOOL: t->b = boolVal; break;
+      case MV_INT: t->i = intVal; break;
+      case MV_REAL: t->r = realVal; break;
+      default: break;
+    }
+  }
+  if (forceOutput) mvWriteForcedPhysicalOutputs();
+  return true;
+}
+
+bool mvTagClearForce(const char* id) {
+  MvTag* t = mvFindTag(id);
+  if (!t) return false;
+  const bool wasOutput = t->forceOutput;
+  t->forceInput = false;
+  t->forceOutput = false;
+  if (wasOutput) mvWriteForcedPhysicalOutputs();
+  return true;
 }
 
 void mvSetTagMode(MvTag* t, const char* mode) {
@@ -49,6 +179,11 @@ void mvSetTagMode(MvTag* t, const char* mode) {
 }
 
 uint8_t mvTagCount() { return g_tagCount; }
+
+MvTag* mvTagAt(uint8_t index) {
+  if (index >= g_tagCount) return nullptr;
+  return &g_tags[index];
+}
 
 void mvTagsBegin() {
   g_tagCount = 0;
@@ -90,7 +225,7 @@ MvTag* mvEnsureTag(const char* id, MvTagKind kind) {
   if (existing) return existing;
   if (g_tagCount >= MV_MAX_TAGS) return nullptr;
   MvTag* t = &g_tags[g_tagCount++];
-  initTagDefaults(t, kind);
+  mvTagInitDefaults(t, kind);
   strncpy(t->id, id, sizeof(t->id) - 1);
   t->id[sizeof(t->id) - 1] = '\0';
   return t;
@@ -122,7 +257,7 @@ bool mvApplyTagMeta(JsonArray tags) {
       char savedId[16];
       strncpy(savedId, t->id, sizeof(savedId) - 1);
       savedId[sizeof(savedId) - 1] = '\0';
-      initTagDefaults(t, kind);
+      mvTagInitDefaults(t, kind);
       strncpy(t->id, savedId, sizeof(t->id) - 1);
       t->id[sizeof(t->id) - 1] = '\0';
     }
@@ -134,6 +269,9 @@ bool mvApplyTagMeta(JsonArray tags) {
     if (obj.containsKey("kd")) t->kd = obj["kd"].as<float>();
     if (obj.containsKey("outMin")) t->outMin = obj["outMin"].as<float>();
     if (obj.containsKey("outMax")) t->outMax = obj["outMax"].as<float>();
+
+    if (obj.containsKey("global")) t->isGlobal = obj["global"].as<bool>();
+    if (isGlobalTypeStr(type)) t->isGlobal = true;
 
     if (obj.containsKey("value")) {
       if (kind == MV_BOOL) t->b = obj["value"].as<bool>();
@@ -159,22 +297,24 @@ bool mvApplyTagMeta(JsonArray tags) {
 bool mvGetBool(const char* id) {
   MvTag* t = mvFindTag(id);
   if (!t) return false;
-  if (t->kind == MV_BOOL) return t->b;
-  if (t->kind == MV_INT) return t->i != 0;
+  if (t->kind == MV_BOOL) return mvTagEffectiveBool(t);
+  if (t->kind == MV_INT) return mvTagEffectiveInt(t) != 0;
   if (t->kind == MV_TIMER) return t->tmrDone;
   if (t->kind == MV_COUNTER) return t->ctrDone;
   if (t->kind == MV_PID) return t->pidEnabled;
   if (t->kind == MV_AVG) return t->avgReady;
   if (t->kind == MV_FLOW) return t->flowReady;
+  if (t->kind == MV_ALT) return t->altReady;
   return false;
 }
 
 int mvGetInt(const char* id) {
   MvTag* t = mvFindTag(id);
   if (!t) return 0;
-  if (t->kind == MV_INT) return t->i;
+  if (t->kind == MV_INT) return mvTagEffectiveInt(t);
   if (t->kind == MV_COUNTER) return t->count;
   if (t->kind == MV_TIMER) return (int)t->elapsed;
+  if (t->kind == MV_ALT) return (int)t->altActiveUnit;
   return t->b ? 1 : 0;
 }
 
@@ -185,6 +325,7 @@ float mvGetReal(const char* id) {
   if (t->kind == MV_PID) return t->out;
   if (t->kind == MV_AVG) return t->avgVal;
   if (t->kind == MV_FLOW) return t->flowGpm;
+  if (t->kind == MV_ALT) return (float)t->altActiveUnit;
   if (t->kind == MV_INT) return (float)t->i;
   return t->b ? 1.0f : 0.0f;
 }
@@ -204,6 +345,33 @@ void mvSetReal(const char* id, float v) {
   if (t) t->r = v;
 }
 
+bool mvWriteMemoryValue(const char* id, JsonVariantConst v) {
+  if (!id || !id[0] || v.isNull()) return false;
+  MvTag* t = mvFindTag(id);
+  if (v.is<bool>()) {
+    mvSetBool(id, v.as<bool>());
+    return true;
+  }
+  if (v.is<int>() || v.is<long>()) {
+    mvSetInt(id, (int32_t)v.as<int32_t>());
+    return true;
+  }
+  if (v.is<float>() || v.is<double>()) {
+    const double d = v.as<double>();
+    if (t && t->kind == MV_INT) {
+      mvSetInt(id, (int32_t)d);
+      return true;
+    }
+    if (t && t->kind == MV_BOOL) {
+      mvSetBool(id, d != 0.0);
+      return true;
+    }
+    mvSetReal(id, (float)d);
+    return true;
+  }
+  return false;
+}
+
 void mvReadPhysicalInputs() {
   for (uint8_t i = 0; i < 8; i++) {
     char id[8];
@@ -217,12 +385,19 @@ void mvReadPhysicalInputs() {
 }
 
 void mvWritePhysicalOutputs() {
-  for (uint8_t i = 0; i < 8; i++) {
+  for (uint8_t i = 0; i < 4; i++) {
     char id[4];
     snprintf(id, sizeof(id), "R%u", i + 1);
     MvTag* t = mvFindTag(id);
-    if (t) mvWriteRelay(i, t->b);
+    if (t) mvWriteRelay(i, mvTagEffectiveBool(t));
   }
+}
+
+void mvWriteForcedPhysicalOutputs() {
+  mvWritePhysicalOutputs();
+  mvExpUpdate();
+  mvExpReadInputs();
+  mvExpWriteOutputs();
 }
 
 void mvUpdateTimers(uint32_t dtMs) {
@@ -434,6 +609,198 @@ void mvUpdateFlowMeters() {
   }
 }
 
+static uint8_t altUnitCount(MvTag* t) {
+  if (!t) return 2;
+  if (strcmp(t->mode, "ALT4") == 0 || t->preset == 4) return 4;
+  if (strcmp(t->mode, "ALT3") == 0 || t->preset == 3) return 3;
+  return 2;
+}
+
+static int8_t altFirstOnline(bool* online, uint8_t unitCount, int8_t start) {
+  for (uint8_t n = 0; n < unitCount; n++) {
+    int8_t idx = (int8_t)((start + n) % unitCount);
+    if (online[idx]) return idx;
+  }
+  return -1;
+}
+
+static int8_t altNextOnline(int8_t from, bool* online, uint8_t unitCount) {
+  return altFirstOnline(online, unitCount, from + 1);
+}
+
+static bool altReadBoolId(const char* id) {
+  return id && id[0] && mvGetBool(id);
+}
+
+static float altReadLevelId(const char* id) {
+  if (!id || !id[0]) return NAN;
+  return mvGetReal(id);
+}
+
+static bool altWithin(float v, float lo, float hi) {
+  if (isnan(v) || isnan(lo) || isnan(hi) || lo > hi) return false;
+  return v >= lo && v <= hi;
+}
+
+static int8_t altManualUnit(char ids[4][16], bool* online, uint8_t unitCount, int8_t skipIndex) {
+  for (uint8_t i = 0; i < unitCount; i++) {
+    if ((int8_t)i == skipIndex) continue;
+    if (ids[i][0] && online[i] && altReadBoolId(ids[i])) return (int8_t)i;
+  }
+  return -1;
+}
+
+static void altResolveLevelState(MvTag* alt, bool* offActive, bool* highActive, bool* lowActive, bool* low2Active, uint8_t* stage) {
+  const bool useDigital = alt->altLevelInputMode == 0 || alt->altLevelInputMode == 1;
+  const bool useAnalog = (alt->altLevelInputMode == 0 || alt->altLevelInputMode == 2)
+    && alt->altLevelControlEnabled && alt->altLevelId[0];
+  bool off = useDigital && altReadBoolId(alt->altOffId);
+  bool high = useDigital && altReadBoolId(alt->altHighId);
+  bool low = useDigital && altReadBoolId(alt->altLowId);
+  bool low2 = useDigital && altReadBoolId(alt->altLow2Id);
+  if (useAnalog) {
+    const float level = altReadLevelId(alt->altLevelId);
+    if (!isnan(level)) {
+      if (altWithin(level, alt->altLevelOffLo, alt->altLevelOffHi)) off = true;
+      if (altWithin(level, alt->altLevelHighLo, alt->altLevelHighHi)) high = true;
+      if (altWithin(level, alt->altLevelLowLo, alt->altLevelLowHi)) low = true;
+    }
+  }
+  alt->altOffActive = off;
+  alt->altHighActive = high;
+  alt->altLowActive = low;
+  alt->altLow2Active = low2;
+  if (offActive) *offActive = off;
+  if (highActive) *highActive = high;
+  if (lowActive) *lowActive = low;
+  if (low2Active) *low2Active = low2;
+  if (off) *stage = 3;
+  else if (high) *stage = 2;
+  else if (low2) *stage = 4;
+  else if (low) *stage = 1;
+  else *stage = 0;
+  alt->altPumpStage = *stage;
+}
+
+static void altWriteBoolOut(const char* id, bool val) {
+  if (!id || !id[0]) return;
+  MvTag* out = mvFindTag(id);
+  if (!out || out->kind != MV_BOOL) return;
+  mvSetBool(id, val);
+}
+
+void mvUpdateAlternators() {
+  for (uint8_t i = 0; i < g_tagCount; i++) {
+    MvTag* alt = &g_tags[i];
+    if (alt->kind != MV_ALT) continue;
+    const uint8_t unitCount = altUnitCount(alt);
+
+    if (alt->altEnableId[0]) alt->altEnabled = mvGetBool(alt->altEnableId);
+    if (alt->altAdvanceId[0]) alt->altAdvance = mvGetBool(alt->altAdvanceId);
+    if (alt->altAutoFaultId[0]) alt->altAutoFault = mvGetBool(alt->altAutoFaultId);
+
+    bool online[4] = { false, false, false, false };
+    bool anyOnlineLinked = false;
+    for (uint8_t u = 0; u < unitCount; u++) {
+      if (alt->altOnlineIds[u][0]) anyOnlineLinked = true;
+    }
+    for (uint8_t u = 0; u < unitCount; u++) {
+      if (!anyOnlineLinked) online[u] = true;
+      else if (alt->altOnlineIds[u][0]) online[u] = mvGetBool(alt->altOnlineIds[u]);
+      alt->altUnitOnline[u] = online[u];
+    }
+
+    bool offActive = false;
+    bool highActive = false;
+    bool lowActive = false;
+    bool low2Active = false;
+    uint8_t pumpStage = 0;
+    altResolveLevelState(alt, &offActive, &highActive, &lowActive, &low2Active, &pumpStage);
+    if (unitCount < 3 && low2Active) {
+      low2Active = false;
+      alt->altLow2Active = false;
+      if (!offActive && !highActive && !lowActive) pumpStage = 0;
+      else if (lowActive) pumpStage = 1;
+      alt->altPumpStage = pumpStage;
+    }
+
+    int8_t leadIndex = alt->altLeadIndex;
+    if (leadIndex < 0 || leadIndex >= (int8_t)unitCount) leadIndex = 0;
+
+    bool advancePulse = alt->altAdvancePulse;
+    alt->altAdvancePulse = false;
+    if (alt->altAdvanceId[0]) {
+      if (alt->altAdvance && !alt->altPrevAdvance) advancePulse = true;
+      alt->altPrevAdvance = alt->altAdvance;
+    } else {
+      alt->altPrevAdvance = false;
+    }
+
+    uint8_t onlineCount = 0;
+    for (uint8_t u = 0; u < unitCount; u++) if (online[u]) onlineCount++;
+    alt->altReady = onlineCount > 0;
+    alt->altFault = onlineCount == 0;
+    bool prevLeadOnline = alt->altPrevLeadOnline;
+    const bool paused = offActive || highActive || lowActive || low2Active;
+
+    if (!alt->altEnabled || alt->altFault) {
+      leadIndex = alt->altFault ? -1 : altFirstOnline(online, unitCount, 0);
+    } else if (!paused) {
+      if (!online[leadIndex]) {
+        int8_t first = altFirstOnline(online, unitCount, 0);
+        leadIndex = first >= 0 ? first : 0;
+      }
+      if (advancePulse) {
+        int8_t next = altNextOnline(leadIndex, online, unitCount);
+        if (next >= 0) leadIndex = next;
+      } else if (alt->altAutoFault && prevLeadOnline && !online[leadIndex]) {
+        int8_t next = altNextOnline(leadIndex, online, unitCount);
+        if (next >= 0) leadIndex = next;
+      }
+    } else if (!online[leadIndex]) {
+      int8_t first = altFirstOnline(online, unitCount, 0);
+      leadIndex = first >= 0 ? first : -1;
+    }
+
+    int8_t manualLead = altManualUnit(alt->altLeadSelIds, online, unitCount, -1);
+    if (manualLead >= 0) leadIndex = manualLead;
+
+    int8_t lagIndex = (leadIndex >= 0) ? altNextOnline(leadIndex, online, unitCount) : -1;
+    int8_t lag2Index = (lagIndex >= 0) ? altNextOnline(lagIndex, online, unitCount) : -1;
+    int8_t manualLag = altManualUnit(alt->altLagSelIds, online, unitCount, leadIndex);
+    if (manualLag >= 0) lagIndex = manualLag;
+    int8_t manualLag2 = altManualUnit(alt->altLag2SelIds, online, unitCount, leadIndex);
+    if (manualLag2 >= 0) lag2Index = manualLag2;
+
+    alt->altPrevLeadOnline = (leadIndex >= 0) ? online[leadIndex] : false;
+    alt->altLeadIndex = leadIndex;
+    alt->altLagIndex = lagIndex;
+    alt->altLag2Index = lag2Index;
+    alt->altActiveUnit = (leadIndex >= 0) ? (uint8_t)(leadIndex + 1) : 0;
+
+    const bool runAllowed = alt->altEnabled && !alt->altFault && !offActive && leadIndex >= 0;
+    bool runMask[4] = { false, false, false, false };
+    if (runAllowed) {
+      if (highActive) {
+        for (uint8_t u = 0; u < unitCount; u++) {
+          if (online[u]) runMask[u] = true;
+        }
+      } else {
+        runMask[leadIndex] = true;
+        const bool needLag = lowActive || low2Active;
+        if (needLag && lagIndex >= 0 && online[lagIndex]) runMask[lagIndex] = true;
+        if (low2Active && lag2Index >= 0 && online[lag2Index]) runMask[lag2Index] = true;
+      }
+    }
+
+    for (uint8_t u = 0; u < unitCount; u++) {
+      altWriteBoolOut(alt->altUnitOutIds[u], runMask[u]);
+    }
+    altWriteBoolOut(alt->altLeadOutId, runAllowed && runMask[leadIndex]);
+    altWriteBoolOut(alt->altLagOutId, runAllowed && lagIndex >= 0 && runMask[lagIndex]);
+  }
+}
+
 void mvTagsToJson(JsonObject out) {
   for (uint8_t i = 0; i < g_tagCount; i++) {
     MvTag* t = &g_tags[i];
@@ -446,8 +813,31 @@ void mvTagsToJson(JsonObject out) {
       case MV_PID: out[t->id] = t->out; break;
       case MV_AVG: out[t->id] = t->avgVal; break;
       case MV_FLOW: out[t->id] = t->flowGpm; break;
+      case MV_ALT: out[t->id] = t->altActiveUnit; break;
     }
   }
+}
+
+uint32_t mvTagsValueFingerprint() {
+  uint32_t h = 2166136261u;
+  for (uint8_t i = 0; i < g_tagCount; i++) {
+    const MvTag* t = &g_tags[i];
+    h ^= (uint32_t)t->kind;
+    h *= 16777619u;
+    switch (t->kind) {
+      case MV_BOOL: h ^= t->b ? 1u : 0u; break;
+      case MV_INT: h ^= (uint32_t)t->i; break;
+      case MV_REAL: h ^= (uint32_t)(t->r * 1000.0f); break;
+      case MV_TIMER: h ^= t->tmrDone ? 1u : 0u; break;
+      case MV_COUNTER: h ^= (uint32_t)t->count; break;
+      case MV_PID: h ^= (uint32_t)(t->out * 1000.0f); break;
+      case MV_AVG: h ^= (uint32_t)(t->avgVal * 1000.0f); break;
+      case MV_FLOW: h ^= (uint32_t)(t->flowGpm * 1000.0f); break;
+      case MV_ALT: h ^= (uint32_t)t->altActiveUnit; break;
+    }
+    h *= 16777619u;
+  }
+  return h;
 }
 
 static const char* kindTypeName(MvTagKind k) {
@@ -459,6 +849,7 @@ static const char* kindTypeName(MvTagKind k) {
     case MV_PID: return "PID";
     case MV_AVG: return "AVG";
     case MV_FLOW: return "FLOW";
+    case MV_ALT: return "ALT";
     default: return "BOOL";
   }
 }
@@ -482,6 +873,22 @@ void mvTagsToParcJson(JsonArray out) {
       case MV_PID: row["value"] = t->out; break;
       case MV_AVG: row["value"] = t->avgVal; break;
       case MV_FLOW: row["value"] = t->flowGpm; break;
+      case MV_ALT: row["value"] = t->altActiveUnit; break;
     }
+  }
+}
+
+uint8_t mvGlobalTagCount() {
+  uint8_t n = 0;
+  for (uint8_t i = 0; i < g_tagCount; i++) {
+    if (g_tags[i].isGlobal) n++;
+  }
+  return n;
+}
+
+void mvForEachGlobalTag(void (*fn)(MvTag* t, void* ctx), void* ctx) {
+  if (!fn) return;
+  for (uint8_t i = 0; i < g_tagCount; i++) {
+    if (g_tags[i].isGlobal) fn(&g_tags[i], ctx);
   }
 }

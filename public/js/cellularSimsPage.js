@@ -21,6 +21,86 @@ function statusBadge(status) {
 }
 
 let vendorCatalog = [];
+let featureFlags = { cloudSims: false, cellularSims: false };
+
+function fetchDashboard() {
+  const api = window.api;
+  const fn = api?.getDashboard || api?.dashboard;
+  if (typeof fn !== 'function') {
+    throw new Error('Dashboard API unavailable — hard-refresh this page (Ctrl+F5).');
+  }
+  return fn.call(api);
+}
+
+function syncCellularSectionsVisibility() {
+  const on = featureFlags.cellularSims === true;
+  ['cellular-vendors-section', 'cellular-sims-inventory-section'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('view-hidden', !on);
+  });
+}
+
+function syncCloudSimsLinkVisibility() {
+  const link = document.getElementById('conn-cloud-sims-open');
+  if (link) link.classList.toggle('view-hidden', featureFlags.cloudSims !== true);
+}
+
+async function refreshFeatureFlags() {
+  const cloudEl = document.getElementById('conn-cloud-sims-enabled');
+  const cellEl = document.getElementById('conn-cellular-sims-enabled');
+  if (!cloudEl && !cellEl) return;
+  try {
+    const data = await fetchDashboard();
+    const st = data?.settings || {};
+    featureFlags = {
+      cloudSims: st.cloudSims?.enabled === true,
+      cellularSims: st.cellularSims?.enabled === true,
+    };
+    if (cloudEl) cloudEl.checked = featureFlags.cloudSims;
+    if (cellEl) cellEl.checked = featureFlags.cellularSims;
+    syncCloudSimsLinkVisibility();
+    syncCellularSectionsVisibility();
+  } catch (e) {
+    const msg = document.getElementById('conn-features-msg');
+    if (msg) {
+      msg.textContent = e.message || 'Failed to load feature settings';
+      msg.classList.add('cellular-sims-msg-error');
+    }
+  }
+}
+
+async function saveFeatureFlags() {
+  const msg = document.getElementById('conn-features-msg');
+  const cloudEl = document.getElementById('conn-cloud-sims-enabled');
+  const cellEl = document.getElementById('conn-cellular-sims-enabled');
+  if (!cloudEl || !cellEl) return;
+  if (msg) {
+    msg.textContent = 'Saving…';
+    msg.classList.remove('cellular-sims-msg-error');
+  }
+  try {
+    await window.api.putSettings({
+      cloudSims: { enabled: cloudEl.checked === true },
+      cellularSims: { enabled: cellEl.checked === true },
+    });
+    featureFlags = {
+      cloudSims: cloudEl.checked === true,
+      cellularSims: cellEl.checked === true,
+    };
+    syncCloudSimsLinkVisibility();
+    syncCellularSectionsVisibility();
+    if (msg) msg.textContent = 'Feature settings saved. Reload if a section stays hidden.';
+    if (featureFlags.cellularSims) {
+      await refreshVendors();
+      await refreshSims();
+    }
+  } catch (e) {
+    if (msg) {
+      msg.textContent = e.message || 'Save failed';
+      msg.classList.add('cellular-sims-msg-error');
+    }
+  }
+}
 
 function renderCredentialFields(vendorId) {
   const wrap = document.getElementById('vendor-credential-fields');
@@ -129,12 +209,19 @@ function renderSimsTable(sims) {
 
 async function refreshStatus() {
   const statusEl = document.getElementById('cellular-sims-status');
+  if (!statusEl) return;
   try {
     const parts = [];
     if (typeof window.api?.getMessagingStatus === 'function') {
       const msg = await window.api.getMessagingStatus();
       if (msg.mail?.configured) parts.push('mail ✓');
       if (msg.sms?.configured) parts.push('SMS ✓');
+    }
+    if (!featureFlags.cellularSims) {
+      statusEl.textContent = parts.length
+        ? `${parts.join(' · ')} · Cellular SIM management disabled`
+        : 'Cellular SIM management disabled';
+      return;
     }
     const mgr = await window.api.getCellularSimsStatus();
     parts.push(`${mgr.count ?? 0} SIM(s)`);
@@ -394,8 +481,14 @@ async function onTestSms(ev) {
 
 async function refreshVendors() {
   const tableWrap = document.getElementById('cellular-vendors-table-wrap');
+  if (!featureFlags.cellularSims) {
+    if (tableWrap) {
+      tableWrap.innerHTML = '<p class="muted">Enable Cellular SIM management under Platform features above.</p>';
+    }
+    return;
+  }
   if (typeof window.api?.getCellularVendorCatalog !== 'function') {
-    const err = 'Cellular API client is outdated — restart the server and hard-refresh this page.';
+    const err = 'Connectivity API client is missing — hard-refresh this page (Ctrl+F5). If it persists, restart the MooreVIEW server.';
     setVendorLoadError(err);
     if (tableWrap) tableWrap.innerHTML = `<p class="cellular-sims-msg-error">${esc(err)}</p>`;
     return;
@@ -416,15 +509,31 @@ async function refreshVendors() {
 }
 
 async function refreshSims() {
+  if (!featureFlags.cellularSims) {
+    const wrap = document.getElementById('cellular-sims-table-wrap');
+    if (wrap) {
+      wrap.innerHTML = '<p class="muted">Enable Cellular SIM management under Platform features above.</p>';
+    }
+    await refreshStatus();
+    return;
+  }
   const data = await window.api.getCellularSims();
   renderSimsTable(data.sims || []);
   await refreshStatus();
 }
 
 async function refreshAll() {
+  await refreshFeatureFlags();
   await refreshMessaging();
-  await refreshVendors();
-  await refreshSims();
+  if (featureFlags.cellularSims) {
+    await refreshVendors();
+    await refreshSims();
+  } else {
+    syncCellularSectionsVisibility();
+    const wrap = document.getElementById('cellular-vendors-table-wrap');
+    if (wrap) wrap.innerHTML = '<p class="muted">Enable Cellular SIM management under Platform features above.</p>';
+    await refreshSims();
+  }
 }
 
 async function onAddVendor(ev) {
@@ -499,6 +608,12 @@ async function onSyncAll() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('conn-features-save')?.addEventListener('click', () => {
+    saveFeatureFlags().catch((e) => {
+      const msg = document.getElementById('conn-features-msg');
+      if (msg) msg.textContent = e.message || 'Save failed';
+    });
+  });
   document.getElementById('cellular-vendor-form')?.addEventListener('submit', onAddVendor);
   document.getElementById('vendor-id')?.addEventListener('change', (e) => renderCredentialFields(e.target.value));
   document.getElementById('cellular-vendors-table-wrap')?.addEventListener('click', onVendorTableClick);

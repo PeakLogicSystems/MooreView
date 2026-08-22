@@ -5,24 +5,32 @@
 #include "mv_wifi.h"
 #include "mv_http.h"
 #include "mv_device_status.h"
+#include "mv_mqtt.h"
+#include "mv_global_key.h"
+#include "mv_st.h"
+#include "mv_watchdog.h"
+#include "mv_web_nav.h"
+#include "mv_identity.h"
+#include "mv_ezmeter.h"
+#include "mv_debug.h"
 #include <ArduinoJson.h>
 #include <Ethernet.h>
 #include <string.h>
 
-static String mvSetupHtmlBody();
+extern bool g_runtimeRunning;
 
 static const char MV_SETUP_HTML[] = R"HTML(<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>MooreVIEW Opta Setup</title>
 <style>
-body{font-family:system-ui,sans-serif;margin:1rem;background:#f1f5f9;color:#0f172a}
-h1{font-size:1.25rem}h2{font-size:1rem;margin-top:1.25rem}
+body{font-family:'Segoe UI',system-ui,sans-serif;margin:1rem;background:#f1f5f9;color:#0f172a}
+h1{font-size:1.25rem}h2{font-size:1rem;margin-top:1.25rem;color:#49104F}
 .card{background:#fff;border:1px solid #cbd5e1;border-radius:8px;padding:1rem;margin:.75rem 0}
 label{display:block;margin:.35rem 0;font-size:.9rem}
 input,select{width:100%;max-width:20rem;padding:.35rem .5rem}
 .row{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
 button{padding:.45rem .9rem;border:1px solid #64748b;border-radius:6px;background:#e2e8f0;cursor:pointer}
-button.primary{background:#2563eb;color:#fff;border-color:#2563eb}
+button.primary{background:#49104F;color:#fff;border-color:#49104F}
 .muted{color:#64748b;font-size:.85rem}
 #msg{margin-top:.5rem;font-size:.9rem}
 .status-grid{display:grid;grid-template-columns:minmax(7rem,auto) 1fr;gap:.25rem .75rem;font-size:.9rem;align-items:baseline}
@@ -35,12 +43,20 @@ button.primary{background:#2563eb;color:#fff;border-color:#2563eb}
 .badge.stop{background:#f1f5f9;color:#475569}
 .badge.ok{background:#dcfce7;color:#166534}
 .badge.off{background:#fef2f2;color:#991b1b}
+.status-bar{padding:.55rem .85rem;border-radius:6px;font-size:.9rem;font-weight:600;margin:.65rem 0 .25rem;border:1px solid transparent;line-height:1.35}
+.status-bar.err{background:#fef2f2;border-color:#fecaca;color:#991b1b}
+.status-bar.ok{background:#f0fdf4;border-color:#bbf7d0;color:#166534}
+.status-bar.warn{background:#fffbeb;border-color:#fde68a;color:#92400e}
+)HTML" MV_WEB_NAV_CSS R"HTML(
 </style></head><body>
 <h1>MooreVIEW Opta Setup</h1>
-<p class="muted">ST + MQTT Parc. Configure Ethernet and expansions. Open <code>/setup</code> or root on Ethernet.</p>
+)HTML" MV_WEB_NAV_SETUP_ACTIVE R"HTML(
+<div id="stStatusBar" class="status-bar warn" role="status" aria-live="polite">Loading device status…</div>
+<p class="muted">ST + MQTT Parc. Configure Ethernet and expansions. Open <code>/setup</code> or root on Ethernet. MCSA load modes (fan/pump/compressor/turbine) are configured on <code>/mcsa</code>.</p>
 <div class="card"><h2>ST runtime status</h2>
 <p class="muted">Refreshes every 3 s from <code>/api/status</code>.</p>
 <dl class="status-grid">
+<dt>Device ID</dt><dd id="stDeviceId">—</dd>
 <dt>Program</dt><dd id="stProgramName">—</dd>
 <dt>Runtime</dt><dd id="stRunning">—</dd>
 <dt>Program loaded</dt><dd id="stProgramLoaded">—</dd>
@@ -51,10 +67,16 @@ button.primary{background:#2563eb;color:#fff;border-color:#2563eb}
 <dt>Firmware</dt><dd id="stFirmware">—</dd>
 <dt>Ethernet IP</dt><dd id="stEthIp">—</dd>
 <dt>Expansions</dt><dd id="stExpansions">—</dd>
+<dt>Watchdog</dt><dd id="stWatchdog">—</dd>
+<dt>CT calibration</dt><dd id="stCtCal">—</dd>
 </dl>
 <div id="stErrors" class="err-box" hidden></div>
 <div id="stInfo" class="ok-box" hidden></div>
+<div class="row" style="margin-top:.5rem">
 <button type="button" id="btnStatusRefresh">Refresh status</button>
+</div>
+<button type="button" id="btnClearProgram">Clear program (NV flash)</button>
+<p class="muted">Clears saved ST program from QSPI and stops runtime. Confirm before use.</p>
 </div>
 <div class="card"><h2>Ethernet</h2>
 <label><input type="checkbox" id="ethDhcp"> Use DHCP</label>
@@ -71,9 +93,38 @@ button.primary{background:#2563eb;color:#fff;border-color:#2563eb}
 <label>SSID <input id="wifiSsid" placeholder="MooreVIEW-Opta"></label>
 <label>Password <input id="wifiPass" type="password" placeholder="mooreview (min 8 chars)"></label>
 <p class="muted" id="wifiStatus"></p></div>
+<div class="card"><h2>MQTT Parc broker</h2>
+<p class="muted"><strong>TLS on</strong> = cloud <code>mqtt.mooreview.io:8883</code>. <strong>TLS off</strong> = local MooreVIEW appliance <code>:1883</code> (no TLS). Save writes the active path to NV.</p>
+<label><input type="checkbox" id="mqttTls"> Cloud MQTT (TLS — mqtt.mooreview.io:8883)</label>
+<label>Broker host <input id="mqttBroker" placeholder="mqtt.mooreview.io or LAN IP"></label>
+<label>Port <input id="mqttPort" type="number" min="1" max="65535" value="1883" readonly></label>
+<label>Username <input id="mqttUser" autocomplete="username" placeholder="mooreview (cloud)"></label>
+<label>Password <input id="mqttPass" type="password" autocomplete="new-password" placeholder="blank = firmware MOSQUITTO_PASS"></label>
+<p class="muted" id="mqttBrokerHint"></p>
+<div class="row">
+<button type="button" id="btnMqttTest">Test MQTT connection</button>
+</div>
+<p id="mqttTestResult" class="muted" aria-live="polite"></p></div>
+<div class="card"><h2>MQTT telemetry</h2>
+<p class="muted">Periodic publish to <code>…/telemetry</code>. Range 100&nbsp;ms – 2&nbsp;h (7&nbsp;200&nbsp;000&nbsp;ms). Examples: 1000 = 1&nbsp;s, 60000 = 1&nbsp;min, 180000 = 3&nbsp;min, 3600000 = 1&nbsp;h.</p>
+<label>Report interval (ms) <input id="mqttReportMs" type="number" min="100" max="7200000" step="100" value="180000"></label>
+<label><input type="checkbox" id="mqttReportOnException" checked> Report on exception (also publish when tag values, runtime, or alarms change)</label>
+<label><input type="checkbox" id="mqttTelemetryDisable"> Disable MQTT telemetry publish</label>
+<p class="muted" id="mqttTelemetryHint"></p></div>
+<div class="card"><h2>Global site key</h2>
+<p class="muted">Shared 16-bit key for program tag MQTT (<code>mooreview/v1/g/{key}/{tag}</code>). Must match MooreVIEW System setup → MQTT Parc. Default <code>1</code> (addr key <code>0001</code>).</p>
+<label>Site key (decimal or hex, e.g. 1 or 0x0001) <input id="globalSiteKey" placeholder="1"></label>
+<p class="muted" id="globalSiteKeyHint"></p></div>
+<div class="card"><h2>EZ Meter PQ</h2>
+<p class="muted">Low-voltage threshold for duplex lift + EZ Meter ST (<code>MECH_PQ_CFG_UV_V</code>). R4 station alarm: high level float, <code>MECH_PQ_ALM</code>, or motor fault DIs X1_I11/X1_I12.</p>
+<label>Nominal voltage (V) <input id="ezNomV" type="number" min="1" step="1" placeholder="120"></label>
+<label>Undervolt threshold (V) <input id="ezUvV" type="number" min="1" step="0.1" placeholder="108"></label>
+</div>
 <div class="card"><h2>Expansion modules (AFX00005 / AFX00007)</h2>
 <p class="muted">Slot 1 is closest to the Opta base. AFX00005 = D1608E (16 DI + 8 relays). AFX00007 = A0602 (8 analog ch + 4 PWM).</p>
 <div id="expSlots"></div>
+<label><input type="checkbox" id="a0602RtdEnable"> A0602 — 8× 2-wire PT100 RTD (°C on X2_AI1–X2_AI8)</label>
+<p class="muted">Enable when slot 2 is AFX00007 and PT100 RTDs are wired (2-wire). Disable for 0–10 V / 4–20 mA transmitters.</p>
 <button type="button" id="btnScan">Scan expansions</button>
 <pre id="expDetected" class="muted"></pre></div>
 <div class="row">
@@ -89,17 +140,60 @@ function slotHtml(i){
   return `<label>Slot ${i+1} <select id="exp${i}">${expNames.map((n,j)=>`<option value="${j}">${n}</option>`).join('')}</select></label>`;
 }
 document.getElementById('expSlots').innerHTML=[0,1,2,3,4].map(slotHtml).join('');
+let mqttLanHost='192.168.1.233';
+let mqttCloudHost='mqtt.mooreview.io';
+function isCloudHost(h){
+  h=(h||'').trim().toLowerCase();
+  return h==='mqtt.mooreview.io'||h==='mooreview.io';
+}
+function applyMqttPath(){
+  if(mqttTls.checked){
+    if(mqttBroker.value && !isCloudHost(mqttBroker.value)) mqttLanHost=mqttBroker.value.trim();
+    mqttBroker.value=mqttCloudHost;
+    mqttPort.value='8883';
+    if(!mqttUser.value.trim()) mqttUser.value='mooreview';
+    mqttBrokerHint.textContent='Cloud path — TLS mqtt.mooreview.io:8883. Blank password uses firmware MOSQUITTO_USER/PASS.';
+  }else{
+    mqttPort.value='1883';
+    if(!mqttBroker.value.trim() || isCloudHost(mqttBroker.value)) mqttBroker.value=mqttLanHost;
+    mqttBrokerHint.textContent='Local appliance — plain MQTT '+mqttBroker.value+':1883 (no TLS).';
+  }
+}
 async function loadCfg(){
   const r=await fetch('/api/setup/config'); const c=await r.json();
   ethDhcp.checked=!!c.ethUseDhcp; wifiAp.checked=!!c.wifiApEnable;
   ethIp.value=ip4(c.ethIp); ethGw.value=ip4(c.ethGw); ethMask.value=ip4(c.ethMask); ethDns.value=ip4(c.ethDns);
   wifiSsid.value=c.wifiApSsid||'';
   wifiPass.value=c.wifiApPass||'';
+  mqttCloudHost=c.mqttCloudHost||'mqtt.mooreview.io';
+  mqttLanHost=c.mqttLanHost||'192.168.1.233';
+  mqttBroker.value=c.mqttBrokerHost||'';
+  let tls=!!c.mqttUseTls || +(c.mqttBrokerPort||0)===8883;
+  mqttTls.checked=tls;
+  mqttUser.value=c.mqttUsername||'';
+  mqttPass.value='';
+  mqttPass.placeholder=tls?'blank = firmware cloud password':'leave blank (local :1883 has no MQTT auth)';
+  if(!tls && c.mqttBrokerHost && !isCloudHost(c.mqttBrokerHost)) mqttLanHost=c.mqttBrokerHost;
+  applyMqttPath();
+  const active=(c.mqttBrokerActive||mqttBroker.value||'?')+':'+(tls?'8883':'1883');
+  const authHint=tls?(c.mqttPasswordSet?' cloud user+password in NV':' type cloud password once'):' local :1883 no TLS';
+  if(c.mqttBrokerSet) mqttBrokerHint.textContent='NV saved — '+active+' — '+authHint+'.';
+  mqttReportMs.value=c.mqttReportMs!=null?c.mqttReportMs:180000;
+  mqttReportOnException.checked=c.mqttReportOnException!==false;
+  mqttTelemetryDisable.checked=!!c.mqttTelemetryDisable;
+  mqttTelemetryHint.textContent=c.mqttTelemetryDisable?'Telemetry publish disabled — MQTT commands still work.':('Report every '+(c.mqttReportMs||180000)+' ms'+(c.mqttReportOnException!==false?' + on exception':''));
+  globalSiteKey.value=c.globalSiteKey!=null?('0x'+Number(c.globalSiteKey).toString(16).padStart(4,'0')):'0x0001';
+  globalSiteKeyHint.textContent='Addr key: '+(c.globalAddrKey||'0001')+' — must match MooreVIEW mqttParc.globalSiteKey';
+  ezNomV.value=c.ezMeterNominalV!=null?c.ezMeterNominalV:120;
+  ezUvV.value=c.ezMeterUndervoltV!=null?c.ezMeterUndervoltV:108;
   const apSsid=c.wifiApSsid||'MooreVIEW-Opta';
   const apPort=c.wifiApHttpPort||8080;
+  wifiSsid.disabled=!c.wifiCapable;
+  wifiPass.disabled=!c.wifiCapable;
   if(!c.wifiCapable){
-    wifiStatus.textContent=c.wifiApError||'WiFi not available — reflash with Board → Arduino Opta WiFi, or use Ethernet /setup';
+    wifiStatus.textContent=c.wifiApError||'No WiFi module on this Opta — use Ethernet /setup';
     wifiAp.disabled=true;
+    if(c.wifiApEnable) wifiAp.checked=false;
   }else if(c.wifiApActive){
     wifiStatus.textContent='AP active — connect to '+apSsid+', open http://'+(c.wifiApIp||'192.168.4.1')+':'+apPort+'/setup';
     wifiAp.disabled=false;
@@ -111,6 +205,7 @@ async function loadCfg(){
     wifiAp.disabled=false;
   }
   (c.expSlotType||[]).forEach((t,i)=>{const el=document.getElementById('exp'+i); if(el) el.value=t;});
+  a0602RtdEnable.checked=!!c.a0602RtdEnable;
   ethStatus.textContent='Ethernet: '+(c.ethIpCurrent||'?')+(c.ethUseDhcp?' (DHCP)':' (static)');
   const det=(c.detected||[]).map(d=>`Slot ${d.slot+1}: ${d.label} (${d.type})`).join('\n');
   if(det) expDetected.textContent=det;
@@ -119,14 +214,68 @@ async function loadCfg(){
   ethStatic.style.opacity=ethDhcp.checked?'.5':'1';
 }
 ethDhcp.onchange=()=>{ethStatic.style.opacity=ethDhcp.checked?'.5':'1'};
+mqttTls.onchange=applyMqttPath;
 btnScan.onclick=async()=>{await fetch('/api/setup/scan',{method:'POST'}); loadCfg();};
+btnMqttTest.onclick=async()=>{
+  const host=mqttBroker.value.trim();
+  if(!host){ mqttTestResult.className='err-box'; mqttTestResult.textContent='Enter broker host first.'; return; }
+  applyMqttPath();
+  btnMqttTest.disabled=true;
+  mqttTestResult.className='muted';
+  mqttTestResult.textContent=mqttTls.checked?'Testing MQTT TLS after HTTP idle (may take ~20 s)…':'Testing MQTT connection (may take up to 10 s)…';
+  const show=j=>{
+    if(j.ok){
+      mqttTestResult.className='ok-box';
+      mqttTestResult.textContent='Connected to '+(j.broker||host)+':'+(j.port||1883)+'. '+(j.message||'Test publish OK.');
+    }else{
+      mqttTestResult.className='err-box';
+      mqttTestResult.textContent=j.error||'MQTT test failed';
+    }
+  };
+  try{
+    const body={mqttBrokerHost:host,mqttBrokerPort:+mqttPort.value||1883,mqttUseTls:mqttTls.checked?1:0,mqttUsername:mqttUser.value.trim(),mqttPassword:mqttPass.value};
+    const r=await fetch('/api/setup/mqtt-test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j=await r.json();
+    if(j.queued){
+      await new Promise(res=>setTimeout(res,14000));
+      const t0=Date.now();
+      while(Date.now()-t0<16000){
+        const p=await fetch('/api/setup/mqtt-test');
+        const s=await p.json();
+        if(s.pending){ await new Promise(res=>setTimeout(res,800)); continue; }
+        if(s.done){ show(s); return; }
+        await new Promise(res=>setTimeout(res,800));
+      }
+      mqttTestResult.className='err-box';
+      mqttTestResult.textContent='MQTT test timed out waiting for result';
+      return;
+    }
+    show(j);
+  }catch(e){
+    mqttTestResult.className='err-box';
+    mqttTestResult.textContent='Test failed: '+e.message;
+  }finally{
+    btnMqttTest.disabled=false;
+  }
+};
 btnSave.onclick=async()=>{
+  applyMqttPath();
   const body={ethUseDhcp:ethDhcp.checked?1:0,wifiApEnable:wifiAp.checked?1:0,
     wifiApSsid:wifiSsid.value,wifiApPass:wifiPass.value,
+    mqttBrokerHost:mqttBroker.value.trim(),mqttBrokerPort:+mqttPort.value||1883,
+    mqttUseTls:mqttTls.checked?1:0,
+    mqttUsername:mqttUser.value.trim(),mqttPassword:mqttPass.value,
+    mqttReportMs:+mqttReportMs.value||180000,
+    mqttReportOnException:mqttReportOnException.checked?1:0,
+    mqttTelemetryDisable:mqttTelemetryDisable.checked?1:0,
+    globalSiteKey:globalSiteKey.value.trim(),
+    ezMeterNominalV:+ezNomV.value||120,
+    ezMeterUndervoltV:+ezUvV.value||108,
     ethIp:parseIp(ethIp.value),ethGw:parseIp(ethGw.value),ethMask:parseIp(ethMask.value),ethDns:parseIp(ethDns.value),
-    expSlotType:[0,1,2,3,4].map(i=>+document.getElementById('exp'+i).value)};
+    expSlotType:[0,1,2,3,4].map(i=>+document.getElementById('exp'+i).value),
+    a0602RtdEnable:a0602RtdEnable.checked?1:0};
   const r=await fetch('/api/setup/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  const j=await r.json(); msg.textContent=j.ok?'Saved. Ethernet applies on reboot; WiFi AP updated now.':(j.error||'Save failed');
+  const j=await r.json(); msg.textContent=j.ok?'Saved to NV. MQTT host/TLS/user/password persist across reboot. Ethernet IP applies on reboot.':(j.error||'Save failed');
   if(j.ok) loadCfg();
 };
 btnReboot.onclick=async()=>{await fetch('/api/setup/reboot',{method:'POST'}); msg.textContent='Rebooting…';};
@@ -153,19 +302,59 @@ function fmtProgramStats(s){
     cd:`${fmtBytes(p.codeBytes||0)} code · ${fmtBytes(p.dataBytes||0)} data`
   };
 }
+function fmtWatchdog(s){
+  const w=s.watchdog;
+  if(!w) return '—';
+  if(!w.enabled) return 'Disabled';
+  const idle=w.idleMs!=null?w.idleMs:0;
+  const live=w.livenessMs!=null?w.livenessMs:'?';
+  return `Enabled · idle ${idle} ms / ${live} ms`;
+}
 function collectErrors(s){
   const errs=[];
-  if(s.programError) errs.push('Program: '+s.programError);
+  if(s.programError) errs.push('Program failed to load: '+s.programError);
   if(s.ota&&s.ota.error) errs.push('OTA: '+s.ota.error);
   if(s.ota&&s.ota.message&&/fail|error/i.test(s.ota.message)) errs.push('OTA: '+s.ota.message);
   return errs;
 }
+function updateStatusBar(s){
+  const bar=document.getElementById('stStatusBar');
+  if(!bar) return;
+  if(s.programError){
+    bar.className='status-bar err';
+    bar.textContent='Program failed to load: '+s.programError;
+    return;
+  }
+  if(s.programLoaded){
+    bar.className='status-bar ok';
+    const name=s.programShortName||s.programName||'program';
+    bar.textContent=s.running?('Running — '+name):('Program loaded — '+name+' (stopped)');
+    return;
+  }
+  bar.className='status-bar warn';
+  bar.textContent='No program loaded — use MooreVIEW Parc Download & Start';
+}
+function fmtCtCal(s){
+  const c=s.ctCal;
+  if(!c) return '—';
+  const z=c.zeroedCount!=null?c.zeroedCount:0;
+  const n=c.channels||6;
+  const adc=c.adcMaxRaw||'?';
+  const os=c.oversample||'?';
+  return `${z}/${n} zeroed · OS ${os} · ADC ${adc}`;
+}
 async function loadStatus(){
   try{
     const r=await fetch('/api/status'); const s=await r.json();
+    updateStatusBar(s);
+    stDeviceId.textContent=s.deviceId||'?';
+    if(s.ateccStatus&&s.ateccStatus!=='ok') stDeviceId.title=s.ateccStatus;
+    else stDeviceId.title='';
     stProgramName.textContent=s.programName||s.programShortName||'(none — deploy via MQTT Parc)';
     stRunning.innerHTML=fmtRun(s);
-    stProgramLoaded.textContent=s.programLoaded?'Yes':'No';
+    stProgramLoaded.innerHTML=s.programError
+      ? `<span class="badge off">Failed</span>`
+      : (s.programLoaded?`<span class="badge ok">Yes</span>`:`<span class="badge off">No</span>`);
     const ps=fmtProgramStats(s);
     stBytecode.textContent=ps.bc;
     stCodeData.textContent=ps.cd;
@@ -174,22 +363,41 @@ async function loadStatus(){
     stFirmware.textContent=`v${s.firmwareVersion||'?'} · protocol ${s.protocolVersion??'?'}`;
     stEthIp.textContent=s.ethIp||'?';
     stExpansions.textContent=String(s.expansions??0);
+    stWatchdog.textContent=fmtWatchdog(s);
+    const ctEl=document.getElementById('stCtCal');
+    if(ctEl) ctEl.textContent=fmtCtCal(s);
     const errs=collectErrors(s);
     if(errs.length){ stErrors.hidden=false; stErrors.textContent=errs.join('\n'); }
     else { stErrors.hidden=true; stErrors.textContent=''; }
     const info=[];
     if(s.programLoaded&&s.programName) info.push('Ready to run on device.');
     else if(!s.programLoaded) info.push('No program — use MooreVIEW Parc Connect + Start.');
-    if(!s.mqttConnected) info.push('MQTT broker not connected — check g_mqttCfg broker IP.');
+    if(!s.mqttConnected) info.push('MQTT broker not connected — check broker IP on /setup (active: '+(s.mqttBroker||'?')+':'+(s.mqttBrokerPort||1883)+').');
+    const zc=s.ctCal?.zeroedCount??0;
+    if(zc<6) info.push('CT calibration: '+zc+'/6 channels zeroed — open Calibrate CT before relying on amp readings.');
+    if(s.ateccStatus&&s.ateccStatus!=='ok') info.push('Device identity: '+s.ateccStatus);
     if(s.ota&&s.ota.phase) info.push('OTA: '+s.ota.phase);
     if(info.length){ stInfo.hidden=false; stInfo.textContent=info.join('\n'); }
     else { stInfo.hidden=true; stInfo.textContent=''; }
   }catch(e){
-    stErrors.hidden=false; stErrors.textContent='Status unavailable: '+e.message;
+    const bar=document.getElementById('stStatusBar');
+    if(bar){
+      bar.className='status-bar err';
+      bar.textContent='Status unavailable: '+e.message+' (HTTP busy or offline — use MooreVIEW Download & Start)';
+    }
+    stErrors.hidden=false;
+    stErrors.textContent='Cannot reach /api/status. During MQTT deploy this is normal — wait 30s and refresh.';
     stInfo.hidden=true;
   }
 }
 btnStatusRefresh.onclick=()=>loadStatus();
+btnClearProgram.onclick=async()=>{
+  if(!confirm('Clear saved ST program from NV flash? Runtime will stop.')) return;
+  const r=await fetch('/api/program',{method:'DELETE'});
+  const j=await r.json();
+  msg.textContent=(j.ok&&j.cleared)?'Program cleared from NV flash.':(j.error||'Clear failed');
+  loadStatus();
+};
 loadCfg(); loadStatus(); setInterval(loadStatus,3000);
 </script></body></html>)HTML";
 
@@ -212,8 +420,47 @@ bool mvEthBegin(const MvDeviceConfig* cfg, byte* mac) {
   return Ethernet.begin(mac, ip, dns, gw, mask) != 0;
 }
 
+void mvEthLogStatus(const MvDeviceConfig* cfg) {
+  if (!cfg) return;
+  IPAddress ip = Ethernet.localIP();
+  char ipbuf[20];
+  snprintf(ipbuf, sizeof(ipbuf), "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
+  if (cfg->ethUseDhcp) {
+    MV_LOG_CMD2("Ethernet DHCP ", ipbuf);
+  } else {
+    char cfgIp[20];
+    snprintf(cfgIp, sizeof(cfgIp), "%u.%u.%u.%u", cfg->ethIp[0], cfg->ethIp[1], cfg->ethIp[2], cfg->ethIp[3]);
+    MV_LOG_CMD2("Ethernet static ", cfgIp);
+  }
+  if (ip[0] == 0 && ip[1] == 0 && ip[2] == 0 && ip[3] == 0) {
+    MV_LOG("Ethernet has no IP — check cable/DHCP or set static IP in /setup");
+  }
+#if (defined(ARDUINO_PORTENTA_H7_M7) || defined(ARDUINO_OPTA)) && MV_HAS_WEBSERVER
+  MV_LOG2("Ethernet http://", ip.toString());
+#endif
+}
+
+static uint16_t parseGlobalSiteKey(JsonVariant v) {
+  if (v.is<uint16_t>() || v.is<int>() || v.is<long>()) {
+    uint32_t n = v.as<uint32_t>();
+    if (n >= 1 && n <= 65535) return (uint16_t)n;
+    return 1;
+  }
+  if (v.is<const char*>()) {
+    const char* s = v.as<const char*>();
+    if (!s || !s[0]) return 1;
+    char* end = nullptr;
+    unsigned long n = strtoul(s, &end, 0);
+    if (n >= 1 && n <= 65535) return (uint16_t)n;
+    return 1;
+  }
+  return 1;
+}
+
 static void fillConfigJson(JsonObject root) {
   const MvDeviceConfig* cfg = mvStoreActive();
+  root["deviceId"] = mvIdentityDeviceId();
+  root["ateccStatus"] = mvIdentityAteccStatus();
   root["ethUseDhcp"] = cfg->ethUseDhcp;
   root["wifiApEnable"] = cfg->wifiApEnable;
   root["wifiApSsid"] = cfg->wifiApSsid;
@@ -230,6 +477,33 @@ static void fillConfigJson(JsonObject root) {
   }
   JsonArray slots = root.createNestedArray("expSlotType");
   for (uint8_t i = 0; i < MV_EXP_SLOTS; i++) slots.add(cfg->expSlotType[i]);
+  root["a0602RtdEnable"] = cfg->a0602RtdEnable ? true : false;
+  root["mqttBrokerHost"] = cfg->mqttBrokerHost;
+  root["mqttBrokerPort"] = cfg->mqttBrokerPort ? cfg->mqttBrokerPort : 1883;
+  root["mqttUseTls"] = cfg->mqttUseTls ? true : false;
+  root["mqttBrokerSet"] = cfg->mqttBrokerSet ? true : false;
+  root["mqttUsername"] = cfg->mqttUsername;
+  root["mqttAuthSet"] = cfg->mqttAuthSet ? true : false;
+  root["mqttPasswordSet"] = (cfg->mqttAuthSet && cfg->mqttPassword[0]) ? true : false;
+  root["mqttBrokerDefault"] = MV_MQTT_SKETCH_BROKER_DEFAULT;
+  root["mqttCloudHost"] = MV_MQTT_SKETCH_BROKER_DEFAULT;
+  root["mqttLanHost"] = MV_MQTT_LAN_BROKER_DEFAULT;
+  root["mqttReportMs"] = cfg->mqttReportMs ? cfg->mqttReportMs : MV_MQTT_REPORT_MS_DEFAULT;
+  root["mqttReportOnException"] = cfg->mqttReportOnException != 0;
+  root["mqttTelemetryDisable"] = cfg->mqttTelemetryDisable != 0;
+  {
+    char activeHost[64];
+    uint16_t activePort = 1883;
+    mvMqttGetBroker(activeHost, sizeof(activeHost), &activePort);
+    root["mqttBrokerActive"] = activeHost;
+    root["mqttBrokerActivePort"] = activePort;
+  }
+  root["globalSiteKey"] = mvGlobalSiteKey();
+  char addrKey[5];
+  mvGlobalAddrKey(addrKey);
+  root["globalAddrKey"] = addrKey;
+  root["ezMeterNominalV"] = mvEzmeterNominalV();
+  root["ezMeterUndervoltV"] = mvEzmeterUndervoltV();
   IPAddress cur = Ethernet.localIP();
   root["ethIpCurrent"] = cur.toString();
   root["wifiApActive"] = mvWifiApActive();
@@ -257,6 +531,10 @@ static void fillConfigJson(JsonObject root) {
   root["ok"] = true;
 }
 
+static bool mvMqttHostIsCloud(const char* h) {
+  return h && h[0] && (!strcmp(h, "mqtt.mooreview.io") || !strcmp(h, "mooreview.io"));
+}
+
 static bool applyConfigJson(JsonObject root, String& err) {
   MvDeviceConfig cfg;
   mvStoreLoad(&cfg);
@@ -266,7 +544,7 @@ static bool applyConfigJson(JsonObject root, String& err) {
   if (root["wifiApPass"].is<const char*>()) strncpy(cfg.wifiApPass, root["wifiApPass"], sizeof(cfg.wifiApPass) - 1);
   if (cfg.wifiApEnable) {
     if (!mvWifiCapable()) {
-      err = "WiFi AP requires Arduino Opta WiFi hardware and board target";
+      err = mvWifiLastError()[0] ? mvWifiLastError() : "No WiFi module on this Opta";
       return false;
     }
     if (cfg.wifiApPass[0] && strlen(cfg.wifiApPass) < 8) {
@@ -289,7 +567,116 @@ static bool applyConfigJson(JsonObject root, String& err) {
       cfg.expSlotType[i] = slots[i].as<uint8_t>();
     }
   }
+  if (root.containsKey("a0602RtdEnable")) {
+    cfg.a0602RtdEnable = root["a0602RtdEnable"].as<uint8_t>() ? 1 : 0;
+  }
+  if (root.containsKey("mqttBrokerHost")) {
+    const char* h = root["mqttBrokerHost"].as<const char*>();
+    if (!h) h = "";
+    if (h[0] && (!strcmp(h, "127.0.0.1") || !strcmp(h, "localhost"))) {
+      err = "Broker cannot be 127.0.0.1 on device — use MooreVIEW / IOT-LINK LAN IP";
+      return false;
+    }
+    if (h[0] && strlen(h) >= sizeof(cfg.mqttBrokerHost)) {
+      err = "Broker host too long";
+      return false;
+    }
+    strncpy(cfg.mqttBrokerHost, h, sizeof(cfg.mqttBrokerHost) - 1);
+    cfg.mqttBrokerHost[sizeof(cfg.mqttBrokerHost) - 1] = '\0';
+    cfg.mqttBrokerSet = cfg.mqttBrokerHost[0] ? 1 : 0;
+  }
+  if (root.containsKey("mqttBrokerPort")) {
+    const uint16_t p = root["mqttBrokerPort"].as<uint16_t>();
+    cfg.mqttBrokerPort = p ? p : 1883;
+  }
+  if (root.containsKey("mqttUseTls")) cfg.mqttUseTls = root["mqttUseTls"].as<uint8_t>() ? 1 : 0;
+  if (cfg.mqttBrokerPort == 8883) cfg.mqttUseTls = 1;
+  if (root.containsKey("mqttUsername")) {
+    const char* u = root["mqttUsername"].as<const char*>();
+    if (!u) u = "";
+    if (u[0] && strlen(u) >= sizeof(cfg.mqttUsername)) {
+      err = "MQTT username too long";
+      return false;
+    }
+    strncpy(cfg.mqttUsername, u, sizeof(cfg.mqttUsername) - 1);
+    cfg.mqttUsername[sizeof(cfg.mqttUsername) - 1] = '\0';
+  }
+  bool mqttPassTyped = false;
+  if (root.containsKey("mqttPassword")) {
+    const char* p = root["mqttPassword"].as<const char*>();
+    if (p && p[0]) {
+      if (strlen(p) >= sizeof(cfg.mqttPassword)) {
+        err = "MQTT password too long (max 79 chars)";
+        return false;
+      }
+      strncpy(cfg.mqttPassword, p, sizeof(cfg.mqttPassword) - 1);
+      cfg.mqttPassword[sizeof(cfg.mqttPassword) - 1] = '\0';
+      mqttPassTyped = true;
+    }
+  }
+  if (cfg.mqttUseTls) {
+    strncpy(cfg.mqttBrokerHost, MV_MQTT_SKETCH_BROKER_DEFAULT, sizeof(cfg.mqttBrokerHost) - 1);
+    cfg.mqttBrokerHost[sizeof(cfg.mqttBrokerHost) - 1] = '\0';
+    cfg.mqttBrokerPort = 8883;
+    cfg.mqttBrokerSet = 1;
+    if (!cfg.mqttUsername[0]) {
+      strncpy(cfg.mqttUsername, MV_MQTT_SKETCH_USER_DEFAULT, sizeof(cfg.mqttUsername) - 1);
+      cfg.mqttUsername[sizeof(cfg.mqttUsername) - 1] = '\0';
+    }
+    /* Blank password on cloud TLS reloads firmware MOSQUITTO_PASS — do not keep a stale NV secret. */
+    if (!mqttPassTyped) {
+      strncpy(cfg.mqttPassword, MV_MQTT_SKETCH_PASS_DEFAULT, sizeof(cfg.mqttPassword) - 1);
+      cfg.mqttPassword[sizeof(cfg.mqttPassword) - 1] = '\0';
+    }
+    if (!cfg.mqttUsername[0] || !cfg.mqttPassword[0]) {
+      err = "Cloud TLS requires MQTT username and password in NV";
+      return false;
+    }
+    cfg.mqttAuthSet = 1;
+  } else {
+    cfg.mqttUseTls = 0;
+    cfg.mqttBrokerPort = 1883;
+    if (!cfg.mqttBrokerHost[0] || mvMqttHostIsCloud(cfg.mqttBrokerHost)) {
+      strncpy(cfg.mqttBrokerHost, MV_MQTT_LAN_BROKER_DEFAULT, sizeof(cfg.mqttBrokerHost) - 1);
+      cfg.mqttBrokerHost[sizeof(cfg.mqttBrokerHost) - 1] = '\0';
+    }
+    cfg.mqttBrokerSet = cfg.mqttBrokerHost[0] ? 1 : 0;
+    /* Keep cloud user/pass in NV for the next TLS toggle; do not send them on :1883. */
+    cfg.mqttAuthSet = 0;
+  }
+  if (root.containsKey("globalSiteKey")) {
+    cfg.globalSiteKey = parseGlobalSiteKey(root["globalSiteKey"]);
+  }
+  if (root.containsKey("mqttReportMs")) {
+    uint32_t ms = root["mqttReportMs"].as<uint32_t>();
+    if (ms < MV_MQTT_REPORT_MS_MIN || ms > MV_MQTT_REPORT_MS_MAX) {
+      err = "MQTT report interval must be 100 ms – 2 h";
+      return false;
+    }
+    cfg.mqttReportMs = ms;
+  }
+  if (root.containsKey("mqttReportOnException")) {
+    cfg.mqttReportOnException = root["mqttReportOnException"].as<uint8_t>() ? 1 : 0;
+  }
+  if (root.containsKey("mqttTelemetryDisable")) {
+    cfg.mqttTelemetryDisable = root["mqttTelemetryDisable"].as<uint8_t>() ? 1 : 0;
+  }
+  if (root.containsKey("ezMeterNominalV")) {
+    const float v = root["ezMeterNominalV"].as<float>();
+    if (v >= 1.0f && v <= 1000.0f && !mvEzmeterSetNominalV(v)) {
+      err = "Invalid EZ Meter nominal voltage";
+      return false;
+    }
+  }
+  if (root.containsKey("ezMeterUndervoltV")) {
+    const float v = root["ezMeterUndervoltV"].as<float>();
+    if (v >= 1.0f && v <= 1000.0f && !mvEzmeterSetUndervoltV(v)) {
+      err = "Invalid EZ Meter undervolt threshold";
+      return false;
+    }
+  }
   if (!mvStoreSave(&cfg)) { err = "save failed"; return false; }
+  mvMqttApplyDeviceConfig(&cfg);
   mvExpApplyConfig(&cfg);
   mvExpEnsureTags();
   if (cfg.wifiApEnable) {
@@ -311,7 +698,7 @@ static void handleSetupPage(Stream& client, const String& method, const String& 
   (void)path;
   (void)body;
   (void)headerBlock;
-  mvHttpSendResponse(client, 200, "text/html", mvSetupHtmlBody());
+  mvHttpSendResponseCStr(client, 200, "text/html; charset=utf-8", MV_SETUP_HTML);
 }
 
 static void handleSetupConfigGet(Stream& client, const String& method, const String& path,
@@ -360,6 +747,156 @@ static void handleSetupScan(Stream& client, const String& method, const String& 
   handleSetupConfigGet(client, method, path, body, headerBlock);
 }
 
+static bool parseMqttTestBody(JsonObject root, char* hostOut, size_t hostLen, uint16_t* portOut,
+                              char* userOut, size_t userLen, char* passOut, size_t passLen,
+                              bool* tlsOut, String& err) {
+  const char* host = root["mqttBrokerHost"].is<const char*>() ? root["mqttBrokerHost"].as<const char*>() : "";
+  if (!host || !host[0]) {
+    const MvDeviceConfig* cfg = mvStoreActive();
+    if (cfg && cfg->mqttBrokerSet && cfg->mqttBrokerHost[0]) host = cfg->mqttBrokerHost;
+  }
+  if (!host || !host[0]) {
+    err = "Broker host required";
+    return false;
+  }
+  if (!strcmp(host, "127.0.0.1") || !strcmp(host, "localhost")) {
+    err = "Broker cannot be 127.0.0.1 on device — use MooreVIEW / cloud LAN IP";
+    return false;
+  }
+  if (strlen(host) >= hostLen) {
+    err = "Broker host too long";
+    return false;
+  }
+  strncpy(hostOut, host, hostLen - 1);
+  hostOut[hostLen - 1] = '\0';
+
+  uint16_t port = 1883;
+  if (root.containsKey("mqttBrokerPort")) {
+    port = root["mqttBrokerPort"].as<uint16_t>();
+  } else {
+    const MvDeviceConfig* cfg = mvStoreActive();
+    if (cfg && cfg->mqttBrokerPort) port = cfg->mqttBrokerPort;
+  }
+  if (!port) port = 1883;
+  bool tls = false;
+  if (root.containsKey("mqttUseTls")) tls = root["mqttUseTls"].as<uint8_t>() ? true : false;
+  else {
+    const MvDeviceConfig* cfg = mvStoreActive();
+    if (cfg && cfg->mqttUseTls) tls = true;
+  }
+  if (port == 8883) tls = true;
+  if (tls && port == 1883) port = 8883;
+  if (portOut) *portOut = port;
+  if (tlsOut) *tlsOut = tls;
+
+  const char* user = root["mqttUsername"].is<const char*>() ? root["mqttUsername"].as<const char*>() : "";
+  if (!user) user = "";
+  if (!user[0] && tls) user = MV_MQTT_SKETCH_USER_DEFAULT;
+  if (user[0] && strlen(user) >= userLen) {
+    err = "MQTT username too long";
+    return false;
+  }
+  if (userOut) {
+    strncpy(userOut, user, userLen - 1);
+    userOut[userLen - 1] = '\0';
+  }
+
+  const char* pass = root["mqttPassword"].is<const char*>() ? root["mqttPassword"].as<const char*>() : "";
+  if (!pass) pass = "";
+  if (pass[0] && strlen(pass) >= passLen) {
+    /* Browser autofill often dumps a vault secret ≥48 chars into this box. */
+    if (tls) pass = "";
+    else {
+      err = "MQTT password too long (max 79 chars)";
+      return false;
+    }
+  }
+  if (passOut) {
+    passOut[0] = '\0';
+    if (pass[0]) {
+      strncpy(passOut, pass, passLen - 1);
+      passOut[passLen - 1] = '\0';
+    } else if (tls && MV_MQTT_SKETCH_PASS_DEFAULT[0]) {
+      strncpy(passOut, MV_MQTT_SKETCH_PASS_DEFAULT, passLen - 1);
+      passOut[passLen - 1] = '\0';
+    }
+  }
+  return true;
+}
+
+static void fillMqttTestStatusJson(String& jsonOut) {
+  bool pending = false, done = false, ok = false, tls = false;
+  int state = -2;
+  uint16_t port = 1883;
+  char err[160];
+  char broker[64];
+  err[0] = '\0';
+  broker[0] = '\0';
+  mvMqttTestStatus(&pending, &done, &ok, &state, err, sizeof(err), broker, sizeof(broker), &port, &tls);
+  StaticJsonDocument<384> out;
+  out["pending"] = pending;
+  out["done"] = done;
+  out["ok"] = ok && done;
+  out["broker"] = broker;
+  out["port"] = port;
+  out["tls"] = tls;
+  out["state"] = state;
+  if (done && ok) out["message"] = "Published setup-test ping — credentials saved for live MQTT";
+  if (done && !ok) out["error"] = err[0] ? err : "MQTT test failed";
+  serializeJson(out, jsonOut);
+}
+
+static bool queueMqttTestFromBody(const String& body, String& jsonOut, int& httpCode) {
+  httpCode = 400;
+  if (body.length() == 0) {
+    jsonOut = "{\"error\":\"missing body\"}";
+    return false;
+  }
+  StaticJsonDocument<512> doc;
+  if (deserializeJson(doc, body)) {
+    jsonOut = "{\"error\":\"invalid json\"}";
+    return false;
+  }
+  char host[64];
+  char user[32];
+  char pass[MV_MQTT_PASSWORD_SIZE];
+  uint16_t port = 1883;
+  bool tls = false;
+  String err;
+  if (!parseMqttTestBody(doc.as<JsonObject>(), host, sizeof(host), &port, user, sizeof(user), pass, sizeof(pass), &tls, err)) {
+    jsonOut = String("{\"error\":\"") + err + "\"}";
+    return false;
+  }
+  if (!mvMqttTestQueue(host, port, user[0] ? user : nullptr, pass[0] ? pass : nullptr, tls)) {
+    jsonOut = "{\"error\":\"MQTT test already running\"}";
+    httpCode = 409;
+    return false;
+  }
+  StaticJsonDocument<256> out;
+  out["queued"] = true;
+  out["pending"] = true;
+  out["broker"] = host;
+  out["port"] = port;
+  out["tls"] = tls;
+  httpCode = 202;
+  serializeJson(out, jsonOut);
+  return true;
+}
+
+static void handleSetupMqttTest(Stream& client, const String& method, const String& path,
+                                const String& body, const String& headerBlock) {
+  (void)path;
+  (void)headerBlock;
+  String json;
+  int code = 200;
+  if (method == "GET") {
+    fillMqttTestStatusJson(json);
+  } else {
+    queueMqttTestFromBody(body, json, code);
+  }
+  mvHttpSendResponse(client, code, "application/json", json);
+}
+
 static void handleSetupReboot(Stream& client, const String& method, const String& path,
                               const String& body, const String& headerBlock) {
   (void)method;
@@ -377,99 +914,16 @@ void mvSetupRegisterRoutes() {
   mvHttpAddRoute("GET", "/api/setup/config", handleSetupConfigGet);
   mvHttpAddRoute("PUT", "/api/setup/config", handleSetupConfigPut);
   mvHttpAddRoute("POST", "/api/setup/scan", handleSetupScan);
+  mvHttpAddRoute("GET", "/api/setup/mqtt-test", handleSetupMqttTest);
+  mvHttpAddRoute("POST", "/api/setup/mqtt-test", handleSetupMqttTest);
   mvHttpAddRoute("POST", "/api/setup/reboot", handleSetupReboot);
 }
 #else
 void mvSetupRegisterRoutes() {}
 #endif
 
-static String mvSetupHtmlBody() {
-  return String(MV_SETUP_HTML);
-}
-
-static void writeHttpResponse(Stream& client, int code, const char* ctype, const String& body) {
-  client.print("HTTP/1.1 ");
-  client.print(code);
-  client.println(code == 200 ? " OK" : " ERR");
-  client.println("Connection: close");
-  client.print("Content-Type: ");
-  client.println(ctype);
-  client.print("Content-Length: ");
-  client.println(body.length());
-  client.println();
-  client.print(body);
-}
-
-static void handleWifiRequest(Stream& client, const String& method, const String& path, const String& body) {
-  if (method == "GET" && (path == "/" || path == "/setup")) {
-    writeHttpResponse(client, 200, "text/html", mvSetupHtmlBody());
-    return;
-  }
-  if (method == "GET" && path == "/api/setup/config") {
-    StaticJsonDocument<1536> doc;
-    fillConfigJson(doc.to<JsonObject>());
-    String out;
-    serializeJson(doc, out);
-    writeHttpResponse(client, 200, "application/json", out);
-    return;
-  }
-  if (method == "GET" && path == "/api/status") {
-    StaticJsonDocument<1024> doc;
-    mvFillDeviceStatus(doc.to<JsonObject>());
-    String out;
-    serializeJson(doc, out);
-    writeHttpResponse(client, 200, "application/json", out);
-    return;
-  }
-  if (method == "PUT" && path == "/api/setup/config") {
-    StaticJsonDocument<1024> doc;
-    String err = "invalid json";
-    bool ok = !deserializeJson(doc, body) && applyConfigJson(doc.as<JsonObject>(), err);
-    writeHttpResponse(client, ok ? 200 : 400, "application/json", ok ? "{\"ok\":true}" : String("{\"error\":\"") + err + "\"}");
-    return;
-  }
-  if (method == "POST" && path == "/api/setup/scan") {
-    mvExpRescan();
-    mvExpEnsureTags();
-    StaticJsonDocument<1536> doc;
-    fillConfigJson(doc.to<JsonObject>());
-    String out;
-    serializeJson(doc, out);
-    writeHttpResponse(client, 200, "application/json", out);
-    return;
-  }
-  if (method == "POST" && path == "/api/setup/reboot") {
-    writeHttpResponse(client, 200, "application/json", "{\"ok\":true}");
-    delay(250);
-    NVIC_SystemReset();
-    return;
-  }
-  writeHttpResponse(client, 404, "application/json", "{\"error\":\"not found\"}");
-}
-
-void mvSetupHandleClient(Stream& client) {
-  String req = client.readStringUntil('\r');
-  client.readStringUntil('\n');
-  while (client.available()) {
-    String h = client.readStringUntil('\r');
-    client.readStringUntil('\n');
-    if (h.length() == 0) break;
-  }
-  int sp1 = req.indexOf(' ');
-  int sp2 = req.indexOf(' ', sp1 + 1);
-  String method = req.substring(0, sp1);
-  String path = sp1 > 0 ? req.substring(sp1 + 1, sp2) : "/";
-  String body;
-  if (method == "PUT" || method == "POST") {
-    delay(10);
-    while (client.available()) body += (char)client.read();
-  }
-  handleWifiRequest(client, method, path, body);
-}
-
 #ifdef MV_HAS_WIFI
 void mvSetupHandleClient(WiFiClient& client) {
-  mvSetupHandleClient((Stream&)client);
-  client.stop();
+  mvHttpServeConnection(client);
 }
 #endif

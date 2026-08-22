@@ -1,6 +1,8 @@
 'use strict';
 
-const { tenantStore } = require('./tenantStore');
+const { isCloudDeployment } = require('../cloud/agentProtocol');
+const { tenantStore } = require('../tenants/tenantStore');
+const { applianceAuthStore } = require('../auth/applianceAuthStore');
 
 const COOKIE = 'mv_session';
 
@@ -18,17 +20,43 @@ function extractToken(req) {
   return readCookie(req, COOKIE);
 }
 
+function sessionFromToken(token) {
+  if (isCloudDeployment()) return tenantStore.sessionFromToken(token);
+  return applianceAuthStore.sessionFromToken(token);
+}
+
+function logoutToken(token) {
+  if (isCloudDeployment()) return tenantStore.logout(token);
+  return applianceAuthStore.logout(token);
+}
+
+function attachMooreviewUser(req) {
+  if (!req.mvAuth?.user) return;
+  const u = req.mvAuth.user;
+  req.mooreviewUser = {
+    id: u.userId || u.id,
+    email: u.email,
+    name: u.name,
+    role: u.role,
+  };
+}
+
 function attachSession(req, res, next) {
   const token = extractToken(req);
-  const sess = tenantStore.sessionFromToken(token);
+  const sess = sessionFromToken(token);
   req.mvAuth = sess;
   req.mvToken = token || null;
+  attachMooreviewUser(req);
   next();
 }
 
 function requireAuth(req, res, next) {
   if (!req.mvAuth) {
-    if (req.path.startsWith('/api/') || (req.headers.accept || '').includes('application/json')) {
+    const apiRequest = String(req.originalUrl || req.url || '').startsWith('/api/')
+      || req.path.startsWith('/auth/')
+      || (req.headers.accept || '').includes('application/json')
+      || String(req.headers['content-type'] || '').includes('application/json');
+    if (apiRequest) {
       return res.status(401).json({ error: 'Authentication required' });
     }
     const nextUrl = encodeURIComponent(req.originalUrl || '/');
@@ -40,6 +68,14 @@ function requireAuth(req, res, next) {
 function requirePlatformAdmin(req, res, next) {
   if (!req.mvAuth || req.mvAuth.user.role !== 'platform_admin') {
     return res.status(403).json({ error: 'Platform admin required' });
+  }
+  next();
+}
+
+function requireApplianceAdmin(req, res, next) {
+  if (!req.mvAuth?.user) return res.status(401).json({ error: 'Authentication required' });
+  if (req.mvAuth.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin required' });
   }
   next();
 }
@@ -74,9 +110,13 @@ module.exports = {
   attachSession,
   requireAuth,
   requirePlatformAdmin,
+  requireApplianceAdmin,
   requireTenantAccess,
   activeTenantId,
   setSessionCookie,
   clearSessionCookie,
   extractToken,
+  sessionFromToken,
+  logoutToken,
+  attachMooreviewUser,
 };

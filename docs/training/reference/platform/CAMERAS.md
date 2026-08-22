@@ -1,12 +1,28 @@
-# MooreVIEW IP cameras — integration guide
+# mooreVIEW IP cameras — integration guide
 
-MooreVIEW MVP Suite includes full IP camera integration for **Reolink** and other **ONVIF** cameras: discovery, live viewing, snapshot archive, vision AI, and HMI operator popups.
+mooreVIEW MVP Suite includes full IP camera integration for **Reolink** and other **ONVIF** cameras: discovery, live viewing, snapshot archive, vision AI, and HMI operator popups.
+
+## Discovery
+
+mooreVIEW uses **three** methods to find cameras (run together on **Scan network**):
+
+| Method | How | When it helps |
+|--------|-----|----------------|
+| **WS-Discovery** | UDP multicast + per-adapter broadcast on `239.255.255.250:3702` | Standard ONVIF cameras that respond to discovery |
+| **Subnet TCP sweep** | Scans your local /24 for ONVIF ports **8000**/**80**, plus native **9000** (Reolink) and RTSP **554** to *detect* cameras with ONVIF off | Managed switches that block multicast; DHCP cameras that don't answer WS-Discovery |
+| **Add by IP** | Direct ONVIF probe to one address | You know the IP from your router or Reolink app |
+
+Disable subnet sweep on the **Discover** tab with **Subnet TCP sweep** unchecked if scan is too slow on large VLANs.
+
+> **Reolink ships with ONVIF and RTSP disabled by default.** A camera in this state answers on its native port (9000) but exposes no ONVIF endpoint, so discovery cannot use it. The subnet sweep now flags these under **"Cameras found but not usable yet"** on the Discover tab. Enable **ONVIF** and **RTSP** in the Reolink app/web UI (*Settings → Network → Advanced → Server Settings / Port Settings*), then click **Add by IP** or re-scan.
 
 ## Quick start (Reolink)
 
 1. On each camera web UI: enable **ONVIF** (port **8000**) and **RTSP** (port **554**).
-2. Start MooreVIEW: `npm start` → http://127.0.0.1:3090
+2. Start mooreVIEW: `npm start` → http://127.0.0.1:3090
 3. **Tools → Cameras → Settings**: set default username/password.
+
+> **DHCP camera not found by scan?** Discovery probes every network adapter and subnet broadcast, but some networks block multicast. Use **Discover → Add & probe by IP** and enter the camera's address (from your router's DHCP list or the Reolink app).
 4. **Discover ONVIF** → **Probe all** (fills RTSP, snapshot URL, viewer URL).
 5. **HMI Setup**: place **Camera** button, pick from inventory dropdown.
 6. Live HMI: click camera button → popup plays live stream.
@@ -70,7 +86,7 @@ Requires `mongoLogger.uri` in **Historian → Logger config…** (same MongoDB a
 |--------|---------|
 | `camera_snapshots` | ONVIF snapshot JPEGs |
 | `hmi_assets` | Mirrored HMI user imports |
-| `project_bundles` | Project `.est.json` on save |
+| `project_bundles` | Project `.est.zip` snapshots on save (optional GridFS mirror) |
 | `report_pdfs` | Historian PDF exports |
 
 ### Snapshot archive settings
@@ -131,7 +147,7 @@ Response:
 
 ### Alarm integration
 
-Set **Alarm tag** to a BOOL memory tag (e.g. `CAM_ALARM`). When `score >= threshold`, MooreVIEW sets the tag `true` and logs `inference_alarm` in `camera_events`.
+Set **Alarm tag** to a BOOL memory tag (e.g. `CAM_ALARM`). When `score >= threshold`, mooreVIEW sets the tag `true` and logs `inference_alarm` in `camera_events`.
 
 ## Top-bar quick access
 
@@ -219,7 +235,9 @@ Symbols: `valve`, `pump`, `motor`, `dot`, `text`, `box`. Latest AI inference bou
 
 | Symptom | Check |
 |---------|--------|
-| Discover finds nothing | UDP 3702 multicast; same LAN/VLAN as cameras |
+| Discover finds nothing | Discovery now probes every adapter + subnet broadcast. If still empty: same LAN/VLAN as camera, Windows Firewall allowing UDP 3702, ONVIF enabled on camera. Fallback: **Discover → Add & probe by IP** with the camera's DHCP address. |
+| DHCP camera not found by scan | Some cameras/switches block multicast. Use **Discover → Add & probe by IP** (enter the address from your router or the Reolink app). |
+| Camera pings but scan misses it (only port 9000 open) | ONVIF/RTSP are disabled on the camera. Enable **ONVIF** and **RTSP** in the Reolink app/web UI (*Settings → Network → Advanced → Server/Port Settings*), then re-scan or **Add by IP**. The sweep lists such devices under **"Cameras found but not usable yet"**. |
 | Probe fails on Reolink | ONVIF enabled port 8000; credentials in Settings |
 | Player blank | go2rtc running; RTSP URL correct; `npm run go2rtc:download` |
 | GridFS errors | `mongoLogger.uri` in Logger config; MongoDB reachable |
@@ -241,8 +259,79 @@ Symbols: `valve`, `pump`, `motor`, `dot`, `text`, `box`. Latest AI inference bou
 ## Security notes
 
 - Camera credentials stored locally in `data/cameras.json` (not encrypted).
-- go2rtc binds to `127.0.0.1` only; MooreVIEW proxies `/api/go2rtc`.
+- go2rtc binds to `127.0.0.1` only; mooreVIEW proxies `/api/go2rtc`.
 - RTSP URLs contain embedded passwords — protect project exports.
+
+## Appliance → SaaS (Cloud Studio)
+
+LAN cameras stay on the **site appliance** (port **3090**) for discover/probe/credentials. The **SaaS droplet** runs **full Cloud Studio** on port **3100** (ST, Projects, HMI, Drivers, …) plus **Tools → Sites & remote cameras** for pairing and live view through the site agent. Cloud never runs WS-Discovery or subnet sweeps.
+
+**Operator flow (cloud):** open `https://mooreview.io/` (full Studio) → **Tools → Sites & remote cameras** → create site → copy pairing code → on the appliance paste under **Cameras → Settings → Cloud Studio** → **Open live**.
+
+```
+[Reolink] ← ONVIF/RTSP → [Appliance + go2rtc + siteAgent]
+                              │ outbound WSS (pairing / agent token)
+                              ▼
+                    [Cloud agent hub + camera catalog]
+                              │
+                              ▼
+                    [Operator browser → /api/sites/:siteId/cameras/:id/player]
+```
+
+### Responsibilities
+
+| Layer | Owns |
+|-------|------|
+| Appliance | Discover, probe, credentials, go2rtc, site agent |
+| Cloud | Sites, pairing codes, redacted catalog, media gateway, HMI `siteId`+`cameraId` |
+| Browser | Opens cloud player URL only |
+
+Cloud catalog fields (no passwords): `siteId`, `cameraId`, `name`, `host`, `model`, `probeStatus`, `hasStream`, `viewerPath`, `lastSeenAt`.
+
+### Agent WebSocket protocol (`src/cloud/agentProtocol.js`)
+
+Control channel `WSS /api/sites/:siteId/agent?pairingCode=` or `?token=`:
+
+| Type | Direction | Purpose |
+|------|-----------|---------|
+| `hello` / `welcome` | both | Pairing; `welcome` may include one-time `agentToken` |
+| `heartbeat` / `heartbeat_ack` | appliance → cloud | Liveness |
+| `inventory` / `inventory_ack` | appliance → cloud | Redacted camera list |
+| `viewer.open` / `viewer.close` | cloud → appliance | Start/stop media bridge |
+| `viewer.ready` / `viewer.error` | both | Session status |
+| `snapshot.push` / `snapshot.ack` | appliance → cloud | Phase 2 snapshot mirror hook |
+
+Media: appliance opens `WSS /api/sites/:siteId/agent/media?token=&sessionId=&cameraId=` and pipes local go2rtc `/api/ws`. Browser connects to `/api/sites/:siteId/cameras/:cameraId/ws`.
+
+### Pairing (Phase 1)
+
+1. On cloud (`MOOREVIEW_DEPLOYMENT=cloud` or `MOOREVIEW_CLOUD_SITES=1`): `POST /api/sites` → `{ site, pairingCode, agentToken }`.
+2. Appliance **Tools → Cameras → Settings → Cloud Studio**: Cloud URL, Site ID, Pairing code → **Save cloud pairing**.
+3. Agent connects; cloud rotates/issues `agentToken` in `welcome` (pairing code invalidated).
+4. Inventory syncs automatically; cloud `GET /api/sites/:siteId/cameras`.
+5. HMI camera button: set **siteId** + **cameraId** (SaaS). Live view uses cloud player proxy.
+
+### Phase 2 hardening
+
+- Offline player page when site agent is down
+- `maxViewersPerSite` (default 4) in `data/cloud_sites.json` settings
+- `entitlementRemoteView` flag
+- Snapshot mirror ack (`snapshot.push`) — GridFS store optional
+- TURN for WebRTC across NATs (MSE-over-proxied-WS works without TURN)
+
+### Data files
+
+| Path | Content |
+|------|---------|
+| `data/cloud-agent.json` | Appliance outbound agent config (token) |
+| `data/cloud_sites.json` | Cloud sites, hashed tokens, camera catalog |
+
+### Env flags
+
+| Variable | Effect |
+|----------|--------|
+| `MOOREVIEW_DEPLOYMENT=cloud` | Enable agent hub + `/api/sites/*` |
+| `MOOREVIEW_CLOUD_SITES=1` | Same sites API on a non-cloud process (dev/test) |
 
 ## See also
 

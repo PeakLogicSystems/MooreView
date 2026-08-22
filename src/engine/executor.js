@@ -1,6 +1,7 @@
 'use strict';
 
 const { getArrayElement, setArrayElement: writeArrayElement } = require('../tags/tagArrays');
+const { applyAltAction, makeAltContextMethods } = require('./alternatorStWire');
 
 function asBool(v) {
   return !!v;
@@ -122,6 +123,28 @@ function evalCall(node, ctx, trace) {
       const idx = typeof rest[0] === 'object' ? evalExpr(rest[0], ctx, trace) : rest[0];
       return asNum(ctx.getArrayValue(tagName, idx));
     }
+    case 'AltActiveUnit':
+      return asNum(ctx.getFb(tagName)?.activeUnit ?? ctx.getValue(tagName));
+    case 'AltFault':
+      return ctx.getFb(tagName)?.fault ? 1 : 0;
+    case 'AltLag':
+      return asNum((ctx.getFb(tagName)?.lagIndex ?? -1) + 1);
+    case 'AltOffActive':
+      return ctx.getFb(tagName)?.offActive ? 1 : 0;
+    case 'AltHighActive':
+      return ctx.getFb(tagName)?.highActive ? 1 : 0;
+    case 'AltLowActive':
+      return ctx.getFb(tagName)?.lowActive ? 1 : 0;
+    case 'AltPumpUp': {
+      const s = ctx.getFb(tagName)?.pumpStage;
+      return (s === 'lag' || s === 'lag2' || s === 'up') ? 1 : 0;
+    }
+    case 'AltPumpDown': {
+      const s = ctx.getFb(tagName)?.pumpStage;
+      return (s === 'high' || s === 'down') ? 1 : 0;
+    }
+    case 'AltLow2Active':
+      return ctx.getFb(tagName)?.low2Active ? 1 : 0;
     default: return 0;
   }
 }
@@ -192,7 +215,11 @@ function runStmt(stmt, ctx, trace) {
       case 'SetInt':
         ctx.setAnalog(stmt.tag, evalExpr(stmt.valueExpr, ctx, trace));
         break;
-      default: break;
+      default:
+        if (String(stmt.name || '').startsWith('Alt')) {
+          applyAltAction(ctx.tagStore, stmt);
+        }
+        break;
     }
   }
 }
@@ -225,7 +252,8 @@ function collectExpressionTrace(ast, ctx) {
 
 function createContext(tagStore, oneShotFired) {
   const fired = oneShotFired instanceof Set ? oneShotFired : new Set();
-  return {
+  const ctx = {
+    tagStore,
     oneShotFired: fired,
     getValue(id) {
       const t = tagStore.get(id);
@@ -383,6 +411,8 @@ function createContext(tagStore, oneShotFired) {
       if (t) t.fb.outId = outTagId;
     },
   };
+  Object.assign(ctx, makeAltContextMethods(tagStore));
+  return ctx;
 }
 
 module.exports = { execute, createContext, evalExpr, collectExpressionTrace };

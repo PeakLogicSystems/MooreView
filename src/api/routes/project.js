@@ -1,30 +1,29 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const { spawn } = require('child_process');
+const express = require('express');
 const persistence = require('../../persistence');
 const programStore = require('../../programs/programStore');
 const projectStore = require('../../project/projectStore');
-const { pack, apply, blankProjectDoc } = require('../../project/estFile');
-const { packEst, bundleFilename, resolveImportPayload } = require('../../project/projectBundle');
+const { packProjectDoc, applyProjectDoc, blankProjectDoc, exportFilename } = require('../../project/estFile');
+const {
+  packArchive,
+  applyArchive,
+  applyArchiveBuffer,
+  applyImportBuffer,
+  isZipBuffer,
+  archiveFilename,
+} = require('../../project/projectArchive');
 const PACKAGE_VERSION = require('../../../package.json').version;
+const { finishProjectImport } = require('../../project/projectImport');
+const { pickProjectImportFile } = require('../../project/nativeProjectPicker');
+const { invalidateDashboardCaches } = require('./dashboard');
 
-function attachMvDrawToEstDoc(doc) {
-  if (!doc || typeof doc !== 'object') return doc;
-  if (doc.mvDraw) return doc;
-  try {
-    const { readActiveProject } = require('../../../mv-draw/src/mvDrawStore');
-    const { normalizeMvDraw } = require('../../../mv-draw/src/mvDrawFormat');
-    const active = readActiveProject();
-    if (active && (active.nodes?.length || active.background || active.scale)) {
-      doc.mvDraw = normalizeMvDraw(active);
-      return doc;
-    }
-    const ws = persistence.readJson('workspace.est.json', null);
-    const pe = persistence.readJson('project.est.json', null);
-    const embedded = ws?.mvDraw || pe?.mvDraw || null;
-    if (embedded) doc.mvDraw = embedded;
-  } catch { /* optional */ }
-  return doc;
+function afterProjectApplied(out) {
+  invalidateDashboardCaches();
+  return out;
 }
 
 function openDirInShell(dir) {
@@ -41,64 +40,43 @@ function createProjectRoutes(deps) {
   const { tagStore, driverManager, scanEngine, graphHistory } = deps;
   const router = require('express').Router();
 
-  router.get('/project/est', (req, res) => {
-    const doc = pack({ tagStore, driverManager, persistence }, { name: req.query.name || 'project' });
-    res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Content-Disposition', 'attachment; filename="project.est"');
-    res.send(JSON.stringify(doc, null, 2));
-  });
-
-  router.get('/project/bundle', (req, res) => {
+  router.get('/project/archive', (req, res) => {
     try {
-      const doc = attachMvDrawToEstDoc(
-        pack({ tagStore, driverManager, persistence }, { name: req.query.name || 'project' }),
-      );
-      const bundle = packEst(doc, { exportedBy: PACKAGE_VERSION });
-      const name = String(doc.project?.name || req.query.name || 'project').trim() || 'project';
-      res.setHeader('Content-Type', 'application/json');
-      res.setHeader('Content-Disposition', `attachment; filename="${bundleFilename(name)}"`);
-      res.send(JSON.stringify(bundle, null, 2));
+      const name = req.query.name || 'project';
+      const buf = packArchive(deps, { name, exportedBy: PACKAGE_VERSION });
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', `attachment; filename="${archiveFilename(name)}"`);
+      res.send(buf);
     } catch (e) {
       res.status(e.status || 500).json({ error: e.message || String(e) });
     }
   });
 
-  router.post('/project/est', async (req, res) => {
+  router.post('/project/archive', express.raw({
+    type: ['application/zip', 'application/json', 'application/octet-stream', 'application/x-zip-compressed', '*/*'],
+    limit: '64mb',
+  }), async (req, res) => {
     try {
-      const resolved = resolveImportPayload(req.body);
-      if (resolved.type !== 'est') {
-        return res.status(400).json({ error: 'Expected a MooreVIEW project file (.est.json or .mvbundle)' });
+      const raw = Buffer.isBuffer(req.body) ? req.body : null;
+      if (!raw || !raw.length) {
+        return res.status(400).json({ error: 'Expected a MooreVIEW project file (.est.zip or .est.json)' });
       }
-      const doc = await apply(resolved.doc, { tagStore, driverManager, scanEngine, persistence, graphHistory });
-      if (resolved.doc?.mvDraw) {
-        try {
-          const { writeActiveProject } = require('../../../mv-draw/src/mvDrawStore');
-          const { patchEstSnapshotsWithMvDraw } = require('../../../mv-draw/src/projectSync');
-          const { normalizeMvDraw } = require('../../../mv-draw/src/mvDrawFormat');
-          const mv = normalizeMvDraw(resolved.doc.mvDraw);
-          writeActiveProject(mv);
-          patchEstSnapshotsWithMvDraw(mv);
-        } catch { /* optional */ }
-      }
-      persistence.writeJson('project.est.json', doc);
-      res.json({
-        ok: true,
-        project: doc,
-        tagCount: tagStore.count(),
-        driverCount: driverManager.list().length,
-        importWarnings: resolved.warnings || [],
-      });
+      const out = await applyImportBuffer(raw, deps);
+      res.json(await finishProjectImport(raw, deps, afterProjectApplied(out)));
     } catch (e) {
       res.status(e.status || 400).json({ error: e.message || String(e) });
     }
   });
 
   router.post('/workspace/save', async (req, res) => {
-    const doc = pack({ tagStore, driverManager, persistence }, req.body?.project || {});
-    persistence.writeJson('workspace.est.json', doc);
-    programStore.writeActive(doc.program);
-    if (doc.activeProgram) programStore.setActive(doc.activeProgram);
-    res.json({ ok: true });
+    try {
+      const meta = req.body?.project || {};
+      const buf = packArchive(deps, { ...meta, exportedBy: PACKAGE_VERSION });
+      persistence.writeBinary('workspace.est.zip', buf);
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(e.status || 500).json({ error: e.message || String(e) });
+    }
   });
 
   router.get('/projects', (req, res) => {
@@ -106,6 +84,74 @@ function createProjectRoutes(deps) {
       projects: projectStore.listProjects(),
       projectsDir: projectStore.projectsDir(),
     });
+  });
+
+  router.get('/projects/importable', (req, res) => {
+    res.json({
+      files: projectStore.listImportableProjects(),
+      projectsDir: projectStore.projectsDir(),
+    });
+  });
+
+  router.post('/projects/import-library', async (req, res) => {
+    try {
+      const file = String(req.body?.file || '').trim();
+      if (!file) return res.status(400).json({ error: 'Missing file' });
+      const { buffer } = projectStore.readImportableProjectBuffer(file);
+      const out = await applyImportBuffer(buffer, deps);
+      res.json(await finishProjectImport(buffer, deps, afterProjectApplied(out)));
+    } catch (e) {
+      res.status(e.status || 400).json({ error: e.message || String(e) });
+    }
+  });
+
+  router.post('/projects/import-pick', (req, res) => {
+    try {
+      const dir = projectStore.projectsDir();
+      const picked = pickProjectImportFile(dir);
+      if (!picked) {
+        return res.json({ ok: false, cancelled: true });
+      }
+      res.json({
+        ok: true,
+        path: picked,
+        file: path.basename(picked),
+      });
+    } catch (e) {
+      res.status(e.status || 400).json({ error: e.message || String(e) });
+    }
+  });
+
+  router.post('/projects/import-path', async (req, res) => {
+    try {
+      const fp = String(req.body?.path || '').trim();
+      if (!fp || !fs.existsSync(fp) || !fs.statSync(fp).isFile()) {
+        return res.status(400).json({ error: 'Project file not found' });
+      }
+      if (fs.statSync(fp).size > 64 * 1024 * 1024) {
+        return res.status(400).json({ error: 'Project file too large (max 64 MB)' });
+      }
+      const buffer = fs.readFileSync(fp);
+      const out = await applyImportBuffer(buffer, deps);
+      const result = await finishProjectImport(buffer, deps, afterProjectApplied(out));
+      result.sourceFile = fp;
+      res.json(result);
+    } catch (e) {
+      res.status(e.status || 400).json({ error: e.message || String(e) });
+    }
+  });
+
+  router.get('/projects/:id/archive', (req, res) => {
+    try {
+      const buf = projectStore.readProjectArchiveBuffer(req.params.id);
+      const listed = projectStore.listProjects().find((p) => p.id === req.params.id);
+      const name = listed?.name || req.params.id;
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', `attachment; filename="${archiveFilename(name)}"`);
+      res.send(buf);
+    } catch (e) {
+      res.status(e.status || 404).json({ error: e.message || String(e) });
+    }
   });
 
   router.post('/projects/open-folder', (req, res) => {
@@ -119,35 +165,31 @@ function createProjectRoutes(deps) {
   });
 
   router.post('/projects/save', async (req, res) => {
-    const name = req.body?.name || req.body?.project?.name || 'project';
-    const doc = pack({ tagStore, driverManager, persistence }, { name });
-    const saved = projectStore.saveProjectDoc(name, doc);
-    let gridfsFile = null;
     try {
-      const { mirrorUpload } = require('../../storage/gridfsMirror');
-      const gridfs = require('../../storage/gridfsStore');
-      const buf = Buffer.from(JSON.stringify(doc, null, 2), 'utf8');
-      gridfsFile = await mirrorUpload(gridfs.BUCKETS.project_bundles, buf, {
-        filename: `${saved.id || name}.est.json`,
-        contentType: 'application/json',
-        metadata: { projectId: saved.id, projectName: name, source: 'projects/save' },
-      });
-    } catch { /* ignore */ }
-    res.json({ ok: true, id: saved.id, projects: projectStore.listProjects(), gridfsFileId: gridfsFile?.fileId || null });
+      const name = req.body?.name || req.body?.project?.name || 'project';
+      const buf = packArchive(deps, { name, exportedBy: PACKAGE_VERSION });
+      const saved = projectStore.saveProjectArchive(name, buf);
+      res.json({ ok: true, id: saved.id, projects: projectStore.listProjects() });
+    } catch (e) {
+      res.status(e.status || 500).json({ error: e.message || String(e) });
+    }
   });
 
   router.post('/projects/new', async (req, res) => {
     try {
       const name = String(req.body?.name || 'untitled').trim() || 'untitled';
       const doc = blankProjectDoc(name);
-      const out = await apply(
+      const activeProgram = doc.activeProgram || programStore.suggestRelFromFilename(`${name}.st`);
+      if (activeProgram) programStore.writeProgram(activeProgram, '(* New project *)\n');
+      const out = await applyProjectDoc(
         doc,
         { tagStore, driverManager, scanEngine, persistence, graphHistory },
-        { prunePrograms: true },
+        { prunePrograms: true, programs: activeProgram ? { [activeProgram]: '(* New project *)\n' } : {} },
       );
+      afterProjectApplied(out);
       res.json({
         ok: true,
-        project: out.project,
+        project: out,
         tagCount: tagStore.count(),
         driverCount: driverManager.list().length,
       });
@@ -159,16 +201,15 @@ function createProjectRoutes(deps) {
   router.post('/projects/open', async (req, res) => {
     try {
       const id = req.body?.id;
-      const doc = projectStore.loadProjectDoc(id);
-      const out = await apply(
-        doc,
-        { tagStore, driverManager, scanEngine, persistence, graphHistory },
-      );
+      const unpacked = projectStore.loadProjectArchive(id);
+      const out = await applyArchive(unpacked, { tagStore, driverManager, scanEngine, persistence, graphHistory });
+      afterProjectApplied(out);
       res.json({
         ok: true,
-        project: out.project,
+        project: out,
         tagCount: tagStore.count(),
         driverCount: driverManager.list().length,
+        importWarnings: out.importWarnings || [],
       });
     } catch (e) {
       res.status(e.status || 400).json({ error: e.message || String(e) });
@@ -184,7 +225,8 @@ function createProjectRoutes(deps) {
 
   router.post('/config/import', async (req, res) => {
     try {
-      const doc = await apply(req.body, { tagStore, driverManager, scanEngine, persistence });
+      const doc = await applyProjectDoc(req.body, { tagStore, driverManager, scanEngine, persistence });
+      afterProjectApplied(doc);
       res.json({ ok: true, tagCount: tagStore.count(), project: doc.project });
     } catch (e) {
       res.status(e.status || 400).json({ error: e.message || String(e) });
@@ -194,4 +236,4 @@ function createProjectRoutes(deps) {
   return router;
 }
 
-module.exports = { createProjectRoutes };
+module.exports = { createProjectRoutes, exportFilename };

@@ -166,6 +166,109 @@ function drawStatsTable(doc, rows) {
   doc.y = y + 6;
 }
 
+function drawKeyValueLines(doc, lines) {
+  const config = doc._mvReportConfig;
+  ensureSpace(doc, lines.length * 14 + 8, config);
+  doc.fontSize(10).fillColor('#0f172a');
+  for (const line of lines) {
+    if (line == null || line === '') continue;
+    doc.text(String(line), { width: contentWidth(doc) });
+  }
+  doc.moveDown(0.25);
+}
+
+function drawServiceHistoryTable(doc, rows) {
+  if (!rows?.length) {
+    doc.fontSize(10).fillColor('#64748b').text('No service history recorded.');
+    doc.fillColor('#0f172a');
+    return;
+  }
+  const config = doc._mvReportConfig;
+  const cols = [
+    { label: 'Date', w: 0.16 },
+    { label: 'Type', w: 0.22 },
+    { label: 'Vendor', w: 0.22 },
+    { label: 'Notes', w: 0.4 },
+  ];
+  const width = contentWidth(doc);
+  const rowH = 16;
+  ensureSpace(doc, rowH * (rows.length + 2), config);
+  let x = doc.page.margins.left;
+  let y = doc.y;
+  doc.fontSize(9);
+  doc.rect(x, y, width, rowH).fill('#e2e8f0');
+  doc.fillColor('#0f172a').font('Helvetica-Bold');
+  cols.forEach((c) => {
+    const cw = width * c.w;
+    doc.text(c.label, x + 4, y + 4, { width: cw - 8, lineBreak: false });
+    x += cw;
+  });
+  doc.font('Helvetica');
+  y += rowH;
+  rows.forEach((row, idx) => {
+    x = doc.page.margins.left;
+    if (y + rowH > doc.page.height - doc.page.margins.bottom - 20) {
+      drawFooter(doc, config, doc._mvPageNum || 1);
+      doc._mvPageNum = (doc._mvPageNum || 1) + 1;
+      doc.addPage({ size: config.pageSize, layout: config.orientation, margin: 48 });
+      y = doc.page.margins.top;
+    }
+    if (idx % 2 === 0) doc.rect(x, y, width, rowH).fill('#f8fafc');
+    doc.fillColor('#0f172a').fontSize(9);
+    const cells = [row.date || '—', row.type || '—', row.vendor || '—', row.notes || ''];
+    cols.forEach((c, i) => {
+      const cw = width * c.w;
+      doc.text(cells[i], x + 4, y + 4, { width: cw - 8, lineBreak: false });
+      x += cw;
+    });
+    y += rowH;
+  });
+  doc.y = y + 6;
+}
+
+function drawPdmAssetSetup(doc, pdm) {
+  const ctx = pdm?.assetContext;
+  if (!ctx) return;
+  drawSectionTitle(doc, 'PdM asset setup');
+  const loc = (ctx.locationClass || '—').replace(/_/g, ' ');
+  drawKeyValueLines(doc, [
+    `Asset: ${pdm.assetId || ctx.assetId || '—'}`,
+    `Motor type: ${ctx.motorType || '—'} · Application: ${ctx.application || '—'} · Configuration: ${ctx.configuration || '—'}`,
+    `Location: ${loc}${ctx.siteName ? ` · Site: ${ctx.siteName}` : ''}`,
+    `Install date: ${ctx.installDate || ctx.effectiveInstallDate || '—'} · Age: ${ctx.pumpAgeYears != null ? `${ctx.pumpAgeYears} yr` : '—'} · Age factor: ${ctx.ageFactor ?? '—'}`,
+    ctx.pumpRole ? `Pump role: ${ctx.pumpRole} (unit ${ctx.pumpIndex ?? ctx.unitIndex ?? '—'})` : null,
+  ]);
+  drawSectionTitle(doc, 'Service history');
+  drawServiceHistoryTable(doc, ctx.serviceHistory || []);
+}
+
+function drawPdmForecast(doc, pdm) {
+  const forecast = pdm?.forecast;
+  if (!forecast?.ok) return;
+  drawSectionTitle(doc, 'Failure forecast');
+  const severity = forecast.severity || 'unknown';
+  doc.fontSize(11).fillColor(severity === 'critical' || severity === 'failed' ? '#b91c1c' : '#0f172a')
+    .font('Helvetica-Bold')
+    .text(forecast.headline || 'Forecast unavailable');
+  doc.font('Helvetica').fontSize(10).fillColor('#0f172a');
+  if (forecast.predictedFailureAt) {
+    doc.text(`Predicted date: ${new Date(forecast.predictedFailureAt).toLocaleString()}`);
+  }
+  if (forecast.faultType) doc.text(`Fault type: ${forecast.faultType}`);
+  if (forecast.primaryMethod) doc.text(`Primary method: ${forecast.primaryMethod}`);
+  doc.moveDown(0.25);
+  for (const line of forecast.reportLines || []) {
+    doc.text(`• ${line}`);
+  }
+  const rul = pdm?.rul;
+  if (rul?.ok) {
+    doc.moveDown(0.25);
+    doc.text(`Health index: ${rul.currentHealth ?? '—'} (${rul.trend || 'stable'})`);
+    if (rul.rulDaysEstimate != null) doc.text(`RUL estimate: ${rul.rulDaysEstimate} days`);
+  }
+  doc.moveDown(0.5);
+}
+
 /**
  * @param {object} payload
  * @returns {Promise<Buffer>}
@@ -177,6 +280,8 @@ function buildPdfReport(payload) {
   const history = payload?.history && typeof payload.history === 'object' ? payload.history : {};
   const stats = penStatistics(history, pens);
   const chartBuf = config.sections.chart ? decodeChartImage(payload?.chartImage) : null;
+  const pdm = payload?.pdm && typeof payload.pdm === 'object' ? payload.pdm : null;
+  const hasSamples = stats.some((s) => s.samples > 0);
 
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
@@ -215,6 +320,7 @@ function buildPdfReport(payload) {
         meta.projectName ? `Project: ${meta.projectName}` : null,
         meta.rangeLabel ? `Range: ${meta.rangeLabel}` : null,
         meta.source ? `Source: ${meta.source}` : null,
+        meta.assetId ? `Asset: ${meta.assetId}` : null,
         meta.penCount != null ? `Pens: ${meta.penCount}` : null,
         meta.sampleCount != null ? `Samples: ${meta.sampleCount}` : null,
         `Generated: ${meta.exportedAt || new Date().toISOString()}`,
@@ -242,12 +348,20 @@ function buildPdfReport(payload) {
       }
     }
 
-    if (config.sections.penTable && stats.length) {
+    if (config.sections.assetSetup && pdm) {
+      drawPdmAssetSetup(doc, pdm);
+    }
+
+    if (config.sections.forecast && pdm?.forecast) {
+      drawPdmForecast(doc, pdm);
+    }
+
+    if (config.sections.penTable && stats.length && hasSamples) {
       drawSectionTitle(doc, 'Pen summary');
       drawPenTable(doc, stats);
     }
 
-    if (config.sections.statistics && stats.length) {
+    if (config.sections.statistics && stats.length && hasSamples) {
       drawSectionTitle(doc, 'Statistics (scaled values)');
       drawStatsTable(doc, stats);
     }

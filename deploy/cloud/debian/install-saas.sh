@@ -34,8 +34,8 @@ if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
   die "Run as root: sudo bash $0"
 fi
 
-if [[ ! -f "$SOURCE_DIR/package.json" ]] || [[ ! -f "$SOURCE_DIR/src/server.js" ]]; then
-  die "MooreVIEW cloud source not found at $SOURCE_DIR (need src/server.js — set MOOREVIEW_SOURCE)"
+if [[ ! -f "$SOURCE_DIR/package.json" ]] || [[ ! -f "$SOURCE_DIR/server.js" ]]; then
+  die "MooreVIEW source not found at $SOURCE_DIR (need server.js — set MOOREVIEW_SOURCE)"
 fi
 
 export DEBIAN_FRONTEND=noninteractive
@@ -71,7 +71,9 @@ fi
 install -d -m 0750 -o root -g "$SERVICE_USER" /etc/mooreview
 for deploy_file in "$SCRIPT_DIR"/.env.saas.debian.example "$SCRIPT_DIR"/mooreview-saas.service \
   "$SCRIPT_DIR"/mooreview-runtime.service "$SCRIPT_DIR"/nginx-mooreview-saas.conf \
-  "$SCRIPT_DIR"/install-saas.sh; do
+  "$SCRIPT_DIR"/install-saas.sh "$SCRIPT_DIR"/enable-saas-mqtt.sh \
+  "$SCRIPT_DIR"/enable-phase1-archive-compact.sh "$SCRIPT_DIR"/mooreview-archive-compact.service \
+  "$SCRIPT_DIR"/mooreview-archive-compact.timer "$SCRIPT_DIR"/write-nginx-saas-site.sh; do
   strip_crlf "$deploy_file"
 done
 
@@ -82,6 +84,18 @@ else
   log "Keeping existing $SAAS_ENV"
 fi
 strip_crlf "$SAAS_ENV"
+
+# SaaS must listen on 3100 — fix legacy env copied from appliance / hub installs
+if grep -qE '^PORT=3090' "$SAAS_ENV" 2>/dev/null; then
+  log "Fixing PORT=3090 → 3100 in $SAAS_ENV"
+  sed -i 's/^PORT=3090/PORT=3100/' "$SAAS_ENV"
+elif ! grep -qE '^PORT=' "$SAAS_ENV" 2>/dev/null; then
+  log "Adding PORT=3100 to $SAAS_ENV"
+  printf '\nPORT=3100\n' >> "$SAAS_ENV"
+fi
+if grep -qE '^MOOREVIEW_PORT=3090' "$SAAS_ENV" 2>/dev/null; then
+  sed -i 's/^MOOREVIEW_PORT=3090/MOOREVIEW_PORT=3100/' "$SAAS_ENV"
+fi
 
 # Block boot-loop from template placeholders
 if grep -qE '^MONGODB_URI=.*@(HOST|YOUR_|REPLACE|XXXXX|CHANGE_ME)' "$SAAS_ENV" 2>/dev/null \
@@ -115,6 +129,36 @@ sudo -u "$SERVICE_USER" bash -lc "cd '$INSTALL_DIR' && npm ci --omit=dev"
 install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" "$DATA_DIR"
 install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" "$DATA_DIR/projects"
 
+# Legacy installs kept tenant users under $INSTALL_DIR/data before MOOREVIEW_DATA=/var/lib/mooreview.
+LEGACY_DATA="$INSTALL_DIR/data"
+RUNTIME_TENANTS="$DATA_DIR/cloud_tenants.json"
+if [[ -f "$LEGACY_DATA/cloud_tenants.json" ]] && [[ ! -f "$RUNTIME_TENANTS" || "$(wc -c < "$RUNTIME_TENANTS" | tr -d ' ')" -lt 4096 ]]; then
+  legacy_size="$(wc -c < "$LEGACY_DATA/cloud_tenants.json" | tr -d ' ')"
+  if [[ "${legacy_size:-0}" -gt 4096 ]]; then
+    log "Migrating cloud_tenants.json from legacy $LEGACY_DATA → $DATA_DIR"
+    cp -a "$LEGACY_DATA/cloud_tenants.json" "$RUNTIME_TENANTS"
+    chown "$SERVICE_USER:$SERVICE_USER" "$RUNTIME_TENANTS"
+  fi
+fi
+if [[ -d "$LEGACY_DATA" ]] && [[ "$LEGACY_DATA" != "$DATA_DIR" ]]; then
+  for legacy_file in settings.json workspace.est.zip workspace.est.json parc.json drivers.json tags.json \
+    cloud_sites.json hardware_assignments.json cameras.json program-deploy.json; do
+    src="$LEGACY_DATA/$legacy_file"
+    dest="$DATA_DIR/$legacy_file"
+    if [[ ! -f "$src" ]]; then continue; fi
+    if [[ ! -f "$dest" ]] || [[ "$(wc -c < "$src" | tr -d ' ')" -gt "$(wc -c < "$dest" | tr -d ' ')" ]]; then
+      log "Migrating $legacy_file from legacy data → $DATA_DIR"
+      cp -a "$src" "$dest"
+      chown "$SERVICE_USER:$SERVICE_USER" "$dest"
+    fi
+  done
+  if [[ -d "$LEGACY_DATA/projects" ]]; then
+    log "Merging legacy data/projects → $DATA_DIR/projects"
+    rsync -a "$LEGACY_DATA/projects/" "$DATA_DIR/projects/"
+    chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR/projects"
+  fi
+fi
+
 # Ship bundled Studio snapshots into runtime data dir (MOOREVIEW_DATA=/var/lib/mooreview).
 # Bundle extracts them under $INSTALL_DIR/data/projects; the service does not read that path.
 BUNDLED_PROJECTS_SRC=""
@@ -126,8 +170,8 @@ fi
 if [[ -n "$BUNDLED_PROJECTS_SRC" ]]; then
   n_src="$(find "$BUNDLED_PROJECTS_SRC" -maxdepth 1 -type f -name '*.est.json' 2>/dev/null | wc -l | tr -d ' ')"
   if [[ "${n_src:-0}" -gt 0 ]]; then
-    log "Installing $n_src bundled project snapshot(s) → $DATA_DIR/projects/"
-    rsync -a --include='*.est.json' --exclude='*' "$BUNDLED_PROJECTS_SRC/" "$DATA_DIR/projects/"
+    log "Installing $n_src bundled project snapshot(s) (.est.zip + .est.json) → $DATA_DIR/projects/"
+    rsync -a --include='*.est.zip' --include='*.est.json' --exclude='*' "$BUNDLED_PROJECTS_SRC/" "$DATA_DIR/projects/"
     chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR/projects"
   else
     log "No *.est.json in $BUNDLED_PROJECTS_SRC — skipping project seed copy"
@@ -166,27 +210,9 @@ else
 fi
 
 # --- nginx -> 3100 ---
-# Do NOT overwrite an existing TLS-enabled site (certbot edits this file).
 NGINX_SITE="/etc/nginx/sites-available/mooreview-saas"
-if [[ -f "$NGINX_SITE" ]] && grep -qE 'ssl_certificate|listen 443' "$NGINX_SITE"; then
-  log "Keeping existing TLS nginx site $NGINX_SITE (not overwriting certbot config)"
-  # Ensure proxy still targets SaaS :3100
-  if grep -q 'proxy_pass http://127.0.0.1:3090' "$NGINX_SITE"; then
-    log "Fixing proxy_pass 3090 → 3100 in TLS site"
-    sed -i 's|proxy_pass http://127.0.0.1:3090|proxy_pass http://127.0.0.1:3100|g' "$NGINX_SITE"
-  fi
-else
-  install -m 0644 "$SCRIPT_DIR/nginx-mooreview-saas.conf" "$NGINX_SITE"
-fi
-if [[ ! -L /etc/nginx/sites-enabled/mooreview-saas ]]; then
-  ln -sf "$NGINX_SITE" /etc/nginx/sites-enabled/mooreview-saas
-fi
-# Disable legacy 3090 site if present
-[[ -L /etc/nginx/sites-enabled/mooreview ]] && rm -f /etc/nginx/sites-enabled/mooreview || true
-# Drop other default sites that may steal :80/:443
-[[ -L /etc/nginx/sites-enabled/default ]] && rm -f /etc/nginx/sites-enabled/default || true
-nginx -t
-systemctl reload nginx
+MOOREVIEW_DOMAIN="$DOMAIN" MOOREVIEW_SAAS_PORT=3100 NGINX_SITE="$NGINX_SITE" \
+  bash "$SCRIPT_DIR/write-nginx-saas-site.sh"
 
 # --- UFW (HTTP/HTTPS only; 3090 not exposed until runtime enabled) ---
 if command -v ufw >/dev/null 2>&1; then

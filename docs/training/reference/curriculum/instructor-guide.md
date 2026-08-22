@@ -1,8 +1,8 @@
-# MooreVIEW + IoT CBM — Instructor Guide
+# mooreVIEW + IoT CBM — Instructor Guide
 
-**Version 1.1** · For trainers delivering the unified MooreVIEW (M0–M15) and IoT Condition-Based Monitoring (CBM-1–CBM-13) curriculum.
+**Version 1.1** · For trainers delivering the unified mooreVIEW (M0–M15) and IoT Condition-Based Monitoring (CBM-1–CBM-13) curriculum.
 
-**Learner access:** Tools → Training (F2) in MooreVIEW MVP Suite  
+**Learner access:** Tools → Training (F2) in mooreVIEW MVP Suite  
 **Trainer reference:** This document + Training → Instructor tab (F2)
 
 ---
@@ -14,10 +14,10 @@ Open every new cohort with this **Who / Where / What / Why / How** script (also 
 | Question | Say this |
 |----------|----------|
 | **Who** | “This class is for people who fix and watch building equipment—techs, electricians, maintenance, and managers. You do not need to be a programmer to start.” |
-| **Where** | “Today we work on your laptop in MooreVIEW. On real sites, sensors sit in mechanical rooms and on roofs. MooreVIEW can run on your computer or talk to equipment through a gateway.” |
-| **What** | “MooreVIEW is software that shows if equipment is healthy—temperature, leaks, motor run time, alarms. We learn two things: why monitoring matters (CBM), and how to set up MooreVIEW step by step.” |
+| **Where** | “Today we work on your laptop in mooreVIEW. On real sites, sensors sit in mechanical rooms and on roofs. mooreVIEW can run on your computer or talk to equipment through a gateway.” |
+| **What** | “mooreVIEW is software that shows if equipment is healthy—temperature, leaks, motor run time, alarms. We learn two things: why monitoring matters (CBM), and how to set up mooreVIEW step by step.” |
 | **Why** | “We monitor so we fix problems before something breaks. That saves money, keeps people safe, and avoids midnight emergency calls.” |
-| **How** | “We follow lessons in Training (F2). You will connect sensors to MooreVIEW, build a screen operators can use, set alarms, and read trends. Labs are hands-on—ask questions as we go.” |
+| **How** | “We follow lessons in Training (F2). You will connect sensors to mooreVIEW, build a screen operators can use, set alarms, and read trends. Labs are hands-on—ask questions as we go.” |
 
 **Time:** 10–15 minutes + 2–3 student questions. Point students to F2 → Overview table before Module 1 or M0.
 
@@ -45,11 +45,11 @@ This guide is written for **instructors**, not students. Each module section inc
 | CBM Basic | Sales, facility staff | 1 day | CBM-1–4 + M0 overview |
 | CBM Intermediate | Technicians | 2 days | CBM-1–10 + M6/M8/M9 labs |
 | CBM Advanced certification | Integrators | 3 days | Full CBM + capstone |
-| MooreVIEW Operator | Plant operators | ~12 h | M0, M1, M3, M6, M8, M9, M13 |
-| MooreVIEW Integrator | Commissioners | ~7 days | M0–M15 |
-| Combined bootcamp | Mixed cohort | 5–10 days | Map CBM theory to MooreVIEW labs via **Mapping** tab |
+| mooreVIEW Operator | Plant operators | ~12 h | M0, M1, M3, M6, M8, M9, M13 |
+| mooreVIEW Integrator | Commissioners | ~7 days | M0–M15 |
+| Combined bootcamp | Mixed cohort | 5–10 days | Map CBM theory to mooreVIEW labs via **Mapping** tab |
 
-Run **F2 → Mapping** on the projector so students see how CBM modules align with MooreVIEW labs.
+Run **F2 → Mapping** on the projector so students see how CBM modules align with mooreVIEW labs.
 
 ---
 
@@ -57,9 +57,10 @@ Run **F2 → Mapping** on the projector so students see how CBM modules align wi
 
 Trainers should be comfortable with:
 
-- Starting MooreVIEW (`npm install` → `npm run start:pc` → `http://127.0.0.1:3090`)
+- Starting mooreVIEW (`npm install` → `npm start` → `http://127.0.0.1:3090`)
+- Dual-PC dev (optional): home PC + **MV-workstation** — data copy via `scripts/push-data-to-mv-workstation.ps1`, Cursor chats via **cursaves** (`docs/MV-WORKSTATION-CURSAVES.md`)
 - Project save/open, Drivers, Tags, Program (ST), HMI, System setup
-- At least one field bus (Modbus RTU or mock driver) and one Parc path (Opta MQTT)
+- At least one field bus (Modbus RTU or mock driver), one Parc path (Opta MQTT), and awareness of **BACnet/IP** (`bacnet` driver on edge appliances for BAS coexistence)
 - Basic networking: IP, DHCP, broker host/port, cellular APN concept
 
 For **M7/M14**, pre-run the Parc baseline lab yourself within 48 hours of class.
@@ -72,7 +73,7 @@ For **M7/M14**, pre-run the Parc baseline lab yourself within 48 hours of class.
 
 - [ ] Node.js LTS installed
 - [ ] `est-pc` repo cloned; `npm install` completed
-- [ ] `npm run start:pc` reaches MVP Suite without errors
+- [ ] `npm start` reaches MVP Suite without errors
 - [ ] Optional: MongoDB running if teaching M8/M10/M11 historian archive
 - [ ] Browser: Chrome or Edge (avoid IE)
 
@@ -95,6 +96,7 @@ For **M7/M14**, pre-run the Parc baseline lab yourself within 48 hours of class.
 | ONVIF IP camera (Reolink) | M15 | ONVIF + RTSP enabled; on same LAN as laptops |
 | go2rtc binary | M15 | Run `npm run go2rtc:download` before class |
 | Modbus device or mock | M4 | Datexel template or internal mock |
+| BACnet/IP simulator or BMS VLAN (optional) | M4, M5 | YABE, BACnet Stack demo device, or site router — `docs/BACNET.md` |
 | CT, leak rope, thermistor demo | CBM-3, CBM-6 | For sensor ID exercise |
 | DMM, network tester | CBM-6, CBM-12 | |
 
@@ -119,7 +121,7 @@ For **M7/M14**, pre-run the Parc baseline lab yourself within 48 hours of class.
 | Phase | Layout |
 |-------|--------|
 | Concept (CBM-1–5) | Rows; slides or F2 Overview |
-| MooreVIEW UI (M0–M2) | Follow-along on own laptops |
+| mooreVIEW UI (M0–M2) | Follow-along on own laptops |
 | Drivers/ST (M3–M6) | Pairs; one “driver” laptop per bench I/O |
 | Parc (M7, M14) | Rotating queue to shared Opta bench |
 | Capstone | Teams of 3–4 with assigned roles: lead, network, HMI, documentation |
@@ -134,14 +136,14 @@ For **M7/M14**, pre-run the Parc baseline lab yourself within 48 hours of class.
 
 | Component | Weight | Instructor notes |
 |-----------|--------|------------------|
-| Module quizzes | 20% | One quiz per day; open-book allowed for MooreVIEW UI paths |
+| Module quizzes | 20% | One quiz per day; open-book allowed for mooreVIEW UI paths |
 | Installation lab | 20% | CBM-6; observe mounting, wiring, tag mapping |
 | Dashboard configuration | 15% | CBM-8 / M6; bindings must show live values |
 | Alarm configuration | 15% | CBM-9 / M9; must trip, display, and ack |
 | Troubleshooting exercise | 10% | CBM-12; inject one fault (broker down, wrong slave ID) |
 | Final capstone | 20% | CBM-13; use rubric below |
 
-### 5.2 MooreVIEW checkpoints
+### 5.2 mooreVIEW checkpoints
 
 | Gate | Format | Pass (all required) | Fail triggers |
 |------|--------|---------------------|---------------|
@@ -158,7 +160,7 @@ For **M7/M14**, pre-run the Parc baseline lab yourself within 48 hours of class.
 |-----------|--------|
 | Site survey / sensor plan documented | 10 |
 | Gateway commissioned (Parc or Modbus path) | 20 |
-| MooreVIEW project: drivers + tags correct | 15 |
+| mooreVIEW project: drivers + tags correct | 15 |
 | ST or logic running; outputs respond | 15 |
 | HMI usable by operator | 15 |
 | Alarms configured and demonstrated | 10 |
@@ -177,7 +179,7 @@ For **M7/M14**, pre-run the Parc baseline lab yourself within 48 hours of class.
 | 2 | CBM-6 install lab | CBM-7, CBM-8 + M6 dashboard lab |
 | 3 | CBM-9, CBM-10 | CBM-11, CBM-12; CBM-13 capstone presentations |
 
-### 6.2 MooreVIEW integrator — 7 days
+### 6.2 mooreVIEW integrator — 7 days
 
 | Day | Modules | Checkpoint |
 |-----|---------|------------|
@@ -196,7 +198,7 @@ M0 (30 m) → CBM-1 (45 m) → CBM-2 architecture (45 m) → live M6 HMI demo (3
 
 ---
 
-## 7. MooreVIEW modules — instructor notes
+## 7. mooreVIEW modules — instructor notes
 
 ### M0 — Product map & first launch (60 min)
 
@@ -204,8 +206,8 @@ M0 (30 m) → CBM-1 (45 m) → CBM-2 architecture (45 m) → live M6 HMI demo (3
 
 **Teach (30 min):**
 
-1. MooreVIEW product family: MVP Suite (local appliance) vs Cloud Studio vs embedded `.est` on edge.
-2. Live start: terminal `npm run start:pc`, browser URL, top bar Project ▾ / Tools ▾.
+1. mooreVIEW product family: MVP Suite (local appliance) vs Cloud Studio vs embedded `.est` on edge.
+2. Live start: terminal `npm start`, browser URL, top bar Project ▾ / Tools ▾.
 3. F1 Help vs F2 Training — students will use both all week.
 4. Show one vertical `.est` (assisted living or pool) — do not commission yet.
 
@@ -223,12 +225,12 @@ M0 (30 m) → CBM-1 (45 m) → CBM-2 architecture (45 m) → live M6 HMI demo (3
 
 ### M1 — UI layout, roles & projects (90 min)
 
-**Prep:** Prepare sample exported `.est.json` on USB/share.
+**Prep:** Prepare sample exported `.est.zip` on USB/share (legacy `.est.json` optional for Import demo).
 
 **Teach (40 min):**
 
 1. Screen regions: top bar, canvas, popups (Program, Tags, Drivers…).
-2. Project lifecycle: New, Open, Save, Save as, Export.
+2. Project lifecycle: New, Open, Save, Save as, Export/Import (`.est.zip`; legacy `.est.json` via Import).
 3. Roles concept: operator vs technician vs integrator (site policy; show user-facing features only).
 4. Tools menu tour — match to commissioning spine on F2 Overview.
 
@@ -285,7 +287,7 @@ M0 (30 m) → CBM-1 (45 m) → CBM-2 architecture (45 m) → live M6 HMI demo (3
 
 ### M4 — Drivers, templates & field buses (150 min)
 
-**Prep:** Modbus RTU USB adapter or mock; know COM port on instructor machine.
+**Prep:** Modbus RTU USB adapter or mock; know COM port on instructor machine. Optional: BACnet/IP device or simulator on lab VLAN for **`bacnet`** demo. Optional: EZ Meter or Modbus simulator for **facility PQ** two-step apply.
 
 **Teach (45 min):**
 
@@ -293,14 +295,16 @@ M0 (30 m) → CBM-1 (45 m) → CBM-2 architecture (45 m) → live M6 HMI demo (3
 2. Apply device template — what it creates (driver + tags).
 3. Modbus RTU troubleshooting tree — F1 Serial port troubleshooting.
 4. Brief: MQTT, HTTPS, `mqtt_parc` preview for M7.
+5. **BACnet/IP (`bacnet`):** edge appliance only; **Discover devices** (Who-Is) → **Browse & import tags**; read-mostly coexistence with campus BAS; **Allow writes** off by default — `docs/BACNET.md`.
+6. **EZ Meter facility PQ (optional):** two-step apply — (1) **EZ Meter DDS-RGB 2.025 (full map)** → driver `dds_rgb`, 50 `DDS_*` tags; (2) **EZ Meter — facility PQ derived measurement set** → `MECH_PQ_*` mirrors + ST `logic/ezmeter_facility_pq.st`. See **`docs/facilities/EZMETER_FACILITY_PQ.md`**.
 
-**Lab (95 min):** Apply template → Test driver → verify tags.
+**Lab (95 min):** Apply template → Test driver → verify tags. **Optional extension A:** add `bacnet` driver → Discover → import one analog point → confirm **Live I/O**. **Optional extension B:** EZ Meter two-step apply → confirm `DDS_V_A` and `MECH_PQ_KW_SUM` live.
 
 **Discussion:** Difference between driver scan and template?
 
-**Pitfalls:** Wrong COM port; slave ID mismatch; Apply without Test.
+**Pitfalls:** Wrong COM port; slave ID mismatch; Apply without Test; EZ Meter derived set applied before full map.
 
-**Verify:** Test passes; tag values update (or mock simulates).
+**Verify:** Test passes; tag values update (or mock simulates). EZ Meter path: `MECH_PQ_*` memory tags update when ST is running.
 
 ---
 
@@ -388,25 +392,27 @@ M0 (30 m) → CBM-1 (45 m) → CBM-2 architecture (45 m) → live M6 HMI demo (3
 
 ### M9 — Alarms, notifications & CMMS (120 min)
 
-**Prep:** Tag with IH limit; CMMS_INTEGRATION.md example visible.
+**Prep:** Tag with IH limit; CMMS feature enabled for student login; `docs/CMMS_APPLIANCE.md` and `docs/pdm/PDM_PROACTIVE_CMMS.md` open.
 
 **Teach (35 min):**
 
 1. Alarm limits on Tags; active alarm list.
 2. Ack workflow; operator responsibility.
-3. CMMS MQTT bridge overview (conceptual).
+3. Integrated **CMMS** (`/cmms`) — work orders, PM, alarm auto-WO (**reactive** last line).
+4. **PdM proactive PM WO** — early warning before alarm (**proactive**); contrast alarm vs PdM sources.
+5. External CMMS MQTT bridge (optional — `Alarms → Notification users…`).
 
-**Lab (75 min):** Trip high limit; Ack; read CMMS doc.
+**Lab (75 min):** Trip high limit; Ack; open `/cmms` and verify alarm work order. Then (or in M11) seed PdM demo and verify proactive PM WO with `source: pdm`.
 
-**Pitfalls:** Limits on wrong tag; BOOL vs REAL alarm types confused.
+**Pitfalls:** Limits on wrong tag; BOOL vs REAL alarm types confused; integrated CMMS vs MQTT publish; confusing **reactive** alarm WO with **proactive** PdM WO.
 
-**Verify:** Alarm appears, ack clears or documents per site policy.
+**Verify:** Alarm appears, ack works, CMMS WO visible when entitled; student can explain proactive vs reactive.
 
 ---
 
 ### M10 — MV Draw site plans (120 min)
 
-**Prep:** Assisted-living plan asset; `mv-draw/README.md` open.
+**Prep:** Assisted-living plan asset; `mv-draw/README.md` open. Confirm MV Draw top bar: **File** and tools on the left, **Help** / **Close** on the right (not centered).
 
 **Teach (30 min):** Open plan, scale, symbols, save in bundle context.
 
@@ -418,19 +424,27 @@ M0 (30 m) → CBM-1 (45 m) → CBM-2 architecture (45 m) → live M6 HMI demo (3
 
 ### M11 — PdM & ROI (90 min)
 
-**Prep:** Demo project with historian or edge inference samples.
+**Prep:** Demo project with historian or edge inference samples; MongoDB optional but recommended; duplex-lift-station or motor asset seeded.
 
-**Teach (30 min):** PdM asset map, health index, forecast banner, ROI calculator.
+**Teach (30 min):** PdM asset setup (motor type, location, service history), health index, forecast banner, **proactive CMMS PM WO**, ROI calculator. Emphasize **proactive, not reactive**.
 
-**Lab (50 min):** F1 PdM walkthrough; simulate motor start if no edge device.
+**Lab (50 min):**
 
-**Pitfalls:** No data — use Simulate motor start in UI.
+1. **Historian → Logger config… → PdM** — configure asset, **Seed demo data** (30–360 days)
+2. **Build features now** / **Run proactive CMMS check**
+3. Open **CMMS** — find `Proactive PM` work order (`source: pdm`)
+4. **Historian** — Load PdM, read forecast banner; **Download PdM PDF**
+5. Complete WO; verify service history on asset tab
+
+**Pitfalls:** No data — use **Seed demo data** not only motor-start sim; proactive WO disabled in settings; student thinks alarm is the only CMMS trigger.
+
+**Verify:** Student explains one forecast and one proactive PM WO; can contrast with alarm WO from M9.
 
 ---
 
 ### M12 — Cloud Studio & entitlements (120 min)
 
-**Prep:** Cloud seed script run; test login with organization ID `demo`.
+**Prep:** Local cloud: `npm run start:saas` then `npm run seed`. Or use hosted DO droplet (see `docs/CLOUD_DEPLOY_DO.md`). Test login: org `demo`, `operator@demo.local` / `demo`.
 
 **Teach (40 min):**
 
@@ -438,16 +452,18 @@ M0 (30 m) → CBM-1 (45 m) → CBM-2 architecture (45 m) → live M6 HMI demo (3
 2. **Sites** (`/sites`) — locations, station codes, online/firmware badges.
 3. **All devices** (`/sites/devices`) — sort/filter by SIM, serial, online, commissioning.
 4. **Assets map** (`/fleet`) — pump symbols: green OK, yellow warning, red alarm, gray offline.
-5. Edge vs cloud field buses; Modbus stays on edge appliances.
-6. **Studio** — Deploy project / Share project for MV Cloud catalog per site.
+5. Edge vs cloud field buses; Modbus and **BACnet/IP** stay on edge appliances (cloud reads via site agent/uplink).
+6. **CMMS** (`/cmms`) when tenant entitlement enabled — integrated work orders (not Reporting menu).
+7. **Studio** — Deploy project / Share project for MV Cloud catalog per site.
 
 **Lab (70 min):**
 
 1. Sign in with organization ID, email, password.
 2. Open **Sites** and **All devices**; explain one row (type, SIM, commission state).
 3. Open **Assets** map; identify alarm colors on the legend.
-4. Open **Studio**; pick a site; run **Deploy project…** or **Share project…**.
-5. Document one edge-only feature (e.g. Modbus driver).
+4. Open **CMMS** (`/cmms`) if entitled; show overview or one work order.
+5. Open **Studio**; pick a site; run **Deploy project…** or **Share project…**.
+6. Document one edge-only feature (e.g. Modbus driver or **`bacnet`** discover/browse).
 
 **Verify:** Student explains organization ID, device inventory, and map symbology.
 
@@ -479,7 +495,7 @@ M0 (30 m) → CBM-1 (45 m) → CBM-2 architecture (45 m) → live M6 HMI demo (3
 
 **Lab (130 min):** Template #2 on T-HaLow; or gateway bridge demo.
 
-**Verify — Checkpoint D:** HaLow tags in MooreVIEW or cloud sees Opta telemetry via bridge.
+**Verify — Checkpoint D:** HaLow tags in mooreVIEW or cloud sees Opta telemetry via bridge.
 
 ---
 
@@ -509,7 +525,7 @@ M0 (30 m) → CBM-1 (45 m) → CBM-2 architecture (45 m) → live M6 HMI demo (3
 
 **Teach:** Maintenance strategies table; downtime cost story; ROI narrative.  
 **Exercise:** Small groups compare costs for one pump — report back.  
-**MooreVIEW link:** Show Historian trend + PdM screenshot (M11 preview).  
+**mooreVIEW link:** Show Historian trend + PdM screenshot (M11 preview).  
 **Quiz:** 5 questions — define CBM, name three strategies.
 
 ---
@@ -518,7 +534,7 @@ M0 (30 m) → CBM-1 (45 m) → CBM-2 architecture (45 m) → live M6 HMI demo (3
 
 **Teach:** Sensor → gateway → cloud → app diagram; link to Parc `mooreview/v1`.  
 **Activity:** Draw architecture for commercial building — compare to F2 Parc tab.  
-**MooreVIEW link:** Drivers overview; mention `mqtt_parc`, Modbus, HTTPS.
+**mooreVIEW link:** Drivers overview; mention `mqtt_parc`, Modbus, HTTPS.
 
 ---
 
@@ -526,21 +542,21 @@ M0 (30 m) → CBM-1 (45 m) → CBM-2 architecture (45 m) → live M6 HMI demo (3
 
 **Teach:** Sensor table (temp, vibration, CT, leak…).  
 **Exercise:** Match sensor to asset — use physical samples pass around.  
-**MooreVIEW link:** Device templates in Drivers.
+**mooreVIEW link:** Device templates in Drivers; optional **EZ Meter facility PQ** demo — `docs/facilities/EZMETER_FACILITY_PQ.md`.
 
 ---
 
 ### CBM-4 — Residential applications (60 min)
 
 **Case study:** Whole-home — leak + temp alarms.  
-**MooreVIEW link:** Residential tags in assisted-living demo.
+**mooreVIEW link:** Residential tags in assisted-living demo.
 
 ---
 
 ### CBM-5 — Commercial applications (60 min)
 
 **Case study:** Multi-site office — centralized alarms.  
-**MooreVIEW link:** Position ID vs deviceId (M7 concept).
+**mooreVIEW link:** Position ID vs deviceId (M7 concept); optional main-service **EZ Meter PQ** on Modbus at each site mechanical room.
 
 ---
 
@@ -548,7 +564,7 @@ M0 (30 m) → CBM-1 (45 m) → CBM-2 architecture (45 m) → live M6 HMI demo (3
 
 **Lab:** Mount sensors on demo skid; map to tags; Live I/O check.  
 **Safety:** PPE, de-energize before wiring demos.  
-**MooreVIEW link:** M2 spine + M4 drivers.
+**mooreVIEW link:** M2 spine + M4 drivers.
 
 ---
 
@@ -556,28 +572,29 @@ M0 (30 m) → CBM-1 (45 m) → CBM-2 architecture (45 m) → live M6 HMI demo (3
 
 **Teach:** DHCP, static IP, VLAN, cellular APN, VPN.  
 **Exercise:** Plan IP table for classroom bench.  
-**MooreVIEW link:** M7 broker IP; gateway `/setup` on 192.168.4.1.
+**mooreVIEW link:** M7 broker IP; gateway `/setup` on 192.168.4.1.
 
 ---
 
 ### CBM-8 — Cloud & dashboards (120 min)
 
 **Exercise:** HVAC dashboard — supply air, fan HOA, high temp alarm.  
-**MooreVIEW link:** M6 lab — same session if schedule allows.
+**mooreVIEW link:** M6 lab — same session if schedule allows.
 
 ---
 
 ### CBM-9 — Alarm management (90 min)
 
 **Lab:** Four alarm types — temp, vibration, leak, power fail.  
-**MooreVIEW link:** M9 lab.
+**mooreVIEW link:** M9 lab.
 
 ---
 
 ### CBM-10 — Data analysis & PdM (90 min)
 
-**Exercise:** Interpret six-month trend; discuss RUL.  
-**MooreVIEW link:** M8 + M11; Build features now.
+**Exercise:** Interpret six-month trend; discuss RUL; identify proactive vs reactive maintenance action.
+
+**mooreVIEW link:** M8 + M11; **Seed demo data**, **Build features now**, **Run proactive CMMS check**, CMMS WO with source `pdm`.
 
 ---
 
@@ -596,10 +613,11 @@ M0 (30 m) → CBM-1 (45 m) → CBM-2 architecture (45 m) → live M6 HMI demo (3
 |----------------|-------------------|
 | Broker stopped | Parc offline; check hub |
 | Wrong Modbus slave | Test fails |
+| EZ Meter derived before full map | Apply error — apply full map first |
 | Hist disabled | Flat trend |
 | ST stopped | Outputs frozen |
 
-**MooreVIEW link:** F1 device guides + driver Test.
+**mooreVIEW link:** F1 device guides + driver Test.
 
 ---
 
@@ -615,7 +633,7 @@ See **Section 16**. Teams present last 30 min of day.
 
 1. Confirm Mosquitto listening; firewall open.
 2. Opta `/setup` — broker IP, unique `deviceId`, save, reboot if required.
-3. MooreVIEW: System setup → MQTT Parc → enable → Apply.
+3. mooreVIEW: System setup → MQTT Parc → enable → Apply.
 4. Drivers → Apply template **Arduino Opta — MQTT Parc ST runtime** — set deviceId to match.
 5. Wait for telemetry (~30 s); **Sync tags from device**.
 6. Program → Remote → Connect → **Download & Start**.
@@ -625,21 +643,21 @@ See **Section 16**. Teams present last 30 min of day.
 
 ### 9.2 T-HaLow (M14)
 
-1. Join `MooreVIEW-T-HaLow` AP only for provisioning.
+1. Join `mooreVIEW-T-HaLow` AP only for provisioning.
 2. `http://192.168.4.1:8080/setup` — HaLow broker IP, deviceId, template **2**.
 3. Pair HaLow to site AP per LilyGO doc.
-4. MooreVIEW: add driver with matching deviceId; Sync tags.
+4. mooreVIEW: add driver with matching deviceId; Sync tags.
 
 ### 9.3 T-ETH cellular bridge (M14)
 
-1. Gateway AP `MooreVIEW-Gateway` → cloud broker + APN.
+1. Gateway AP `mooreVIEW-Gateway` → cloud broker + APN.
 2. Opta broker = `192.168.1.1:1883`.
 3. Confirm cloud broker receives `mooreview/v1/#` from Opta deviceId.
 
 ### 9.4 IP cameras (M15 / Checkpoint E)
 
 1. On camera web UI: enable **ONVIF** (port 8000) and **RTSP** (554).
-2. MooreVIEW: **Tools → Cameras → Settings** — default credentials → **Save**.
+2. mooreVIEW: **Tools → Cameras → Settings** — default credentials → **Save**.
 3. **Discover ONVIF** → select camera → **Probe** (confirm `probeStatus: ok`).
 4. Optional: enable go2rtc in camera settings; verify `/api/cameras/{id}/player`.
 5. **Tools → Cameras → Detail** — add I/O overlay (BOOL tag, X/Y %, snapshot on rising).
@@ -657,7 +675,7 @@ Use between modules:
 
 - What maintenance strategy fits a rooftop AHU with vibration sensors?
 - Who should receive critical alarms — operator or CMMS?
-- When would you use Modbus RTU vs Parc MQTT on the same site?
+- When would you use Modbus RTU vs Parc MQTT vs **BACnet/IP import** on the same site?
 - What is the risk of leaving Force enabled?
 - How does Position ID help when replacing failed hardware?
 
@@ -669,6 +687,8 @@ Use between modules:
 |---------|--------------|----------------|
 | Blank HMI values | Bindings not Applied | HMI Apply |
 | Driver Test fail | COM/slave/IP | F1 serial guide |
+| BACnet discover empty | Wrong VLAN / UDP blocked | Edge on BMS LAN; `docs/BACNET.md` |
+| BACnet tags BAD | Wrong object address | Browse/import; verify host + device instance |
 | No Parc telemetry | Hub disabled | System setup |
 | Remote download timeout | deviceId mismatch | Compare Opta `/setup` vs driver |
 | No historian data | Hist unchecked or runtime stopped | Tags + Start |
@@ -693,7 +713,7 @@ Use between modules:
 
 ## 13. Day-before instructor runbook
 
-1. Run `npm run start:pc` on every student image/laptop if imaged.
+1. Run `npm start` on every student image/laptop if imaged.
 2. Flash Opta; record deviceId on tape label.
 3. Run BASELINE_TEST end-to-end; time it (aim &lt; 45 min for skilled student).
 4. Export “gold” `.est` for recovery if student project corrupts.
@@ -721,8 +741,10 @@ Use between modules:
 | T-HaLow | `halow-xiao-sta/README.md` |
 | Cellular gateway | `cellular-opta-gateway/README.md` |
 | Commissioning | F1 → Commissioning tutorial |
-| CMMS | `docs/CMMS_INTEGRATION.md` |
+| CMMS | `docs/CMMS_APPLIANCE.md` (integrated `/cmms`); `docs/CMMS_INTEGRATION.md` (external MQTT); `docs/pdm/PDM_PROACTIVE_CMMS.md` (PdM → proactive PM) |
+| BACnet/IP | `docs/BACNET.md`; F1 → Drivers (`bacnet` type) |
+| Edge vs cloud | `docs/EST_PC_PARITY.md` |
 
 ---
 
-*MooreVIEW Instructor Guide v1.1 — aligns with Training tab M0–M15 + CBM-1–CBM-13.*
+*mooreVIEW Instructor Guide v1.1 — aligns with Training tab M0–M15 + CBM-1–CBM-13.*

@@ -1,10 +1,10 @@
-# MooreVIEW generic appliance — Compulab IOT-LINK (native Debian)
+# mooreVIEW generic appliance — Compulab IOT-LINK (native Debian)
 
-Edge MooreVIEW runtime on **Compulab IOT-LINK** (Debian Linux, NXP i.MX93 **arm64**): dual RS-485 ports documented, blank workspace, and HMI on port **3090**. No pool program or Speck/Pentair drivers are pre-seeded.
+Edge mooreVIEW runtime on **Compulab IOT-LINK** (Debian Linux, NXP i.MX93 **arm64**): dual RS-485 ports documented, blank workspace, and HMI on port **3090**. No pool program or Speck/Pentair drivers are pre-seeded.
 
 | Layer | Role |
 |-------|------|
-| MooreVIEW | Blank workspace — add ST programs, drivers, and HMI in Studio |
+| mooreVIEW | Blank workspace — add ST programs, drivers, and HMI in Studio |
 | RS-485 PORT A (`/dev/ttyLP6`) | Disabled `modbus_rtu` placeholder (`rs485_a`) — configure for your bus |
 | RS-485 PORT B (`/dev/ttyLP4`) | Disabled `modbus_rtu` placeholder (`rs485_b`) — configure for your bus |
 | MQTT | Optional — uncomment env vars when using MQTT Parc |
@@ -44,7 +44,7 @@ Verify on the gateway:
 ls -l /dev/ttyLP*
 ```
 
-MooreVIEW documents ports via `MOOREVIEW_RS485_PORT_A` and `MOOREVIEW_RS485_PORT_B` (see `.env.generic.example`). Enable and configure drivers in **Studio → Drivers** after install.
+mooreVIEW documents ports via `MOOREVIEW_RS485_PORT_A` and `MOOREVIEW_RS485_PORT_B` (see `.env.generic.example`). Enable and configure drivers in **Studio → Drivers** after install.
 
 ---
 

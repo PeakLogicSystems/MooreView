@@ -295,6 +295,28 @@ function displayName(name, cls) {
   return name.replace(/\.(svg|gif|png)$/i, '').replace(/[_-]+/g, ' ');
 }
 
+function shouldSkipHmiCatalogAsset(cls, name, webRel) {
+  if (cls?.group === GROUP.PILOT) {
+    return !isAllowedPilotLightAsset(name);
+  }
+  const rel = String(webRel || name || '').toLowerCase();
+  if (rel.includes('/animated/') || rel.includes('/labelled/') || rel.includes('/system-')) {
+    return true;
+  }
+  return false;
+}
+
+function hmiCatalogPresentation(cls, name) {
+  const c = cls || { group: GROUP.MISC, subgroup: '' };
+  let subgroup = c.subgroup || '';
+  let label = displayName(name, c);
+  if (c.group === GROUP.PILOT) {
+    subgroup = pilotLightSubgroup(name) || subgroup;
+    label = pilotLightDisplayLabel(name);
+  }
+  return { subgroup, label };
+}
+
 function isPidFaceplateCandidate(relPath, cls) {
   const n = relPath.toLowerCase();
   if (cls.group === GROUP.PID) return true;
@@ -315,6 +337,8 @@ module.exports = {
   targetLibraryRelPath,
   libraryGroupDir,
   displayName,
+  shouldSkipHmiCatalogAsset,
+  hmiCatalogPresentation,
   isPidFaceplateCandidate,
   slugPart,
 };

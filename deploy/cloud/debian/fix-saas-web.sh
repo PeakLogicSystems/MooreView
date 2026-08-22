@@ -46,37 +46,9 @@ log "=== nginx -> :${PORT} ==="
 apt-get update -qq
 apt-get install -y -qq nginx
 
-if [[ -f "${INSTALL_DIR}/deploy/cloud/debian/nginx-mooreview-saas.conf" ]]; then
-  cp "${INSTALL_DIR}/deploy/cloud/debian/nginx-mooreview-saas.conf" "$NGINX_SITE"
-else
-  cat > "$NGINX_SITE" <<EOF
-server {
-    listen 80;
-    listen [::]:80;
-    server_name ${DOMAIN} www.${DOMAIN};
-
-    client_max_body_size 50m;
-
-    location / {
-        proxy_pass http://127.0.0.1:${PORT};
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_read_timeout 86400;
-    }
-}
-EOF
-fi
-
-ln -sf "$NGINX_SITE" /etc/nginx/sites-enabled/mooreview-saas
-rm -f /etc/nginx/sites-enabled/mooreview /etc/nginx/sites-enabled/default 2>/dev/null || true
-nginx -t
-systemctl enable nginx
-systemctl restart nginx
+WRITE_NGINX="${INSTALL_DIR}/deploy/cloud/debian/write-nginx-saas-site.sh"
+[[ -f "$WRITE_NGINX" ]] || WRITE_NGINX="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/write-nginx-saas-site.sh"
+MOOREVIEW_DOMAIN="$DOMAIN" MOOREVIEW_SAAS_PORT="$PORT" bash "$WRITE_NGINX"
 
 log "=== Restart mooreview-saas ==="
 if systemctl list-unit-files mooreview-saas.service >/dev/null 2>&1; then

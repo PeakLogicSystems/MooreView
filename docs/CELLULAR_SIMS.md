@@ -1,6 +1,6 @@
 # Cellular SIM management
 
-MooreVIEW includes a **vendor-agnostic cellular SIM/eSIM management** layer for IoT connectivity at remote sites (Opta appliances with cellular modems, cloud gateways, etc.).
+mooreVIEW includes a **vendor-agnostic cellular SIM/eSIM management** layer for IoT connectivity at remote sites (Opta appliances with cellular modems, cloud gateways, etc.).
 
 ## Architecture
 
@@ -136,7 +136,7 @@ API keys from Simetry Connectivity Marketplace → **Account**. Uses the Teal in
 - List SIMs: `GET /esims` → poll `GET /operation-result?requestId=…`
 - Enable / disable data: `POST /esims/enable|disable` with `{ "entries": ["<eid>"] }`
 - Usage: `GET /data-consumption/data?eid=…&dataType=MONTHLY&periodStart=…&periodEnd=…`
-- Every request requires `requestId` (UUID) and `callbackUrl` query params; MooreVIEW polls operation results (callback URL is a placeholder unless you configure webhooks separately).
+- Every request requires `requestId` (UUID) and `callbackUrl` query params; mooreVIEW polls operation results (callback URL is a placeholder unless you configure webhooks separately).
 
 Optional `clientUuid` filters inventory to one Simetry client/account.
 
@@ -172,7 +172,7 @@ Optional `clientUuid` filters inventory to one Simetry client/account.
 
 ## Integration
 
-Link SIMs to MooreVIEW devices after sync:
+Link SIMs to mooreVIEW devices after sync:
 
 ```bash
 curl -X PUT http://127.0.0.1:3090/api/cellular/sims/<sim-id>/link \

@@ -147,6 +147,7 @@
     import * as THREE from 'three';
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
     import { buildLiftStation, applyLiftStationLevel, LS_COLORS } from './lift-station-3d.js';
+    import { mountNorthIndicator } from './mv-north-indicator.js';
 
     const LEGEND = [
       ['Wet well (buried, see-through)', LS_COLORS.well],
@@ -850,9 +851,12 @@
     }
     window.addEventListener('resize', onResize);
 
+    const north = mountNorthIndicator();
+
     function animate() {
       requestAnimationFrame(animate);
       controls.update();
+      north.update(camera);
       applyAlarmVisuals();
       renderer.render(scene, camera);
     }

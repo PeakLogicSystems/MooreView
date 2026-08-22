@@ -5,26 +5,43 @@ const { isCellularSimsEnabled } = require('../../cellular/cellularSimsEnabled');
 const { normalizeCellularSimsSettings } = require('../../cellular/cellularSettings');
 const persistence = require('../../persistence');
 
+const FEATURE_DISABLED_MSG = 'Cellular SIM management requires MOOREVIEW_DEPLOYMENT=cloud, MOOREVIEW_CELLULAR_SIMS=1, or settings cellularSims.enabled';
+
 function requireCellularSims(req, res, next) {
-  if (!isCellularSimsEnabled()) {
-    return res.status(403).json({
-      error: 'Cellular SIM management requires MOOREVIEW_DEPLOYMENT=cloud, MOOREVIEW_CELLULAR_SIMS=1, or settings cellularSims.enabled',
-    });
+  const path = String(req.path || '');
+  if (!path.startsWith('/cellular')) return next();
+  if (isCellularSimsEnabled()) return next();
+  if (req.method === 'GET') {
+    if (path === '/cellular/sims') {
+      return res.json({ ok: true, enabled: false, sims: [], count: 0 });
+    }
+    if (path === '/cellular/vendors') {
+      return res.json({ ok: true, enabled: false, vendors: [] });
+    }
+    if (path === '/cellular/vendors/catalog') {
+      return res.json({ ok: true, enabled: false, vendors: [] });
+    }
   }
-  return next();
+  return res.status(403).json({ error: FEATURE_DISABLED_MSG, enabled: false });
 }
 
 function createCellularSimRoutes() {
   const router = require('express').Router();
-  router.use(requireCellularSims);
 
   router.get('/cellular/sims/status', (req, res) => {
-    res.json({ ok: true, ...simManager.managerStatus() });
+    const enabled = isCellularSimsEnabled();
+    res.json({ ok: true, enabled, ...simManager.managerStatus() });
   });
 
   router.get('/cellular/vendors/catalog', (req, res) => {
-    res.json({ ok: true, vendors: simManager.listVendorCatalog() });
+    res.json({
+      ok: true,
+      enabled: isCellularSimsEnabled(),
+      vendors: simManager.listVendorCatalog(),
+    });
   });
+
+  router.use(requireCellularSims);
 
   router.get('/cellular/vendors', (req, res) => {
     res.json({ ok: true, vendors: simManager.listConfiguredVendors() });
@@ -155,4 +172,4 @@ function createCellularSimRoutes() {
   return router;
 }
 
-module.exports = { createCellularSimRoutes, requireCellularSims };
+module.exports = { createCellularSimRoutes, requireCellularSims, FEATURE_DISABLED_MSG };

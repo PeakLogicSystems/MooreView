@@ -572,6 +572,29 @@ window.MooreviewProgram = (function () {
     );
   }
 
+  function parcDeviceForOpta(opta, data) {
+    if (!opta) return null;
+    const id = String(opta.deviceId || '').trim();
+    if (!id) return null;
+    const devices = data?.parc?.devices || [];
+    return devices.find((dev) => dev.deviceId === id) || null;
+  }
+
+  function setProgramRuntimeStatusBar({ badge, detail, badgeClass = 'prog-runtime-badge--stopped' }) {
+    const badgeEl = $('prog-runtime-badge');
+    const detailEl = $('prog-runtime-detail');
+    if (badgeEl) {
+      badgeEl.textContent = badge;
+      badgeEl.className = `prog-runtime-badge ${badgeClass}`;
+    }
+    if (detailEl) {
+      detailEl.textContent = detail || '';
+      detailEl.className = badgeClass.includes('error')
+        ? 'prog-runtime-detail err-text cell-mono'
+        : 'prog-runtime-detail muted cell-mono';
+    }
+  }
+
   function formatDeployKb(bytes) {
     if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${bytes} B`;
@@ -593,11 +616,13 @@ window.MooreviewProgram = (function () {
       return;
     }
     const limitLabel = formatDeployKb(est.limit);
-    const bytesLabel = formatDeployKb(est.bytes);
-    el.textContent = `Parc deploy: ${bytesLabel} / ${limitLabel} · ${est.tagCount} tags · ${formatDeployKb(est.codeBytes || 0)} code + ${formatDeployKb(est.dataBytes || est.bcBytes || 0)} data (${est.pct}%)`;
+    const bcLabel = formatDeployKb(est.bcTotalBytes || est.bcBytes || 0);
+    el.textContent = `Parc deploy: ${bcLabel} / ${limitLabel} bytecode · ${est.tagCount} tags · ${formatDeployKb(est.codeBytes || 0)} code + ${formatDeployKb(est.dataBytes || est.bcBytes || 0)} data (${est.pct}%)`;
     el.title = est.overLimit
-      ? 'Deploy exceeds Opta limit — trim program or reduce tag count'
-      : `Wire ${formatDeployKb(est.bytes)} · bytecode ${formatDeployKb(est.bcTotalBytes || est.bcBytes)} (code + tag table data). Headroom ${formatDeployKb(Math.max(0, est.headroom))}.`;
+      ? (est.bcOverLimit
+        ? 'Bytecode exceeds Opta limit — trim program or reduce tag count'
+        : 'Wire payload exceeds Opta MQTT/HTTP limit — trim program or reflash Opta firmware')
+      : `Bytecode ${bcLabel} · wire ${formatDeployKb(est.wireBytes || est.bytes)} · headroom ${formatDeployKb(Math.max(0, est.headroom))}.`;
     el.className = est.overLimit
       ? 'prog-deploy-estimate err cell-mono'
       : (est.pct >= 80 ? 'prog-deploy-estimate warn cell-mono' : 'prog-deploy-estimate muted cell-mono');
@@ -612,7 +637,7 @@ window.MooreviewProgram = (function () {
     }
     const src = $('program-src')?.value ?? '';
     if (!src.trim()) {
-      renderDeployEstimate({ remoteApplicable: true, ok: true, bytes: 0, astBytes: 0, tagCount: 0, limit: 32768, overLimit: false, headroom: 32768, pct: 0 });
+      renderDeployEstimate({ remoteApplicable: true, ok: true, bytes: 0, astBytes: 0, tagCount: 0, limit: 16384, overLimit: false, headroom: 16384, pct: 0 });
       return;
     }
     try {
@@ -636,6 +661,8 @@ window.MooreviewProgram = (function () {
     const remoteCb = $('prog-remote-exec');
     const connectBtn = $('btn-remote-connect');
     const disconnectBtn = $('btn-remote-disconnect');
+    const ioViewBtn = $('btn-prog-opta-io-view');
+    const ctCalBtn = $('btn-prog-opta-ct-cal');
     const statusEl = $('prog-remote-status');
     if (!remoteCb) return;
 
@@ -651,6 +678,9 @@ window.MooreviewProgram = (function () {
     const health = opta ? healthMap[opta.id] : null;
     const connected = !!health?.connected;
     const running = !!runtime.running;
+    const parcDev = parcDeviceForOpta(opta, data);
+    const programError = String(parcDev?.runtime?.programError || '').trim();
+    const programName = parcDev?.runtime?.programName || parcDev?.name || '';
 
     // Connect/Disconnect always visible when an Opta remote driver exists (not only when Remote is on).
     const showOptaLink = !!opta;
@@ -662,35 +692,71 @@ window.MooreviewProgram = (function () {
       disconnectBtn.hidden = !showOptaLink;
       disconnectBtn.disabled = !showOptaLink || !connected || running;
     }
+    if (ioViewBtn) {
+      const host = opta ? d().optaHttpHostForDriver?.(opta) : '';
+      ioViewBtn.hidden = !showOptaLink;
+      ioViewBtn.disabled = !host;
+      ioViewBtn.title = host
+        ? `Open http://${host}/io-map`
+        : 'Wait for Opta telemetry (ethIp) or set host on driver';
+    }
+    if (ctCalBtn) {
+      const host = opta ? d().optaHttpHostForDriver?.(opta) : '';
+      ctCalBtn.hidden = !showOptaLink;
+      ctCalBtn.disabled = !host;
+      ctCalBtn.title = host
+        ? `Open http://${host}/ct-cal`
+        : 'Wait for Opta telemetry (ethIp) or set host on driver';
+    }
 
     if (statusEl) {
       const link = opta
         ? (opta.type === 'mqtt_parc' ? (opta.deviceId || 'MQTT') : (opta.host || '—'))
         : '';
-      if (!opta) {
-        statusEl.textContent = remoteOn ? 'Add mqtt_parc driver in Drivers' : '';
+      if (programError) {
+        setProgramRuntimeStatusBar({
+          badge: 'Program failed',
+          detail: `Opta ${link}: ${programError}`,
+          badgeClass: 'prog-runtime-badge--error',
+        });
+      } else if (!opta) {
+        setProgramRuntimeStatusBar({
+          badge: running ? 'Running' : 'Stopped',
+          detail: remoteOn ? 'Add mqtt_parc driver in Drivers' : '',
+          badgeClass: running ? 'prog-runtime-badge--running' : 'prog-runtime-badge--stopped',
+        });
       } else if (!remoteOn) {
-        statusEl.textContent = connected
-          ? `Linked ${link} · check Remote to run ST on device`
-          : `Not linked (${link}) · Connect, then Remote for ST on Opta`;
+        setProgramRuntimeStatusBar({
+          badge: running ? 'Running' : 'Stopped',
+          detail: connected
+            ? `Linked ${link} · check Remote to run ST on device`
+            : `Not linked (${link}) · Connect, then Remote for ST on Opta`,
+          badgeClass: running ? 'prog-runtime-badge--running' : 'prog-runtime-badge--stopped',
+        });
       } else if (connected) {
-        statusEl.textContent = `Linked ${link}${runtime.remoteScanOnDevice ? ' · ST on device' : ''}`;
+        const runDetail = runtime.remoteScanOnDevice
+          ? `ST running on ${link}${programName ? ` · ${programName}` : ''}`
+          : `Linked ${link} · deploy with Download & Start`;
+        setProgramRuntimeStatusBar({
+          badge: runtime.remoteScanOnDevice ? 'Running on Opta' : (running ? 'Running' : 'Stopped'),
+          detail: runDetail,
+          badgeClass: runtime.remoteScanOnDevice || running
+            ? 'prog-runtime-badge--running'
+            : 'prog-runtime-badge--stopped',
+        });
       } else {
         const err = (health?.message || '').trim();
-        statusEl.textContent = err
-          ? `Not linked (${link}): ${err}`
-          : `Not linked (${link})`;
+        setProgramRuntimeStatusBar({
+          badge: 'Not linked',
+          detail: err
+            ? `Opta ${link}: ${err}`
+            : `Not linked (${link})`,
+          badgeClass: 'prog-runtime-badge--error',
+        });
       }
     }
     scheduleDeployEstimate();
-
-    const startBtn = $('btn-start');
-    if (startBtn) {
-      startBtn.textContent = remoteOn ? 'Download & Start' : 'Start';
-      startBtn.title = remoteOn
-        ? 'Compile ST to bytecode, deploy to Opta via MQTT, then start scan on device'
-        : 'Validate and run ST on this PC';
-    }
+    d().updateRuntimeButtons?.(runtime);
   }
 
   function bindProgramRemoteControls() {
@@ -715,6 +781,7 @@ window.MooreviewProgram = (function () {
         try {
           await api.putSettings({ remoteExecution: next });
           d().patchLastSettings?.({ remoteExecution: next });
+          if ($('proj-remote-execution')) $('proj-remote-execution').checked = next;
           if (next && !findOptaRemoteDriver()) {
             alert(
               'Remote is on but no mqtt_parc driver.\n\n'
@@ -759,6 +826,20 @@ window.MooreviewProgram = (function () {
     if ($('btn-remote-disconnect') && !$('btn-remote-disconnect')._bound) {
       $('btn-remote-disconnect')._bound = true;
       $('btn-remote-disconnect').onclick = disconnect;
+    }
+    if ($('btn-prog-opta-io-view') && !$('btn-prog-opta-io-view')._bound) {
+      $('btn-prog-opta-io-view')._bound = true;
+      $('btn-prog-opta-io-view').onclick = () => {
+        const opta = findOptaRemoteDriver();
+        if (opta) d().openOptaIoViewForDriver?.(opta);
+      };
+    }
+    if ($('btn-prog-opta-ct-cal') && !$('btn-prog-opta-ct-cal')._bound) {
+      $('btn-prog-opta-ct-cal')._bound = true;
+      $('btn-prog-opta-ct-cal').onclick = () => {
+        const opta = findOptaRemoteDriver();
+        if (opta) d().openOptaCtCalForDriver?.(opta);
+      };
     }
   }
 
@@ -858,6 +939,14 @@ window.MooreviewProgram = (function () {
           if (await offerCreateMissingTagsAndStart(unknown, src, activePath)) return;
         } catch (e2) {
           msg = e2.message || msg;
+        }
+        const opta = findOptaRemoteDriver();
+        if (opta && (d().getLastSettings?.()?.remoteExecution || $('prog-remote-exec')?.checked)) {
+          setProgramRuntimeStatusBar({
+            badge: 'Program failed',
+            detail: `Opta ${opta.deviceId || opta.id}: ${msg}`,
+            badgeClass: 'prog-runtime-badge--error',
+          });
         }
         alert(msg);
         showProgramError(msg);

@@ -40,7 +40,7 @@ async function migrateConfigFilesToMongo(backend, opts = {}) {
   return imported;
 }
 
-const BUNDLED_FORCE_REFRESH_IDS = new Set(['assisted-living', 'assisted-living-halow', 'assisted-living-pool-iot-link', 'mle-wastewater', 'duplex-lift-station', 'putnam-county-cloud', 'putnam-mle-plant', 'atu-cloud-residential', 'atu-cloud-commercial']);
+const BUNDLED_FORCE_REFRESH_IDS = new Set(['assisted-living', 'assisted-living-halow', 'assisted-living-pool-iot-link', 'mle-wastewater', 'duplex-lift-station', 'putnam-county-cloud', 'putnam-mle-plant', 'atu-cloud-residential', 'atu-cloud-commercial', 'pool-cloud-residential', 'cstore-opta-parc-starter', 'circle-k-florida-fleet']);
 
 function bundledProjectRel(projectId) {
   return path.join('projects', `${projectId}.est.json`);

@@ -19,6 +19,12 @@ function registerApplianceServices() {
     } catch (err) {
       console.warn('[alarm-notify]', err?.message || err);
     }
+    try {
+      const { maybeCreateAlarmWorkOrder } = require('../cmms/cmmsAlarmBridge');
+      maybeCreateAlarmWorkOrder(evt);
+    } catch (err) {
+      console.warn('[cmms-alarm-wo]', err?.message || err);
+    }
     publishAlarmTransition(evt).catch((err) => {
       console.warn('[cmms-mqtt]', err?.message || err);
     });

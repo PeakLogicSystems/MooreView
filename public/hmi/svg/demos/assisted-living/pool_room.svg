@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 768" width="1024" height="768">
   <rect width="1024" height="768" fill="#f1f5f9"/>
   <text id="pool_title" x="512" y="36" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="22" font-weight="600" fill="#0f172a">Pool / Spa</text>
-  <text x="512" y="54" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="11" fill="#64748b">Chemistry &#183; pump count in Project → Hardware &#183; weekly schedules on Schedules screen</text>
+  <text x="512" y="54" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="11" fill="#64748b">Chemistry &#183; pump count in Project → Area configuration &#183; weekly schedules on Schedules screen</text>
 
   <text x="48" y="84" font-size="10" font-weight="600" fill="#334155">FLOW</text>
   <circle id="flow_lamp" cx="48" cy="102" r="10" fill="#64748b" stroke="#334155" stroke-width="2"/>

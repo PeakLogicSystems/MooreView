@@ -1,4 +1,4 @@
-# MooreVIEW MVP Suite — Windows installer
+# mooreVIEW MVP Suite — Windows installer
 
 Builds a standard **setup.exe** for the full est-pc appliance (ST, HMI, runtime, Parc, historian-ready).
 
@@ -22,7 +22,7 @@ Or:
 npm run build:installer
 ```
 
-Output: `est-pc\dist\windows-installer\MooreVIEW-MVP-Suite-<version>-setup.exe`
+Output: `est-pc\dist\windows-installer\mooreVIEW-MVP-Suite-<version>-setup.exe`
 
 ### Options
 
@@ -36,12 +36,12 @@ If Inno Setup is not installed, the script still fills `dist\windows-installer\s
 
 ## End-user install
 
-1. Run **MooreVIEW-MVP-Suite-*-setup.exe**
+1. Run **mooreVIEW-MVP-Suite-*-setup.exe**
 2. Install **Node.js 18+** if prompted ([nodejs.org](https://nodejs.org/))
-3. Start **MooreVIEW MVP Suite** from the Start Menu (or desktop shortcut)
+3. Start **mooreVIEW MVP Suite** from the Start Menu (or desktop shortcut)
 
 - Web UI: **http://127.0.0.1:3090**
-- Data: `%LOCALAPPDATA%\MooreVIEW\data` (writable without admin)
+- Data: `%LOCALAPPDATA%\mooreVIEW\data` (writable without admin)
 - Optional: MongoDB for historian, `npm run mqtt:start` for local MQTT
 
 ## USB portable copy
@@ -57,6 +57,6 @@ powershell -File scripts\create-usb-install.ps1 -DriveLetter E
 | File | Role |
 |------|------|
 | `deploy/windows/mooreview-setup.iss` | Inno Setup script |
-| `deploy/windows/MooreVIEW.cmd` | Launch (checks Node, opens browser) |
-| `deploy/windows/MooreVIEW-Stop.cmd` | Stop background server |
+| `deploy/windows/mooreVIEW.cmd` | Launch (checks Node, opens browser) |
+| `deploy/windows/mooreVIEW-Stop.cmd` | Stop background server |
 | `scripts/build-windows-installer.ps1` | Stage + compile |

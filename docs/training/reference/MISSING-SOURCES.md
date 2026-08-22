@@ -9,7 +9,5 @@ powershell -File scripts\sync-training-reference.ps1
 
 | Referenced path | Used in |
 |-----------------|---------|
-| `docs/training/IoT-Condition-Monitoring-Training.pdf` |  |
-| `halow-xiao-sta/README.md` |  |
-| `cellular-opta-gateway/README.md` |  |
-| `mooreview-cloud/docs/USER_GUIDE.md` |  |
+| `docs/training/IoT-Condition-Monitoring-Training.pdf` | Original CBM PDF (copy exists when present in docs/training/) |
+| `halow-xiao-sta/README.md` | T-HaLow sensor template (M14) |

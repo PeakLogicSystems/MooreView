@@ -34,9 +34,10 @@ enum MetaFlag : uint8_t {
   META_PRESET = 0x01,
   META_MODE = 0x02,
   META_PID = 0x04,
+  META_GLOBAL = 0x08,
 };
 
-static const char* MODE_STR[] = { "TON", "TOF", "TP", "CTU", "CTD", "PI", "MOV", "GPM" };
+static const char* MODE_STR[] = { "TON", "TOF", "TP", "CTU", "CTD", "PI", "MOV", "GPM", "ALT2", "ALT4", "ALT3" };
 
 static uint8_t g_bcStore[MV_BC_MAX];
 static uint16_t g_bcLen = 0;
@@ -74,6 +75,18 @@ uint16_t mvBcTagCount() { return g_tagCount; }
 uint16_t mvBcCodeBytes() { return g_codeLen; }
 uint16_t mvBcDataBytes() { return g_codeOff; }
 uint16_t mvBcMaxBytes() { return MV_BC_MAX; }
+
+const uint8_t* mvBcRawData() { return g_bcStore; }
+
+static uint16_t g_tracePointCount = 0;
+
+void mvBcSetTracePointCount(uint16_t n) { g_tracePointCount = n; }
+
+uint16_t mvBcTracePointCount() { return g_tracePointCount; }
+
+void mvBcAppendProgramTrace(JsonArray arr) {
+  (void)arr;
+}
 
 static uint16_t rdU16(size_t off) {
   return (uint16_t)g_bcStore[off] | ((uint16_t)g_bcStore[off + 1] << 8);
@@ -174,6 +187,16 @@ static double evalBuiltin(uint8_t id) {
     case 13: { uint16_t t = (uint16_t)pop(); return oneShotConsumeIdx(t) ? 1.0 : 0.0; }
     case 14: { uint16_t t = (uint16_t)pop(); return mvGetReal(tagName(t)); }
     case 15: { uint16_t t = (uint16_t)pop(); MvTag* x = mvFindTag(tagName(t)); return (x && x->kind == MV_FLOW && x->flowReady) ? 1.0 : 0.0; }
+    case 16: { uint16_t t = (uint16_t)pop(); MvTag* x = mvFindTag(tagName(t)); return (x && x->kind == MV_ALT) ? (double)x->altActiveUnit : 0.0; }
+    case 17: { uint16_t t = (uint16_t)pop(); MvTag* x = mvFindTag(tagName(t)); return (x && x->kind == MV_ALT && x->altReady) ? 1.0 : 0.0; }
+    case 18: { uint16_t t = (uint16_t)pop(); MvTag* x = mvFindTag(tagName(t)); return (x && x->kind == MV_ALT && x->altFault) ? 1.0 : 0.0; }
+    case 19: { uint16_t t = (uint16_t)pop(); MvTag* x = mvFindTag(tagName(t)); return (x && x->kind == MV_ALT && x->altLagIndex >= 0) ? (double)(x->altLagIndex + 1) : 0.0; }
+    case 20: { uint16_t t = (uint16_t)pop(); MvTag* x = mvFindTag(tagName(t)); return (x && x->kind == MV_ALT && x->altOffActive) ? 1.0 : 0.0; }
+    case 21: { uint16_t t = (uint16_t)pop(); MvTag* x = mvFindTag(tagName(t)); return (x && x->kind == MV_ALT && x->altHighActive) ? 1.0 : 0.0; }
+    case 22: { uint16_t t = (uint16_t)pop(); MvTag* x = mvFindTag(tagName(t)); return (x && x->kind == MV_ALT && x->altLowActive) ? 1.0 : 0.0; }
+    case 23: { uint16_t t = (uint16_t)pop(); MvTag* x = mvFindTag(tagName(t)); return (x && x->kind == MV_ALT && (x->altPumpStage == 1 || x->altPumpStage == 4)) ? 1.0 : 0.0; }
+    case 24: { uint16_t t = (uint16_t)pop(); MvTag* x = mvFindTag(tagName(t)); return (x && x->kind == MV_ALT && x->altPumpStage == 2) ? 1.0 : 0.0; }
+    case 25: { uint16_t t = (uint16_t)pop(); MvTag* x = mvFindTag(tagName(t)); return (x && x->kind == MV_ALT && x->altLow2Active) ? 1.0 : 0.0; }
     default: return 0.0;
   }
 }
@@ -184,7 +207,7 @@ static void setAnalogFromExpr(const char* tag, double val) {
   else mvSetReal(tag, (float)val);
 }
 
-static void runAction(uint8_t id, uint16_t tagIdx, uint16_t inputIdx) {
+static void runAction(uint8_t id, uint16_t tagIdx, uint16_t inputIdx, uint8_t unitIdx, const float* bands) {
   const char* tag = tagName(tagIdx);
   const char* inputTag = (inputIdx == 0xffff) ? nullptr : tagName(inputIdx);
   if (!tag[0]) return;
@@ -207,6 +230,51 @@ static void runAction(uint8_t id, uint16_t tagIdx, uint16_t inputIdx) {
     case 15: if (inputTag) { MvTag* t = mvEnsureTag(tag, MV_FLOW); if (t) { strncpy(t->flowTmrId, inputTag, 15); t->flowTmrId[15] = '\0'; } } break;
     case 16: if (inputTag) { MvTag* t = mvEnsureTag(tag, MV_FLOW); if (t) { strncpy(t->flowKTagId, inputTag, 15); t->flowKTagId[15] = '\0'; } } break;
     case 17: if (inputTag) { MvTag* t = mvEnsureTag(tag, MV_FLOW); if (t) { strncpy(t->flowOutId, inputTag, 15); t->flowOutId[15] = '\0'; } } break;
+    case 18: {
+      MvTag* t = mvEnsureTag(tag, MV_ALT);
+      if (!t) break;
+      if (inputTag) {
+        strncpy(t->altEnableId, inputTag, 15);
+        t->altEnableId[15] = '\0';
+        t->altEnabled = mvGetBool(inputTag);
+      } else {
+        t->altEnableId[0] = '\0';
+        t->altEnabled = true;
+      }
+      break;
+    }
+    case 19:
+      if (inputTag) {
+        MvTag* t = mvEnsureTag(tag, MV_ALT);
+        if (t) { strncpy(t->altAdvanceId, inputTag, 15); t->altAdvanceId[15] = '\0'; }
+      } else {
+        MvTag* t = mvEnsureTag(tag, MV_ALT);
+        if (t) t->altAdvancePulse = true;
+      }
+      break;
+    case 20: if (inputTag) { MvTag* t = mvEnsureTag(tag, MV_ALT); if (t) { strncpy(t->altAutoFaultId, inputTag, 15); t->altAutoFaultId[15] = '\0'; } } break;
+    case 21: if (inputTag) { MvTag* t = mvEnsureTag(tag, MV_ALT); if (t) { strncpy(t->altLeadOutId, inputTag, 15); t->altLeadOutId[15] = '\0'; } } break;
+    case 22: if (inputTag && unitIdx >= 1 && unitIdx <= 4) { MvTag* t = mvEnsureTag(tag, MV_ALT); if (t) { strncpy(t->altOnlineIds[unitIdx - 1], inputTag, 15); t->altOnlineIds[unitIdx - 1][15] = '\0'; } } break;
+    case 23: if (inputTag && unitIdx >= 1 && unitIdx <= 4) { MvTag* t = mvEnsureTag(tag, MV_ALT); if (t) { strncpy(t->altUnitOutIds[unitIdx - 1], inputTag, 15); t->altUnitOutIds[unitIdx - 1][15] = '\0'; } } break;
+    case 24: if (inputTag) { MvTag* t = mvEnsureTag(tag, MV_ALT); if (t) { strncpy(t->altOffId, inputTag, 15); t->altOffId[15] = '\0'; } } break;
+    case 25: if (inputTag) { MvTag* t = mvEnsureTag(tag, MV_ALT); if (t) { strncpy(t->altHighId, inputTag, 15); t->altHighId[15] = '\0'; } } break;
+    case 26: if (inputTag) { MvTag* t = mvEnsureTag(tag, MV_ALT); if (t) { strncpy(t->altLowId, inputTag, 15); t->altLowId[15] = '\0'; } } break;
+    case 27: if (inputTag && unitIdx >= 1 && unitIdx <= 4) { MvTag* t = mvEnsureTag(tag, MV_ALT); if (t) { strncpy(t->altLeadSelIds[unitIdx - 1], inputTag, 15); t->altLeadSelIds[unitIdx - 1][15] = '\0'; } } break;
+    case 28: if (inputTag && unitIdx >= 1 && unitIdx <= 4) { MvTag* t = mvEnsureTag(tag, MV_ALT); if (t) { strncpy(t->altLagSelIds[unitIdx - 1], inputTag, 15); t->altLagSelIds[unitIdx - 1][15] = '\0'; } } break;
+    case 29: if (inputTag && unitIdx >= 1 && unitIdx <= 4) { MvTag* t = mvEnsureTag(tag, MV_ALT); if (t) { strncpy(t->altLag2SelIds[unitIdx - 1], inputTag, 15); t->altLag2SelIds[unitIdx - 1][15] = '\0'; } } break;
+    case 30: if (inputTag) { MvTag* t = mvEnsureTag(tag, MV_ALT); if (t) { strncpy(t->altLevelId, inputTag, 15); t->altLevelId[15] = '\0'; t->altLevelControlEnabled = true; } } break;
+    case 31: {
+      MvTag* t = mvEnsureTag(tag, MV_ALT);
+      if (t && bands) {
+        t->altLevelLowLo = bands[0];
+        t->altLevelLowHi = bands[1];
+        t->altLevelHighLo = bands[2];
+        t->altLevelHighHi = bands[3];
+        t->altLevelControlEnabled = true;
+      }
+      break;
+    }
+    case 32: if (inputTag) { MvTag* t = mvEnsureTag(tag, MV_ALT); if (t) { strncpy(t->altLow2Id, inputTag, 15); t->altLow2Id[15] = '\0'; } } break;
     default: break;
   }
 }
@@ -220,6 +288,7 @@ static MvTagKind kindFromByte(uint8_t t) {
     case 5: return MV_PID;
     case 6: return MV_AVG;
     case 7: return MV_FLOW;
+    case 8: return MV_ALT;
     default: return MV_BOOL;
   }
 }
@@ -228,13 +297,21 @@ static bool applyTagMeta(const char* id, uint8_t type, uint8_t flags, size_t& of
   MvTagKind kind = kindFromByte(type);
   MvTag* t = mvEnsureTag(id, kind);
   if (!t) return false;
+  if (t->kind != kind) {
+    char savedId[16];
+    strncpy(savedId, t->id, sizeof(savedId) - 1);
+    savedId[sizeof(savedId) - 1] = '\0';
+    mvTagInitDefaults(t, kind);
+    strncpy(t->id, savedId, sizeof(t->id) - 1);
+    t->id[sizeof(t->id) - 1] = '\0';
+  }
   if (flags & META_PRESET) {
     t->preset = rdU32(off);
     off += 4;
   }
   if (flags & META_MODE) {
     uint8_t mid = g_bcStore[off++];
-    if (mid < 8) mvSetTagMode(t, MODE_STR[mid]);
+    if (mid < 11) mvSetTagMode(t, MODE_STR[mid]);
   }
   if (flags & META_PID) {
     t->kp = rdF32(off); off += 4;
@@ -243,13 +320,20 @@ static bool applyTagMeta(const char* id, uint8_t type, uint8_t flags, size_t& of
     t->outMin = rdF32(off); off += 4;
     t->outMax = rdF32(off); off += 4;
   }
+  if (flags & META_GLOBAL) {
+    t->isGlobal = true;
+  }
   if (kind == MV_COUNTER && strcmp(t->mode, "CTD") == 0 && t->count == 0 && t->preset > 0) {
     t->count = (int32_t)t->preset;
   }
   return true;
 }
 
-bool mvBcLoad(const uint8_t* data, size_t len, char* err, size_t errLen) {
+bool mvBcLoadBegin(MvBcLoadCtx* ctx, const uint8_t* data, size_t len, char* err, size_t errLen) {
+  if (!ctx) {
+    bcErr(err, errLen, "bc load ctx");
+    return false;
+  }
   mvBcClear();
   if (!data || len < 10) {
     bcErr(err, errLen, "bc too short");
@@ -263,38 +347,71 @@ bool mvBcLoad(const uint8_t* data, size_t len, char* err, size_t errLen) {
     bcErr(err, errLen, "bc version");
     return false;
   }
-  const uint16_t tagCount = rdU16(6);
-  const uint16_t codeLen = rdU16(8);
-  if (tagCount > MV_MAX_TAGS) {
-    bcErr(err, errLen, "too many tags");
-    return false;
-  }
-  size_t off = 10;
-  g_tagCount = tagCount;
-  for (uint16_t i = 0; i < tagCount; i++) {
-    if (off >= len) { bcErr(err, errLen, "truncated tags"); return false; }
-    const uint8_t nlen = data[off++];
-    if (nlen == 0 || nlen > 31 || off + nlen + 2 > len) { bcErr(err, errLen, "bad tag name"); return false; }
-    memcpy(g_tagNames[i], &data[off], nlen);
-    g_tagNames[i][nlen] = '\0';
-    off += nlen;
-    const uint8_t type = data[off++];
-    const uint8_t flags = data[off++];
-    if (!applyTagMeta(g_tagNames[i], type, flags, off)) { bcErr(err, errLen, "tag meta"); return false; }
-  }
-  if (off + codeLen > len || codeLen > MV_BC_MAX) {
-    bcErr(err, errLen, "bad code len");
-    return false;
-  }
   if (len > MV_BC_MAX) {
     bcErr(err, errLen, "bc too large");
     return false;
   }
   memcpy(g_bcStore, data, len);
   g_bcLen = (uint16_t)len;
-  g_codeOff = (uint16_t)off;
-  g_codeLen = codeLen;
+
+  const uint16_t tagCount = rdU16(6);
+  const uint16_t codeLen = rdU16(8);
+  if (tagCount > MV_MAX_TAGS) {
+    bcErr(err, errLen, "too many tags");
+    return false;
+  }
+  ctx->tagIdx = 0;
+  ctx->off = 10;
+  ctx->tagCount = tagCount;
+  ctx->codeLen = codeLen;
+  g_tagCount = tagCount;
+  return true;
+}
+
+bool mvBcLoadStep(MvBcLoadCtx* ctx, char* err, size_t errLen) {
+  if (!ctx) {
+    bcErr(err, errLen, "bc load ctx");
+    return false;
+  }
+  const size_t len = g_bcLen;
+  if (ctx->tagIdx < ctx->tagCount) {
+    size_t off = ctx->off;
+    if (off >= len) {
+      bcErr(err, errLen, "truncated tags");
+      return false;
+    }
+    const uint8_t nlen = g_bcStore[off++];
+    if (nlen == 0 || nlen > 31 || off + nlen + 2 > len) {
+      bcErr(err, errLen, "bad tag name");
+      return false;
+    }
+    memcpy(g_tagNames[ctx->tagIdx], &g_bcStore[off], nlen);
+    g_tagNames[ctx->tagIdx][nlen] = '\0';
+    off += nlen;
+    const uint8_t type = g_bcStore[off++];
+    const uint8_t flags = g_bcStore[off++];
+    if (!applyTagMeta(g_tagNames[ctx->tagIdx], type, flags, off)) {
+      snprintf(err, errLen, "tag meta %s (%u/%u)", g_tagNames[ctx->tagIdx], (unsigned)mvTagCount(), (unsigned)MV_MAX_TAGS);
+      return false;
+    }
+    ctx->off = off;
+    ctx->tagIdx++;
+    return false;
+  }
+  if (ctx->off + ctx->codeLen > len || ctx->codeLen > MV_BC_MAX) {
+    bcErr(err, errLen, "bad code len");
+    return false;
+  }
+  g_codeOff = (uint16_t)ctx->off;
+  g_codeLen = ctx->codeLen;
   g_hasBc = true;
+  return true;
+}
+
+bool mvBcLoad(const uint8_t* data, size_t len, char* err, size_t errLen) {
+  MvBcLoadCtx ctx;
+  if (!mvBcLoadBegin(&ctx, data, len, err, errLen)) return false;
+  while (!mvBcLoadStep(&ctx, err, errLen)) { /* sync path */ }
   return true;
 }
 
@@ -346,7 +463,20 @@ void mvBcRunProgram() {
         const uint8_t aid = g_bcStore[ip++];
         const uint16_t tag = rdU16(ip); ip += 2;
         const uint16_t input = rdU16(ip); ip += 2;
-        runAction(aid, tag, input);
+        uint8_t unit = 0;
+        if (aid == 22 || aid == 23 || aid == 27 || aid == 28 || aid == 29) {
+          unit = g_bcStore[ip++];
+        }
+        float bands[4] = { 0, 0, 0, 0 };
+        const float* bandPtr = nullptr;
+        if (aid == 31) {
+          for (int b = 0; b < 4; b++) {
+            bands[b] = rdF32(ip);
+            ip += 4;
+          }
+          bandPtr = bands;
+        }
+        runAction(aid, tag, input, unit, bandPtr);
         break;
       }
       case OP_STORE_TAG: {

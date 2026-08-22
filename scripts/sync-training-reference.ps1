@@ -41,12 +41,25 @@ foreach ($name in @('iot-cbm-training.md', 'instructor-guide.md', 'quizzes-answe
 # Platform / integration guides (est-pc + OEM docs cited by training)
 $platform = @(
   @{ Src = 'docs\CAMERAS.md'; Dest = 'platform\CAMERAS.md' },
+  @{ Src = 'docs\facilities\EZMETER_FACILITY_PQ.md'; Dest = 'platform\EZMETER_FACILITY_PQ.md' },
+  @{ Src = 'docs\BACNET.md'; Dest = 'platform\BACNET.md' },
+  @{ Src = 'docs\ARCHIVE_EXPORT.md'; Dest = 'platform\ARCHIVE_EXPORT.md' },
+  @{ Src = 'docs\EST_PC_PARITY.md'; Dest = 'platform\EST_PC_PARITY.md' },
   @{ Src = 'docs\HAL.md'; Dest = 'platform\HAL.md' },
-  @{ Src = 'BASELINE_TEST.md'; Dest = 'platform\BASELINE_TEST.md'; Root = $OemDocs },
-  @{ Src = 'MQTT_PARC.md'; Dest = 'platform\MQTT_PARC.md'; Root = $OemDocs },
-  @{ Src = 'CMMS_INTEGRATION.md'; Dest = 'platform\CMMS_INTEGRATION.md'; Root = $OemDocs },
-  @{ Src = 'ARCHITECTURE.md'; Dest = 'platform\ARCHITECTURE.md'; Root = $OemDocs },
-  @{ Src = 'CELLULAR_SIMS.md'; Dest = 'platform\CELLULAR_SIMS.md'; Root = $OemDocs }
+  @{ Src = 'docs\CMMS_APPLIANCE.md'; Dest = 'platform\CMMS_APPLIANCE.md' },
+  @{ Src = 'docs\pdm\PDM_PROACTIVE_CMMS.md'; Dest = 'platform\PDM_PROACTIVE_CMMS.md' },
+  @{ Src = 'docs\pdm\LIFT-STATION-PDM-TRAINING-REVIEW.md'; Dest = 'platform\LIFT-STATION-PDM-TRAINING-REVIEW.md' },
+  @{ Src = 'docs\CLOUD_USER_GUIDE.md'; Dest = 'platform\CLOUD_USER_GUIDE.md' },
+  @{ Src = 'docs\testing\FULL_SYSTEM_TEST.md'; Dest = 'platform\FULL_SYSTEM_TEST.md' },
+  @{ Src = 'docs\CMMS_INTEGRATION.md'; Dest = 'platform\CMMS_INTEGRATION.md' },
+  @{ Src = 'docs\BASELINE_TEST.md'; Dest = 'platform\BASELINE_TEST.md' },
+  @{ Src = 'docs\MQTT_PARC.md'; Dest = 'platform\MQTT_PARC.md' },
+  @{ Src = 'docs\ARCHITECTURE.md'; Dest = 'platform\ARCHITECTURE.md' },
+  @{ Src = 'docs\CELLULAR_SIMS.md'; Dest = 'platform\CELLULAR_SIMS.md' },
+  @{ Src = 'docs\CLOUD_DEPLOY_DO.md'; Dest = 'platform\CLOUD_DEPLOY_DO.md' },
+  @{ Src = 'docs\CLOUD_SAAS.md'; Dest = 'platform\CLOUD_SAAS.md' },
+  @{ Src = 'docs\UPDATES.md'; Dest = 'platform\UPDATES.md' },
+  @{ Src = 'docs\MV-WORKSTATION-CURSAVES.md'; Dest = 'platform\MV-WORKSTATION-CURSAVES.md' }
 )
 foreach ($item in $platform) {
   $root = if ($item.Root) { $item.Root } else { $EstRoot }
@@ -61,6 +74,7 @@ $hardware = @(
   @{ Src = 'st\README.md'; Dest = 'hardware\st-overview.md' },
   @{ Src = 'cellular-parc-st\README.md'; Dest = 'hardware\cellular-parc-st.md' },
   @{ Src = 'cellular-parc-st\BUILD.md'; Dest = 'hardware\cellular-parc-st-build.md' },
+  @{ Src = 'cellular-opta-gateway\README.md'; Dest = 'hardware\cellular-opta-gateway.md' },
   @{ Src = 'mv-draw\README.md'; Dest = 'hardware\mv-draw.md' },
   @{ Src = 'hal\plugins\README_SM-I-001.md'; Dest = 'hardware\hal-sequent-sm-i-001.md' },
   @{ Src = 'firmware\README.md'; Dest = 'hardware\firmware-overview.md' }
@@ -82,10 +96,8 @@ foreach ($pdf in $pdfNames) {
 }
 
 $missing = @(
-  'docs/training/IoT-Condition-Monitoring-Training.pdf — original CBM PDF (add to docs/training/ to include)',
-  'halow-xiao-sta/README.md — T-HaLow sensor template (M14)',
-  'cellular-opta-gateway/README.md — cellular Opta gateway (M14)',
-  'mooreview-cloud/docs/USER_GUIDE.md — cloud Sites & devices (M13)'
+  @{ Path = 'docs/training/IoT-Condition-Monitoring-Training.pdf'; UsedIn = 'Original CBM PDF (copy exists when present in docs/training/)' },
+  @{ Path = 'halow-xiao-sta/README.md'; UsedIn = 'T-HaLow sensor template (M14)' }
 )
 $missingText = @"
 # Materials not in this repository
@@ -99,7 +111,7 @@ powershell -File scripts\sync-training-reference.ps1
 
 | Referenced path | Used in |
 |-----------------|---------|
-$(($missing | ForEach-Object { "| ``$($_ -replace ' —.*','')`` | $($_.Split('—')[1].Trim()) |" }) -join "`n")
+$(($missing | ForEach-Object { "| ``$($_.Path)`` | $($_.UsedIn) |" }) -join "`n")
 
 "@
 
@@ -122,8 +134,8 @@ powershell -File scripts\sync-training-reference.ps1
 | Folder | Contents |
 |--------|----------|
 | **curriculum/** | Full course, instructor guide, quiz answer key, CBM PDF (if present) |
-| **platform/** | Integration guides: cameras, Parc/MQTT, CMMS, baseline test, architecture, cellular SIMs, HAL |
-| **hardware/** | Firmware and field-device READMEs (Opta, Parc ST, MV Draw, Sequent HAL) |
+| **platform/** | Integration guides: cameras, Parc/MQTT, BACnet/IP, EZ Meter facility PQ, CMMS, PdM proactive CMMS, lift-station PdM, archive export, baseline test, architecture, cellular SIMs, HAL, edge vs cloud parity |
+| **hardware/** | Firmware and field-device READMEs (Opta, Parc ST, cellular Opta gateway, MV Draw, Sequent HAL) |
 
 ## In-app access
 

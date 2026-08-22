@@ -6,12 +6,25 @@ const persistence = require('../../persistence');
 const { ST_DIR } = require('../../config');
 const { listPresets, buildFromPreset, getPreset } = require('../../devices/devicePresets');
 const { nextSlaveId, offsetTagsForDriver, concubeApplyOptions } = require('../../devices/applyPresetUtils');
+const { applyTagsOnlyPreset } = require('../../devices/applyDerivedPreset');
 const { MAX_TAGS, DEFAULT_MQTT_PARC_BROKER } = require('../../config');
 const { sanitizeDriverConfig } = require('../../drivers/driverConfig');
 const { bootstrapMqttParc } = require('../../parc/mqttParcBootstrap');
 const { patchWorkspaceDrivers } = require('../../project/estFile');
 const { resolveCredentials, loginNextcentury } = require('../../drivers/nextcenturyAuth');
 const { createPortalSession } = require('../../drivers/nextcenturyPortalSession');
+const { discoverDevices, browseDeviceObjects } = require('../../drivers/bacnetDiscovery');
+const { mergeBacnetTagsIntoStore } = require('../../drivers/bacnetTagSync');
+const bacnetProfileStore = require('../../drivers/bacnetProfileStore');
+const {
+  normalizeProfile,
+  profileFromBrowsePoints,
+} = require('../../drivers/bacnetDeviceBuilder');
+const {
+  previewProfileApply,
+  applyProfileToFleet,
+  mergeApplyIntoStore,
+} = require('../../drivers/bacnetApplyProfile');
 
 function createDriverRoutes(deps) {
   const { tagStore, driverManager, scanEngine } = deps;
@@ -145,7 +158,34 @@ function createDriverRoutes(deps) {
       password: req.body.password,
       deviceId: req.body.deviceId,
       topicPrefix: req.body.topicPrefix,
+      nominalVoltage: req.body.nominalVoltage,
+      undervoltV: req.body.undervoltV,
+      overvoltV: req.body.overvoltV,
+      lowPf: req.body.lowPf,
+      freqMinHz: req.body.freqMinHz,
+      freqMaxHz: req.body.freqMaxHz,
+      vImbalancePct: req.body.vImbalancePct,
+      loadedCurrentA: req.body.loadedCurrentA,
     };
+
+    if (presetMeta.tagsOnly) {
+      const result = applyTagsOnlyPreset({
+        presetMeta,
+        tagList,
+        driverList,
+        buildOpts,
+        replaceTags,
+        tagStore,
+        persistence,
+        loadProgram: req.body.loadProgram !== false,
+      });
+      if (result.error) {
+        return res.status(result.status || 400).json({ error: result.error });
+      }
+      if (scanEngine) scanEngine.loadSettings();
+      return res.json(result);
+    }
+
     if (presetMeta.concube) {
       const cubeOpts = concubeApplyOptions(
         presetMeta,
@@ -219,6 +259,34 @@ function createDriverRoutes(deps) {
         console.warn('[devices/apply] rebuild:', e.message || String(e));
       });
     if (scanEngine) scanEngine.loadSettings();
+
+    let pdmSeed = null;
+    if (req.body.seedPdm !== false) {
+      const { seedPdmFromPreset } = require('../../pdm/pdmAssetSeedFromTemplate');
+      const settings = persistence.readJson('settings.json', {});
+      const deviceId = req.body.deviceId || built.driver.deviceId || presetMeta.defaults?.deviceId || '';
+      const seedResult = seedPdmFromPreset(presetMeta, settings, {
+        deviceId,
+        siteId: req.body.siteId || deviceId,
+        siteName: req.body.siteName || presetMeta.label,
+        locationClass: req.body.locationClass,
+        installDate: req.body.installDate,
+        overwrite: req.body.replacePdmAssets === true,
+      });
+      if (seedResult.changed) {
+        persistence.writeJson('settings.json', seedResult.settings);
+        pdmSeed = {
+          seeded: seedResult.seeded,
+          skipped: seedResult.skipped,
+          assets: seedResult.seeded.map((id) => ({
+            assetId: id,
+            installDate: seedResult.assetContext[id]?.installDate,
+            serviceHistory: seedResult.assetContext[id]?.serviceHistory,
+          })),
+        };
+      }
+    }
+
     res.json({
       ok: true,
       preset: built.preset,
@@ -228,6 +296,7 @@ function createDriverRoutes(deps) {
       merged: driverExists && !replaceTags,
       slaveId: assignedSlave,
       tagsFromDevice: !!presetMeta.tagsFromDevice,
+      pdmSeed,
       nextStep: presetMeta.tagsFromDevice
         ? 'On Opta /setup → Scan expansions, then Drivers → Sync tags from Parc device'
         : undefined,
@@ -616,6 +685,246 @@ function createDriverRoutes(deps) {
       reassigned: merged.reassigned || 0,
       tagCount: tagStore.count(),
       expansionModules: dev.meta?.expansionModules || [],
+    });
+  });
+
+  router.post('/drivers/bacnet/discover', async (req, res) => {
+    try {
+      const driverCfg = req.body?.driverId
+        ? driverManager.list().find((d) => d.id === req.body.driverId)
+        : null;
+      const cfg = { ...(driverCfg || {}), ...(req.body || {}) };
+      const result = await discoverDevices(cfg);
+      res.json({ ok: true, ...result });
+    } catch (e) {
+      res.status(400).json({ error: e.message || String(e) });
+    }
+  });
+
+  router.post('/drivers/bacnet/browse', async (req, res) => {
+    try {
+      const driverCfg = req.body?.driverId
+        ? driverManager.list().find((d) => d.id === req.body.driverId)
+        : null;
+      const cfg = { ...(driverCfg || {}), ...(req.body || {}) };
+      const result = await browseDeviceObjects(cfg);
+      res.json({ ok: true, ...result });
+    } catch (e) {
+      res.status(400).json({ error: e.message || String(e) });
+    }
+  });
+
+  router.post('/drivers/bacnet/import-tags', async (req, res) => {
+    const driverId = req.body?.driverId;
+    const points = req.body?.points;
+    if (!driverId) return res.status(400).json({ error: 'driverId required' });
+    const cfg = driverManager.list().find((d) => d.id === driverId);
+    if (!cfg || cfg.type !== 'bacnet') {
+      return res.status(400).json({ error: 'bacnet driver required' });
+    }
+    const merged = mergeBacnetTagsIntoStore(tagStore.list(), points, driverId, {
+      reassign: req.body?.reassign !== false,
+      role: req.body?.role || 'input',
+    });
+    if (!merged.ok) {
+      return res.status(400).json({ error: merged.error, conflicts: merged.conflicts });
+    }
+    if (merged.tags.length > MAX_TAGS) {
+      return res.status(413).json({ error: `Tag limit ${MAX_TAGS} exceeded (${merged.tags.length})` });
+    }
+    tagStore.replaceAll(merged.tags);
+    await driverManager.rebuild();
+    if (scanEngine) scanEngine.loadSettings();
+    res.json({
+      ok: true,
+      driverId,
+      added: merged.added,
+      updated: merged.updated,
+      tagCount: tagStore.count(),
+    });
+  });
+
+  router.get('/drivers/bacnet/profiles', (req, res) => {
+    res.json({ ok: true, profiles: bacnetProfileStore.listProfiles() });
+  });
+
+  router.put('/drivers/bacnet/profiles', (req, res) => {
+    try {
+      const raw = req.body?.profiles;
+      if (!Array.isArray(raw)) {
+        return res.status(400).json({ error: 'profiles array required' });
+      }
+      const profiles = raw.map((p) => normalizeProfile(p));
+      bacnetProfileStore.saveProfiles(profiles);
+      res.json({ ok: true, count: profiles.length, profiles });
+    } catch (e) {
+      res.status(400).json({ error: e.message || String(e) });
+    }
+  });
+
+  router.post('/drivers/bacnet/profiles/save', (req, res) => {
+    try {
+      const profile = normalizeProfile(req.body?.profile || req.body);
+      const saved = bacnetProfileStore.upsertProfile(profile);
+      res.json({ ok: true, profile: saved });
+    } catch (e) {
+      res.status(400).json({ error: e.message || String(e) });
+    }
+  });
+
+  router.delete('/drivers/bacnet/profiles/:id', (req, res) => {
+    const id = String(req.params.id || '').trim();
+    if (!id) return res.status(400).json({ error: 'profile id required' });
+    const result = bacnetProfileStore.deleteProfile(id);
+    res.json({ ok: true, ...result });
+  });
+
+  router.post('/drivers/bacnet/profiles/from-browse', (req, res) => {
+    try {
+      const profile = profileFromBrowsePoints({
+        id: req.body?.id,
+        label: req.body?.label,
+        description: req.body?.description,
+        tagPrefixPattern: req.body?.tagPrefixPattern,
+        deviceNamePattern: req.body?.deviceNamePattern,
+        points: req.body?.points,
+        selectedSlotIds: req.body?.selectedSlotIds,
+      });
+      if (req.body?.save !== false) {
+        bacnetProfileStore.upsertProfile(profile);
+      }
+      res.json({ ok: true, profile });
+    } catch (e) {
+      res.status(400).json({ error: e.message || String(e) });
+    }
+  });
+
+  router.post('/drivers/bacnet/profiles/preview', async (req, res) => {
+    try {
+      const driverId = req.body?.driverId;
+      if (!driverId) return res.status(400).json({ error: 'driverId required' });
+      const driverCfg = driverManager.list().find((d) => d.id === driverId);
+      if (!driverCfg || driverCfg.type !== 'bacnet') {
+        return res.status(400).json({ error: 'bacnet driver required' });
+      }
+      const cfg = { ...driverCfg, ...(req.body || {}) };
+      const result = await previewProfileApply(cfg, {
+        driverId,
+        profileId: req.body?.profileId,
+        mode: req.body?.mode,
+        devices: req.body?.devices,
+        discover: req.body?.discover,
+        maxObjects: req.body?.maxObjects,
+      });
+      res.json(result);
+    } catch (e) {
+      res.status(400).json({ error: e.message || String(e) });
+    }
+  });
+
+  router.post('/drivers/bacnet/profiles/apply', async (req, res) => {
+    const driverId = req.body?.driverId;
+    if (!driverId) return res.status(400).json({ error: 'driverId required' });
+    const driverCfg = driverManager.list().find((d) => d.id === driverId);
+    if (!driverCfg || driverCfg.type !== 'bacnet') {
+      return res.status(400).json({ error: 'bacnet driver required' });
+    }
+    try {
+      const cfg = { ...driverCfg, ...(req.body || {}) };
+      const built = await applyProfileToFleet(cfg, {
+        driverId,
+        profileId: req.body?.profileId,
+        mode: req.body?.mode || 'discover',
+        devices: req.body?.devices,
+        discover: req.body?.discover,
+        maxObjects: req.body?.maxObjects,
+        allowPartial: req.body?.allowPartial !== false,
+        reassign: req.body?.reassign === true,
+      });
+      if (!built.ok) {
+        return res.status(400).json(built);
+      }
+      if (req.body?.importTags === false) {
+        return res.json({ ok: true, ...built, imported: false });
+      }
+      const merged = mergeApplyIntoStore(tagStore, built, req.body || {});
+      if (!merged.ok) {
+        return res.status(400).json({ error: merged.error, conflicts: merged.conflicts });
+      }
+      if (merged.tags.length > MAX_TAGS) {
+        return res.status(413).json({ error: `Tag limit ${MAX_TAGS} exceeded (${merged.tags.length})` });
+      }
+      tagStore.replaceAll(merged.tags);
+      await driverManager.rebuild();
+      if (scanEngine) scanEngine.loadSettings();
+      res.json({
+        ok: true,
+        driverId,
+        profileId: built.profileId,
+        matchedDevices: built.matchedDevices,
+        added: merged.added,
+        updated: merged.updated,
+        tagCount: tagStore.count(),
+        devices: built.devices,
+        browseErrors: built.browseErrors,
+        imported: true,
+      });
+    } catch (e) {
+      res.status(400).json({ error: e.message || String(e) });
+    }
+  });
+
+  router.get('/drivers/bacnet/profiles/example', (req, res) => {
+    const fp = path.join(ST_DIR, 'fixtures', 'bacnet-profiles.example.json');
+    if (!fs.existsSync(fp)) {
+      return res.status(404).json({ error: 'bacnet-profiles.example.json not found' });
+    }
+    try {
+      const profiles = JSON.parse(fs.readFileSync(fp, 'utf8'));
+      res.json({ ok: true, profiles });
+    } catch (e) {
+      res.status(500).json({ error: e.message || 'Failed to read example profiles' });
+    }
+  });
+
+  router.post('/drivers/bacnet/load-example-tags', async (req, res) => {
+    const driverId = String(req.body?.driverId || 'bacnet1').trim();
+    if (!driverId) return res.status(400).json({ error: 'driverId required' });
+    const fp = path.join(ST_DIR, 'fixtures', 'tags.bacnet.json');
+    if (!fs.existsSync(fp)) {
+      return res.status(404).json({ error: 'tags.bacnet.json fixture not found' });
+    }
+    let fixtureTags;
+    try {
+      fixtureTags = JSON.parse(fs.readFileSync(fp, 'utf8'));
+    } catch (e) {
+      return res.status(500).json({ error: e.message || 'Failed to read tags fixture' });
+    }
+    if (!Array.isArray(fixtureTags)) {
+      return res.status(500).json({ error: 'Invalid tags fixture' });
+    }
+    const remapped = fixtureTags.map((t) => ({ ...t, driverId }));
+    const tagList = tagStore.list();
+    const stripped = tagList.filter((t) => t.driverId !== driverId);
+    const existingIds = new Set(stripped.map((t) => t.id));
+    const conflicts = remapped.filter((t) => existingIds.has(t.id));
+    if (conflicts.length) {
+      return res.status(409).json({
+        error: `Tag id already in use: ${conflicts.map((t) => t.id).join(', ')}`,
+      });
+    }
+    const merged = [...stripped, ...remapped];
+    if (merged.length > MAX_TAGS) {
+      return res.status(413).json({ error: `Tag limit ${MAX_TAGS} exceeded (${merged.length})` });
+    }
+    tagStore.replaceAll(merged);
+    await driverManager.rebuild();
+    if (scanEngine) scanEngine.loadSettings();
+    res.json({
+      ok: true,
+      driverId,
+      tagsAdded: remapped.length,
+      tagCount: tagStore.count(),
     });
   });
 

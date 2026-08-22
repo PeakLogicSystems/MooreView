@@ -1,8 +1,8 @@
 'use strict';
 
 window.MooreviewHmiViewMode = (function () {
-  const HMI_POLL_MS_NORMAL = 60_000;
-  const HMI_POLL_MS_TEST = 2_000;
+  const HMI_POLL_MS_NORMAL = 2_000;
+  const HMI_POLL_MS_TEST = 500;
 
   function normalizeUserLevel(raw) {
     const v = String(raw ?? '').trim().toLowerCase();

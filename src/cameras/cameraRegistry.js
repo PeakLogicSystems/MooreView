@@ -14,8 +14,13 @@ function discoveryVendorFromHit(hit) {
 
 const CAMERAS_FILE = 'cameras.json';
 
+function camerasSystemEnabled(settings) {
+  return settings?.camerasEnabled !== false;
+}
+
 function defaultSettings() {
   return {
+    camerasEnabled: true,
     discoverTimeoutMs: 4000,
     defaultUsername: '',
     defaultPassword: '',
@@ -414,6 +419,7 @@ module.exports = {
   CameraRegistry,
   registry,
   defaultSettings,
+  camerasSystemEnabled,
   normalizeCameraId,
   cameraSummary,
   parseHostPort,

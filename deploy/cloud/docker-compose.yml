@@ -28,7 +28,8 @@ services:
       MOSQUITTO_ALLOW_ANONYMOUS: ${MOSQUITTO_ALLOW_ANONYMOUS:-false}
       MOSQUITTO_USER: ${MOSQUITTO_USER:-}
       MOSQUITTO_PASS: ${MOSQUITTO_PASS:-}
-      MOSQUITTO_TLS: ${MOSQUITTO_TLS:-false}
+      MOSQUITTO_TLS: ${MOSQUITTO_TLS:-true}
+      MOOREVIEW_DOMAIN: ${MOOREVIEW_DOMAIN:-mooreview.io}
     networks:
       - mv-cloud
 

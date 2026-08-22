@@ -1,0 +1,18 @@
+[Unit]
+Description=MooreVIEW day-7 Mongo to zstd archive compaction
+Documentation=file:///home/mooreview/docs/ARCHIVE_EXPORT.md
+After=network-online.target mooreview-saas.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=mooreview
+Group=mooreview
+WorkingDirectory=@MOOREVIEW_INSTALL_DIR@
+EnvironmentFile=-/etc/mooreview/saas.env
+EnvironmentFile=/etc/mooreview/archive-compact.env
+ExecStart=/usr/bin/node scripts/run-archive-compact.js
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

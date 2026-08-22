@@ -17,6 +17,10 @@
       .replace(/"/g, '&quot;');
   }
 
+  function wrapTable(html) {
+    return `<div class="cs-table-wrap">${html}</div>`;
+  }
+
   function agentBadge(online) {
     return online
       ? '<span class="badge badge-ok">online</span>'
@@ -49,6 +53,10 @@
     location.href = '/login';
   });
 
+  document.querySelector('.cs-nav-menu')?.addEventListener('toggle', () => {
+    window.MooreviewMobileViewport?.syncChromeTop?.();
+  });
+
   async function renderSites() {
     main.innerHTML = `
       <h1>Sites</h1>
@@ -75,7 +83,7 @@
           tableHost.innerHTML = '<p class="cs-empty">No sites yet for this organization.</p>';
           return;
         }
-        tableHost.innerHTML = `<table class="cs-table"><thead><tr>
+        tableHost.innerHTML = wrapTable(`<table class="cs-table"><thead><tr>
           <th>Site</th><th>Name</th><th>Tenant</th><th>Agent</th><th>Cameras</th><th></th>
         </tr></thead><tbody>
           ${sites.map((s) => `<tr>
@@ -89,7 +97,7 @@
               <button type="button" class="btn btn-danger" data-del="${esc(s.siteId)}">Delete</button>
             </td>
           </tr>`).join('')}
-        </tbody></table>`;
+        </tbody></table>`);
         tableHost.querySelectorAll('[data-del]').forEach((btn) => {
           btn.addEventListener('click', async () => {
             if (!confirm(`Delete ${btn.dataset.del}?`)) return;
@@ -146,7 +154,7 @@
         tableHost.innerHTML = '<p class="cs-empty">No cameras synced yet.</p>';
         return;
       }
-      tableHost.innerHTML = `<table class="cs-table"><thead><tr>
+      tableHost.innerHTML = wrapTable(`<table class="cs-table"><thead><tr>
         <th>ID</th><th>Name</th><th>Model</th><th>Probe</th><th></th>
       </tr></thead><tbody>
         ${cams.map((c) => `<tr>
@@ -156,7 +164,7 @@
           <td>${esc(c.probeStatus || '—')}</td>
           <td><button type="button" class="btn btn-primary" data-open="${esc(c.cameraId)}" data-name="${esc(c.name || c.cameraId)}">Open live</button></td>
         </tr>`).join('')}
-      </tbody></table>`;
+      </tbody></table>`);
       tableHost.querySelectorAll('[data-open]').forEach((btn) => {
         btn.onclick = () => {
           const card = document.getElementById('cs-player-card');
@@ -194,7 +202,7 @@
         host.innerHTML = '<p class="cs-empty">No devices yet.</p>';
         return;
       }
-      host.innerHTML = `<table class="cs-table"><thead><tr>
+      host.innerHTML = wrapTable(`<table class="cs-table"><thead><tr>
         <th>Device</th><th>Name</th><th>Kind</th><th>Site</th><th>Online</th><th>Commissioning</th>
       </tr></thead><tbody>
         ${devices.map((d) => `<tr>
@@ -205,7 +213,7 @@
           <td>${agentBadge(!!d.online)}</td>
           <td>${esc(d.commissioning || '—')}</td>
         </tr>`).join('')}
-      </tbody></table>`;
+      </tbody></table>`);
     }
     document.getElementById('cs-refresh-dev').onclick = () => load();
     document.getElementById('dev-add').onclick = async () => {
@@ -259,12 +267,12 @@
         return `<div title="${esc(a.name)}" style="position:absolute;left:${Number(a.x)||50}%;top:${Number(a.y)||50}%;transform:translate(-50%,-50%);width:18px;height:18px;border-radius:50%;background:${color};box-shadow:0 0 0 3px rgba(15,23,42,.12)"></div>`;
       }).join('');
       table.innerHTML = assets.length
-        ? `<table class="cs-table"><thead><tr><th>Name</th><th>Site</th><th>Status</th><th></th></tr></thead><tbody>
+        ? wrapTable(`<table class="cs-table"><thead><tr><th>Name</th><th>Site</th><th>Status</th><th></th></tr></thead><tbody>
             ${assets.map((a) => `<tr>
               <td>${esc(a.name)}</td><td>${esc(a.siteId || '—')}</td><td>${statusBadge(a.status)}</td>
               <td><button type="button" class="btn btn-danger" data-del="${esc(a.assetId)}">Delete</button></td>
             </tr>`).join('')}
-          </tbody></table>`
+          </tbody></table>`)
         : '<p class="cs-empty">No assets yet.</p>';
       table.querySelectorAll('[data-del]').forEach((btn) => {
         btn.onclick = async () => {
@@ -291,43 +299,173 @@
   }
 
   async function renderPeople() {
+    const tenantSlug = root.dataset.tenant || '';
+    let canEditMatrix = role === 'platform_admin' || role === 'tenant_admin';
     main.innerHTML = `
       <h1>People</h1>
-      <p class="cs-lead">Users in this organization.</p>
+      <p class="cs-lead">Users and feature access for this organization${tenantSlug ? ` (<code>${esc(tenantSlug)}</code>)` : ''}. <code>tenant_admin</code> always has full access.</p>
+      <p class="cs-msg view-hidden" id="people-readonly-msg">You can view role defaults and your own permissions. Only tenant administrators can add users or edit the access matrix.</p>
+      ${canEditMatrix ? `
+      <h2 class="cs-subhead">Add user</h2>
       <div class="cs-toolbar">
-        <label>Email <input id="u-email" type="email"></label>
+        <label>Email <input id="u-email" type="email" required></label>
         <label>Name <input id="u-name"></label>
-        <label>Password <input id="u-pass" type="password"></label>
+        <label>Password <input id="u-pass" type="password" required minlength="1"></label>
         <label>Role
           <select id="u-role">
             <option value="operator">operator</option>
+            <option value="technician">technician</option>
+            <option value="homeowner">homeowner</option>
+            <option value="viewer">viewer</option>
             <option value="tenant_admin">tenant_admin</option>
           </select>
         </label>
         <button type="button" class="btn btn-primary" id="u-add">Add user</button>
       </div>
-      <div class="cs-card"><div id="u-table"></div></div>`;
-    const host = document.getElementById('u-table');
+      <p class="cs-msg" id="u-status"></p>` : ''}
+      <h2 class="cs-subhead">Role defaults (below tenant_admin)</h2>
+      <p class="panel-hint">Default features applied when a user is created. Per-user overrides below.</p>
+      <div class="cs-card cs-features-matrix-wrap"><div id="role-defaults-matrix"></div></div>
+      <h2 class="cs-subhead">User access matrix</h2>
+      <p class="panel-hint">Checkboxes apply to each user. Admins are not editable here.</p>
+      ${canEditMatrix ? '<div class="cs-toolbar"><button type="button" class="btn btn-primary" id="u-matrix-save">Save access matrix</button></div>' : ''}
+      <p class="cs-msg" id="u-matrix-status"></p>
+      <div class="cs-card cs-features-matrix-wrap"><div id="u-matrix-host"></div></div>`;
+
+    const roleDefaultsHost = document.getElementById('role-defaults-matrix');
+    const matrixHost = document.getElementById('u-matrix-host');
+    const statusEl = document.getElementById('u-status');
+    const matrixStatusEl = document.getElementById('u-matrix-status');
+    let featureCatalog = [];
+    let tenantUsers = [];
+
+    function featCell(on, { readOnly = false } = {}) {
+      if (readOnly) {
+        return `<td class="${on ? 'feat-on' : 'feat-off'}">${on ? '✓' : '—'}</td>`;
+      }
+      return `<td><span class="${on ? 'feat-on' : 'feat-off'}">${on ? '✓' : '—'}</span></td>`;
+    }
+
+    function renderRoleDefaultsMatrix() {
+      const roles = [
+        { id: 'operator', label: 'operator' },
+        { id: 'technician', label: 'technician' },
+        { id: 'viewer', label: 'viewer' },
+        { id: 'homeowner', label: 'homeowner' },
+      ];
+      const head = featureCatalog.map((f) => `<th title="${esc(f.label)}">${esc(f.label)}</th>`).join('');
+      const rows = roles.map((r) => {
+        const defaults = window.__mvRoleDefaults?.[r.id] || {};
+        const cells = featureCatalog.map((f) => featCell(!!defaults[f.key], { readOnly: true })).join('');
+        return `<tr class="is-role-default"><td class="feature-user-col"><strong>${esc(r.label)}</strong><br><span class="muted">role default</span></td>${cells}</tr>`;
+      }).join('');
+      roleDefaultsHost.innerHTML = `<table class="cs-features-matrix"><thead><tr><th class="feature-user-col">Role</th>${head}</tr></thead><tbody>${rows}</tbody></table>`;
+    }
+
+    function renderUserMatrix() {
+      const editable = canEditMatrix;
+      const matrixUsers = tenantUsers.filter((u) => u.role !== 'tenant_admin' && u.role !== 'platform_admin');
+      if (!matrixUsers.length) {
+        matrixHost.innerHTML = editable
+          ? '<p class="cs-empty">No editable users yet — add operator, technician, viewer, or homeowner accounts above.</p>'
+          : '<p class="cs-empty">No user access record for your account.</p>';
+        return;
+      }
+      const head = featureCatalog.map((f) => `<th title="${esc(f.label)}">${esc(f.label)}</th>`).join('');
+      const rows = matrixUsers.map((u) => {
+        const uid = u.userId || u.id;
+        const cells = featureCatalog.map((f) => {
+          const checked = !!u.features?.[f.key];
+          if (!editable) {
+            return featCell(checked, { readOnly: true });
+          }
+          return `<td><input type="checkbox" data-feat-user="${esc(uid)}" data-feat-key="${esc(f.key)}"${checked ? ' checked' : ''} aria-label="${esc(u.email)} ${esc(f.label)}"></td>`;
+        }).join('');
+        return `<tr data-auth-user-row="${esc(uid)}">
+          <td class="feature-user-col"><strong>${esc(u.name || u.email)}</strong><br><span class="muted">${esc(u.email)} · ${esc(u.role)}</span></td>
+          ${cells}
+        </tr>`;
+      }).join('');
+      matrixHost.innerHTML = `<table class="cs-features-matrix"><thead><tr><th class="feature-user-col">User</th>${head}</tr></thead><tbody>${rows}</tbody></table>`;
+    }
+
+    function collectMatrix() {
+      const matrix = {};
+      tenantUsers.forEach((u) => {
+        if (u.role === 'tenant_admin' || u.role === 'platform_admin') return;
+        const uid = u.userId || u.id;
+        matrix[uid] = { ...(u.features || {}) };
+      });
+      document.querySelectorAll('[data-feat-user][data-feat-key]').forEach((cb) => {
+        const uid = cb.dataset.featUser;
+        const key = cb.dataset.featKey;
+        if (!matrix[uid]) matrix[uid] = {};
+        matrix[uid][key] = cb.checked;
+      });
+      return matrix;
+    }
+
     async function load() {
       const data = await api.listTenantUsers();
-      const users = data.users || [];
-      host.innerHTML = `<table class="cs-table"><thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Org</th></tr></thead><tbody>
-        ${users.map((u) => `<tr>
-          <td>${esc(u.email)}</td><td>${esc(u.name)}</td><td>${esc(u.role)}</td><td><code>${esc(u.tenantId || u.tenantSlug || '—')}</code></td>
-        </tr>`).join('')}
-      </tbody></table>`;
+      tenantUsers = data.users || [];
+      featureCatalog = data.features || [];
+      window.__mvRoleDefaults = data.roleDefaults || {};
+      if (data.readOnly != null) canEditMatrix = !data.readOnly;
+      document.getElementById('people-readonly-msg')?.classList.toggle('view-hidden', canEditMatrix);
+      renderRoleDefaultsMatrix();
+      renderUserMatrix();
     }
-    document.getElementById('u-add').onclick = async () => {
-      await api.createTenantUser({
-        email: document.getElementById('u-email').value.trim(),
-        name: document.getElementById('u-name').value.trim(),
-        password: document.getElementById('u-pass').value,
-        role: document.getElementById('u-role').value,
-      });
+
+    if (canEditMatrix) {
+      document.getElementById('u-add').onclick = async () => {
+        if (statusEl) {
+          statusEl.textContent = '';
+          statusEl.className = 'cs-msg';
+        }
+        const email = document.getElementById('u-email').value.trim();
+        const password = document.getElementById('u-pass').value;
+        const name = document.getElementById('u-name').value.trim();
+        const roleVal = document.getElementById('u-role').value;
+        if (!email || !password) {
+          statusEl.textContent = 'Email and password are required.';
+          statusEl.className = 'cs-msg cs-err';
+          return;
+        }
+        try {
+          await api.createTenantUser({ email, name, password, role: roleVal });
+          document.getElementById('u-email').value = '';
+          document.getElementById('u-name').value = '';
+          document.getElementById('u-pass').value = '';
+          statusEl.textContent = `Added ${email} (${roleVal}).`;
+          statusEl.className = 'cs-msg';
+          await load();
+        } catch (e) {
+          statusEl.textContent = e.message || String(e);
+          statusEl.className = 'cs-msg cs-err';
+        }
+      };
+      document.getElementById('u-matrix-save').onclick = async () => {
+        if (matrixStatusEl) {
+          matrixStatusEl.textContent = '';
+          matrixStatusEl.className = 'cs-msg';
+        }
+        try {
+          const data = await api.putTenantFeaturesMatrix(collectMatrix());
+          tenantUsers = data.users || tenantUsers;
+          matrixStatusEl.textContent = `Access matrix saved (${data.updated ?? 'ok'} user(s)).`;
+          matrixStatusEl.className = 'cs-msg';
+          renderUserMatrix();
+        } catch (e) {
+          matrixStatusEl.textContent = e.message || String(e);
+          matrixStatusEl.className = 'cs-msg cs-err';
+        }
+      };
+    }
+
+    try {
       await load();
-    };
-    try { await load(); } catch (e) {
-      host.innerHTML = `<p class="cs-err">${esc(e.message)}</p>`;
+    } catch (e) {
+      matrixHost.innerHTML = `<p class="cs-err">${esc(e.message)}</p>`;
     }
   }
 
@@ -345,7 +483,7 @@
     async function load() {
       const data = await api.listAdminTenants();
       const tenants = data.tenants || [];
-      host.innerHTML = `<table class="cs-table"><thead><tr>
+      host.innerHTML = wrapTable(`<table class="cs-table"><thead><tr>
         <th>ID</th><th>Code</th><th>Name</th><th>CMMS</th><th></th>
       </tr></thead><tbody>
         ${tenants.map((t) => `<tr>
@@ -359,7 +497,7 @@
             </button>
           </td>
         </tr>`).join('')}
-      </tbody></table>`;
+      </tbody></table>`);
       host.querySelectorAll('[data-cmms]').forEach((btn) => {
         btn.onclick = async () => {
           await api.patchTenantCmms(btn.dataset.cmms, { enabled: btn.dataset.on === '1' });
@@ -381,20 +519,37 @@
   }
 
   async function renderCmms() {
-    main.innerHTML = `
-      <h1>CMMS</h1>
-      <div class="cs-card" id="cmms-box"><p class="cs-msg">Loading…</p></div>`;
+    main.innerHTML = '<div id="cmms-cloud-root" class="cmms-page cmms-cloud-embed"></div>';
     try {
       const data = await api.tenantCmms();
-      const box = document.getElementById('cmms-box');
-      if (data.cmmsEnabled) {
-        box.innerHTML = `<p><span class="badge badge-ok">enabled</span> ${esc(data.message)}</p>
-          ${data.externalUrl ? `<p><a class="btn btn-primary" href="${esc(data.externalUrl)}" target="_blank" rel="noopener">Open CMMS</a></p>` : '<p class="cs-msg">Set externalUrl via admin CMMS patch when integrating TPS CMMS.</p>'}`;
-      } else {
-        box.innerHTML = `<p><span class="badge badge-off">disabled</span> ${esc(data.message)}</p>`;
+      if (!data.cmmsEnabled) {
+        main.innerHTML = `<h1>CMMS</h1><div class="cs-card"><p><span class="badge badge-off">disabled</span> ${esc(data.message)}</p></div>`;
+        return;
+      }
+      if (data.externalUrl && !data.integrated) {
+        main.innerHTML = `<h1>CMMS</h1><div class="cs-card"><p><span class="badge badge-ok">enabled</span> ${esc(data.message)}</p>
+          <p><a class="btn btn-primary" href="${esc(data.externalUrl)}" target="_blank" rel="noopener">Open external CMMS</a></p></div>`;
+        return;
+      }
+      if (typeof MooreviewCmms === 'undefined') {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src = `/js/cmmsApp.js?v=${encodeURIComponent(root.dataset.version || '')}`;
+          s.onload = resolve;
+          s.onerror = reject;
+          document.body.appendChild(s);
+        });
+      }
+      const host = document.getElementById('cmms-cloud-root');
+      if (host) {
+        host.innerHTML = '<h1>CMMS</h1>';
+        const mount = document.createElement('div');
+        mount.id = 'cmms-app-root';
+        host.appendChild(mount);
+        await MooreviewCmms.mount(mount);
       }
     } catch (e) {
-      document.getElementById('cmms-box').innerHTML = `<p class="cs-err">${esc(e.message)}</p>`;
+      main.innerHTML = `<h1>CMMS</h1><div class="cs-card"><p class="cs-err">${esc(e.message)}</p></div>`;
     }
   }
 

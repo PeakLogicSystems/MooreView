@@ -1,16 +1,16 @@
-# MooreVIEW Opta — Firmware & Operation Reference
+# mooreVIEW Opta — Firmware & Operation Reference
 
-**Sketch:** `MooreviewOptaMqttSt`  
-**Current version:** `2.3.61` (`mv_version.h`)  
+**Sketch:** `mooreVIEWOptaMqttSt`  
+**Current version:** `2.3.81` (`mv_version.h`)  
 **Protocol:** MQTT Parc `mooreview/v1/{deviceId}/…`; global P2P tags `mooreview/v1/g/{siteKey4}/{tagName}`
 
-MooreVIEW PC integrates via driver type **`mqtt_parc`**. In-app help: **F1 → MQTT Parc hub & Opta**.
+mooreVIEW PC integrates via driver type **`mqtt_parc`**. In-app help: **F1 → MQTT Parc hub & Opta**.
 
 ---
 
 ## Overview
 
-MooreviewOptaMqttSt combines an on-device **ST bytecode runtime** with **MQTT Parc** telemetry and remote deploy. The PC hub ingests telemetry into `data/parc.json`; MooreVIEW deploys programs with `put_program`, runs ST with `runtime_start`, and syncs forces and time over MQTT.
+mooreVIEWOptaMqttSt combines an on-device **ST bytecode runtime** with **MQTT Parc** telemetry and remote deploy. The PC hub ingests telemetry into `data/parc.json`; mooreVIEW deploys programs with `put_program`, runs ST with `runtime_start`, and syncs forces and time over MQTT.
 
 ### Device modes (v2.3.46+)
 
@@ -46,9 +46,9 @@ Requires **24 V** on expansion modules for detection. Install **Arduino_Opta_Blu
 
 | Module | Role |
 |--------|------|
-| `MooreviewOptaMqttSt.ino` | Main loop, HTTP routes, deferred NV auto-run |
+| `mooreVIEWOptaMqttSt.ino` | Main loop, HTTP routes, deferred NV auto-run |
 | `mv_mqtt.cpp` | Parc MQTT client, command dispatch, telemetry |
-| `mv_st.cpp`, `mv_bc.cpp` | ST bytecode VM (same AST as MooreVIEW PC) |
+| `mv_st.cpp`, `mv_bc.cpp` | ST bytecode VM (same AST as mooreVIEW PC) |
 | `mv_tags.cpp`, `mv_io.cpp`, `mv_expansions.cpp` | Tag model, physical I/O, expansion tags |
 | `mv_program_store.cpp` | QSPI NV program file, CRC, auto-run flag |
 | `mv_store.cpp`, `mv_setup_web.cpp` | Device config KV (Ethernet, broker, expansions, **global site key**) |
@@ -57,7 +57,10 @@ Requires **24 V** on expansion modules for detection. Install **Arduino_Opta_Blu
 | `mv_rtc.cpp` | Software wall clock + queued HAL RTC |
 | `mv_identity.cpp` | ATECC608 → `mv_{16hex}` deviceId (FNV-1a 64) |
 | `mv_http.cpp` | Native Ethernet HTTP server |
+| `mv_watchdog.cpp` | Hardware + liveness watchdog (loop stall + idle reset) |
 | `mv_ota.cpp`, `mv_version.cpp` | OTA upload, version reporting |
+| `mv_mcsa_m7.cpp` + `MooreviewOptaMcsaM4` | 5 min I1–I6 ingest on M7; true FFT + classify on M4 |
+| `mv_mcsa_mon.cpp` + `mv_mcsa_mon_web.cpp` | MCSA monitor config (`/mcsa`): deviceType 0–5, poles/slip, HVAC env |
 
 Serial debug: USB **115200**. Milestone logs use `[MV*]` prefix (always on).
 
@@ -78,11 +81,11 @@ DHCP or static IP configured on `/setup`. Default static example: `192.168.1.50`
 - **Responses:** `mooreview/v1/{deviceId}/cmd/response`
 - **Config:** `mooreview/v1/{deviceId}/config` (pause telemetry during debug)
 
-Broker IP/port saved in device NV on `/setup` (example: `192.168.1.233:1883`). Must match MooreVIEW **System setup → MQTT broker URL** (PC LAN IP, not `127.0.0.1` from the device). Reboot after broker change.
+Broker IP/port saved in device NV on `/setup` (example: `192.168.1.233:1883`). Must match mooreVIEW **System setup → MQTT broker URL** (PC LAN IP, not `127.0.0.1` from the device). Reboot after broker change.
 
 ### PC hub
 
-Enable **MQTT Parc hub** and set broker URL in MooreVIEW System setup. Start Mosquitto on the PC LAN interface (`npm run mqtt:start`).
+Enable **MQTT Parc hub** and set broker URL in mooreVIEW System setup. Start Mosquitto on the PC LAN interface (`npm run mqtt:start`).
 
 ---
 
@@ -90,7 +93,7 @@ Enable **MQTT Parc hub** and set broker URL in MooreVIEW System setup. Start Mos
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| GET | `/`, `/setup` | Setup GUI — Ethernet, WiFi AP, MQTT broker, **global site key**, **device mode**, expansions, ST status |
+| GET | `/`, `/setup` | Setup GUI — Ethernet, WiFi AP, MQTT broker, **global site key**, **device mode**, expansions, ST status, **clear program** |
 | GET | `/io-map` | Live I/O map (base + expansions); **Enable I/O update** polls API |
 | GET | `/api/status` | Full health JSON |
 | GET | `/api/status/lite` | Lightweight status (setup panel refresh) |
@@ -161,7 +164,7 @@ Stop → runtime_stop (program remains in NV)
 clear_program / DELETE /api/program → clear NV program
 ```
 
-MooreVIEW **System setup → Auto-run ST on Opta after power-up** sends `autoRunOnBoot: true` with deploy. PC boot auto-start waits ~8 s before deploy when Remote is on.
+mooreVIEW **System setup → Auto-run ST on Opta after power-up** sends `autoRunOnBoot: true` with deploy. PC boot auto-start waits ~8 s before deploy when Remote is on.
 
 ---
 
@@ -190,6 +193,8 @@ MooreVIEW **System setup → Auto-run ST on Opta after power-up** sends `autoRun
 |---------|-------|
 | Version | Highlights |
 |---------|------------|
+| **2.3.75** | **CT calibration** — `/ct-cal` commissioning UI, NV scale/offset, oversampling on I1–I6; edge AI uses calibrated amps |
+| **2.3.69** | **Watchdog wired** — loop begin/end + HTTP/MQTT NoteActivity; `/api/status` → `watchdog`; `/setup` clear-program button; `DELETE /api/program` |
 | **2.3.61** | **Bytecode OP_DROP** — fix TurnON/TurnOFF trace stack leak in large ST programs; flash firmware then redeploy ST |
 | **2.3.56** | **Hardware + liveness watchdog** — mbed WDT (30s loop stall) + service idle reset (2 min no HTTP/MQTT); `/api/status` → `watchdog` |
 | **2.3.48** | **Phase 1 device id** `mv_{16hex}` (FNV-1a 64 of ATECC 9 bytes); PC accepts legacy `opta_*` |
@@ -199,7 +204,7 @@ MooreVIEW **System setup → Auto-run ST on Opta after power-up** sends `autoRun
 | **2.3.41+** | MQTT cmd subscribe reliability; fix telemetry-OK-but-cmd-timeout |
 | **2.3.30–2.3.40** | NV program store, skip-deploy CRC, I/O map web UI, expansion telemetry |
 | **2.3.24+** | Native HTTP, RTC software clock, broker NV on `/setup` |
-| **2.3.18+** | Minimum for MQTT `put_program` deploy from MooreVIEW |
+| **2.3.18+** | Minimum for MQTT `put_program` deploy from mooreVIEW |
 | **2.3.11+** | Fix 2.3.8 stack overflow in MQTT cmd handler |
 | **2.3.8** | **Do not use** — ~20 KB stack buffer broke all MQTT |
 
@@ -209,9 +214,9 @@ Always verify with GET `/api/status` → `firmwareVersion`.
 
 ## PC integration checklist
 
-- [ ] Flash **MooreviewOptaMqttSt v2.3.61+** via Arduino IDE
+- [ ] Flash **mooreVIEWOptaMqttSt v2.3.69+** via Arduino IDE
 - [ ] Set MQTT broker on Opta `/setup` (LAN IP, port 1883) → Save → Reboot
-- [ ] Set **Global site key** on Opta `/setup` and MooreVIEW System setup (`mqttParc.globalSiteKey`, default `1`)
+- [ ] Set **Global site key** on Opta `/setup` and mooreVIEW System setup (`mqttParc.globalSiteKey`, default `1`)
 - [ ] Choose **Device mode** on `/setup`: Standalone (ST on Opta) or Remote I/O (PC runs ST)
 - [ ] Start Mosquitto on PC LAN (`npm run mqtt:start`)
 - [ ] **System setup:** enable MQTT Parc hub, broker URL; **Remote ST execution** ON for Standalone, OFF for Remote I/O
@@ -233,7 +238,7 @@ Always verify with GET `/api/status` → `firmwareVersion`.
 | Telemetry OK, cmd timeout | Old firmware or subscribe fail | Reflash **v2.3.41+**; Serial: `MQTT subscribed cmd+config` |
 | Board hangs (ping OK, HTTP/MQTT dead) | Wedged stack without loop stall | **v2.3.56+** hardware + liveness watchdog auto-resets; check `/api/status` → `watchdog` |
 | Broker mismatch | `127.0.0.1` on device | Set PC LAN IP on `/setup` and System setup |
-| Deploy fails / old fw | Firmware &lt; 2.3.18 | Arduino IDE upload MooreviewOptaMqttSt |
+| Deploy fails / old fw | Firmware &lt; 2.3.18 | Arduino IDE upload mooreVIEWOptaMqttSt |
 | HTTP dead during deploy | Large put on old fw | Use MQTT deploy; upgrade firmware |
 | ST not running after link | Linked ≠ running | **Download & Start**, not Connect alone |
 | Wrong deviceId | Manual id typo | Use **Add from Parc registry** or read `/setup` |
@@ -253,7 +258,8 @@ Serial always-on: `[MV*]` boot, subscribe, cmd lines @ **115200**.
 | **PC `pentair_rs485`** | PC Pentair master | UltraTemp/MasterTemp heat pump @ 9600 8N1; use `pollIntervalMs` (e.g. 300000) |
 | **PC `vgreen_epc`** | PC Regal GEN3 master | SPECK BADU pump @ 19200; default `pollIntervalMs` 120000 |
 | **Opta `mqtt_parc`** | ST + I/O over MQTT | Primary integration — no RS-485 in default firmware |
-| **Opta `mv_fieldbus` (stub)** | Edge master → MQTT tags | `mv_fieldbus.cpp` — compile with `-DMV_FIELDBUS=1`; **not** simultaneous with Modbus slave on same UART |
+| **Opta `mv_fieldbus` + `MV_EZMETER=1`** | Edge master → MQTT tags | Polls EZ Meter DDS-RGB on RS485; publishes `DDS_*` + estimated `MECH_PQ_THD_*`. Template `arduino_opta_parc_ezmeter`. |
+| **Opta `mv_fieldbus` (stub)** | Edge master → MQTT tags | `mv_fieldbus.cpp` — compile with `-DMV_FIELDBUS=1` without `MV_EZMETER` for future Pentair/Modbus profiles |
 
 **Single transceiver rule:** one RS-485 port cannot be Modbus master and slave at the same time. Split buses (different COM ports / adapters) or use Opta edge polling + MQTT.
 

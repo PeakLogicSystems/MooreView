@@ -17,7 +17,7 @@
 #define MV_WIFI_HTTP_PORT 8080
 #define MV_MAX_TAGS 128
 #define MV_AVG_RING 16
-#define MV_PROGRAM_JSON_MAX 8192
+#define MV_PROGRAM_JSON_MAX 16384
 #define MV_BC_MAX 16384
 /**
  * PubSubClient packet buffer size. MUST be defined here (the earliest, most widely

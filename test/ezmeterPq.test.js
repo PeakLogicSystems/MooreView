@@ -13,10 +13,7 @@ const {
   defaultEzMeterSemanticMap,
   isEzMeterFacility,
   pqThresholds,
-  mqttParcEzMeterThresholds,
-  syncEzMeterThresholdTags,
 } = require('../src/facilities/ezmeterPq');
-const { TagStore } = require('../src/tags/tagStore');
 const { applySemanticMap } = require('../scripts/assisted-living/ezmeter-map');
 
 describe('ezmeterRegisterMap', () => {
@@ -36,7 +33,6 @@ describe('ezmeterPq', () => {
     assert.ok(tags.some((t) => t.id === 'MECH_PQ_ALM'));
     assert.ok(tags.some((t) => t.id === 'MECH_PQ_CFG_NOM_V' && t.value === 277));
     assert.ok(tags.some((t) => t.id === 'MECH_PQ_CFG_UV_V' && t.value === 250));
-    assert.ok(tags.some((t) => t.id === 'MECH_PQ_THD_IA'));
   });
 
   it('detects ezMeter facility driver mode', () => {
@@ -64,25 +60,6 @@ describe('ezmeterPq', () => {
     assert.ok(map.some((m) => m.tagId === 'MECH_METER_KWH' && m.sourceTagId === 'DDS_WH_SUM_IMP'));
     assert.ok(map.some((m) => m.tagId === 'MECH_PQ_VA' && m.sourceTagId === 'DDS_V_A'));
     assert.equal(pqThresholds({}).nominalV, 120);
-  });
-
-  it('mqttParc.ezMeter overrides assistedLiving defaults', () => {
-    const th = mqttParcEzMeterThresholds({
-      mqttParc: { ezMeter: { undervoltV: 105 } },
-      assistedLiving: { ezMeter: { undervoltV: 110 } },
-    });
-    assert.equal(th.undervoltV, 105);
-  });
-
-  it('syncEzMeterThresholdTags writes MECH_PQ_CFG_UV_V when tag exists', () => {
-    const store = new TagStore();
-    store.replaceAll(buildEzMeterPqDerivedTags());
-    const out = syncEzMeterThresholdTags(store, {
-      mqttParc: { ezMeter: { undervoltV: 100, nominalVoltage: 120 } },
-    });
-    assert.equal(out.changed, true);
-    assert.equal(store.get('MECH_PQ_CFG_UV_V').value, 100);
-    assert.equal(store.get('MECH_PQ_CFG_NOM_V').value, 120);
   });
 });
 

@@ -20,7 +20,6 @@ const SEED_ALL_TAG_IDS = [...SEED_DIGITAL_IDS, ...SEED_ANALOG_IDS];
 
 let client = null;
 let collection = null;
-let samplesCollection = null;
 let edgeCollection = null;
 let featuresCollectionHandle = null;
 let connecting = null;
@@ -46,14 +45,8 @@ function collectionName() {
   return override?.collection || process.env.MONGODB_COLLECTION || DEFAULT_MONGO_LOGGER.collection;
 }
 
-function samplesCollectionName() {
-  return override?.samplesCollection
-    || process.env.MONGODB_SAMPLES_COLLECTION
-    || DEFAULT_MONGO_LOGGER.samplesCollection;
-}
-
 function edgeCollectionName() {
-  return override?.edgeCollection || process.env.MONGODB_EDGE_COLLECTION || DEFAULT_MONGO_LOGGER.edgeCollection;
+  return override?.edgeCollection || process.env.MONGODB_EDGE_COLLECTION || DEFAULT_MONGO_LOGGER.edgeCollection || 'edge_inference';
 }
 
 function tagSnapshot(tag) {
@@ -70,107 +63,6 @@ function tagSnapshot(tag) {
     scale: tag.scale,
     offset: tag.offset,
   };
-}
-
-function roundSampleValue(value, tagType) {
-  if (value == null || !Number.isFinite(Number(value))) return null;
-  const n = Number(value);
-  if (tagType === 'BOOL') return n ? 1 : 0;
-  return Math.round(n * 100) / 100;
-}
-
-function penSampleToTsDoc({
-  at,
-  projectName,
-  tagId,
-  tagType,
-  running,
-  sampleValue,
-  scaledValue,
-  source,
-}) {
-  const timestamp = at instanceof Date ? at : new Date(at);
-  const roundedValue = roundSampleValue(sampleValue, tagType);
-  const roundedScaled = scaledValue != null ? roundSampleValue(scaledValue, tagType) : null;
-  const metadata = {
-    projectName: projectName || 'untitled',
-    tagId,
-  };
-  if (tagType) metadata.tagType = tagType;
-  if (source) metadata.source = source;
-  const doc = {
-    timestamp,
-    metadata,
-    value: roundedValue,
-    running: !!running,
-  };
-  if (roundedScaled != null) doc.scaledValue = roundedScaled;
-  return doc;
-}
-
-function legacyPenDocToTs(doc) {
-  if (doc?.metadata?.tagId && doc.timestamp) return doc;
-  const tagId = doc.pen?.tagId || doc.tag?.id;
-  if (!tagId) return null;
-  return penSampleToTsDoc({
-    at: doc.at || doc.timestamp,
-    projectName: doc.projectName || doc.metadata?.projectName,
-    tagId,
-    tagType: doc.tag?.type || doc.metadata?.tagType,
-    running: doc.running,
-    sampleValue: doc.sampleValue ?? doc.value,
-    scaledValue: doc.scaledValue,
-    source: doc.source || doc.metadata?.source,
-  });
-}
-
-function edgeInferenceToTsDoc(doc) {
-  if (doc?.metadata && doc.timestamp) return doc;
-  const inference = doc.inference || {};
-  return {
-    timestamp: doc.at instanceof Date ? doc.at : new Date(doc.at || Date.now()),
-    metadata: {
-      assetId: doc.assetId || doc.cameraId || null,
-      deviceId: doc.deviceId || doc.cameraId || null,
-      modelId: doc.modelId || 'unknown',
-      cameraId: doc.cameraId || null,
-      snapshotId: doc.snapshotId || null,
-      source: doc.source || null,
-    },
-    score: inference.score != null ? Number(inference.score) : null,
-    label: inference.label || null,
-    confidence: inference.confidence != null ? Number(inference.confidence) : null,
-    type: inference.type || 'anomaly',
-    features: doc.features && typeof doc.features === 'object' ? doc.features : {},
-  };
-}
-
-function edgeDocForRead(doc) {
-  if (doc.inference) return doc;
-  return {
-    at: doc.timestamp,
-    assetId: doc.metadata?.assetId,
-    deviceId: doc.metadata?.deviceId,
-    modelId: doc.metadata?.modelId,
-    inference: {
-      type: doc.type,
-      score: doc.score,
-      label: doc.label,
-      confidence: doc.confidence,
-    },
-    features: doc.features || {},
-  };
-}
-
-function tagIdFromSampleDoc(doc) {
-  return doc.metadata?.tagId || doc.pen?.tagId || doc.tag?.id;
-}
-
-function timestampFromSampleDoc(doc) {
-  const at = doc.timestamp ?? doc.at;
-  if (at instanceof Date) return at.getTime();
-  const ts = Date.parse(at);
-  return Number.isFinite(ts) ? ts : NaN;
 }
 
 function validateTimeRange(fromMs, toMs) {
@@ -202,9 +94,6 @@ function downsample(points, maxPoints) {
 }
 
 function sampleValueFromDoc(doc) {
-  if (doc.value != null && Number.isFinite(Number(doc.value))) {
-    return Number(doc.value);
-  }
   if (doc.sampleValue != null && Number.isFinite(Number(doc.sampleValue))) {
     return Number(doc.sampleValue);
   }
@@ -218,10 +107,10 @@ function docsToHistory(docs, tagIds, limitPerTag = DEFAULT_LIMIT_PER_TAG) {
   const idSet = tagIds?.length ? new Set(tagIds) : null;
   const buckets = new Map();
   for (const doc of docs) {
-    const tagId = tagIdFromSampleDoc(doc);
+    const tagId = doc.pen?.tagId || doc.tag?.id;
     if (!tagId) continue;
     if (idSet && !idSet.has(tagId)) continue;
-    const ts = timestampFromSampleDoc(doc);
+    const ts = doc.at instanceof Date ? doc.at.getTime() : new Date(doc.at).getTime();
     if (!Number.isFinite(ts)) continue;
     if (!buckets.has(tagId)) buckets.set(tagId, []);
     buckets.get(tagId).push({
@@ -249,21 +138,8 @@ function docsToHistory(docs, tagIds, limitPerTag = DEFAULT_LIMIT_PER_TAG) {
   return { history, counts, downsampled };
 }
 
-async function ensureTimeSeriesCollection(db, name, { timeField, metaField, granularity }) {
-  try {
-    await db.createCollection(name, {
-      timeseries: { timeField, metaField, granularity },
-    });
-  } catch (err) {
-    if (err.codeName !== 'NamespaceExists' && !String(err.message).includes('already exists')) {
-      throw err;
-    }
-  }
-  return db.collection(name);
-}
-
 async function connect() {
-  if (collection && samplesCollection && edgeCollection) return true;
+  if (collection && edgeCollection) return true;
   const u = uri();
   if (!u) return false;
   if (connecting) return connecting;
@@ -274,42 +150,18 @@ async function connect() {
       await client.connect();
       const db = client.db(dbName());
       collection = db.collection(collectionName());
-      samplesCollection = await ensureTimeSeriesCollection(db, samplesCollectionName(), {
-        timeField: 'timestamp',
-        metaField: 'metadata',
-        granularity: 'seconds',
-      });
-      edgeCollection = await ensureTimeSeriesCollection(db, edgeCollectionName(), {
-        timeField: 'timestamp',
-        metaField: 'metadata',
-        granularity: 'seconds',
-      });
+      edgeCollection = db.collection(edgeCollectionName());
       await collection.createIndex({ at: -1 });
       await collection.createIndex({ event: 1, 'tag.id': 1 });
       await collection.createIndex({ event: 1, at: -1, 'pen.tagId': 1 });
-      try {
-        await samplesCollection.createIndex({ 'metadata.tagId': 1, timestamp: -1 });
-        await samplesCollection.createIndex({ 'metadata.projectName': 1, timestamp: -1 });
-      } catch {
-        // Time series collections auto-index time + meta; extra indexes may already exist.
-      }
-      try {
-        await edgeCollection.createIndex({ 'metadata.assetId': 1, timestamp: -1 });
-        await edgeCollection.createIndex({ 'metadata.deviceId': 1, timestamp: -1 });
-      } catch {
-        // Non-fatal if index already exists.
-      }
-      console.log(
-        `[MooreVIEW] MongoDB logger connected: ${dbName()}.${collectionName()}`
-        + ` + ${samplesCollectionName()} (time series)`
-        + ` + ${edgeCollectionName()} (time series)`
-      );
+      await edgeCollection.createIndex({ at: -1 });
+      await edgeCollection.createIndex({ assetId: 1, at: -1 });
+      console.log(`[MooreVIEW] MongoDB logger connected: ${dbName()}.${collectionName()} + ${edgeCollectionName()}`);
       return true;
     } catch (e) {
       console.warn('[MooreVIEW] MongoDB logger:', e.message);
       client = null;
       collection = null;
-      samplesCollection = null;
       edgeCollection = null;
       featuresCollectionHandle = null;
       return false;
@@ -340,9 +192,7 @@ function status() {
     connected: !!collection,
     db: dbName(),
     collection: collectionName(),
-    samplesCollection: samplesCollectionName(),
     edgeCollection: edgeCollectionName(),
-    timeSeries: true,
     sampleIntervalMs: sampleIntervalMs(),
     minChunkMs: HISTORIAN_MIN_CHUNK_MS,
     maxChunkMs: HISTORIAN_MAX_CHUNK_MS,
@@ -371,18 +221,6 @@ async function insertMany(docs) {
     return true;
   } catch (e) {
     console.warn('[MooreVIEW] MongoDB insertMany:', e.message);
-    return false;
-  }
-}
-
-async function insertManySamples(docs) {
-  if (!docs.length) return false;
-  if (!(await connect())) return false;
-  try {
-    await samplesCollection.insertMany(docs, { ordered: false });
-    return true;
-  } catch (e) {
-    console.warn('[MooreVIEW] MongoDB sample insert:', e.message);
     return false;
   }
 }
@@ -418,39 +256,21 @@ async function logPenSamples({ pens, tags, runtime }) {
   const docs = pens.map((pen) => {
     const tag = tagMap.get(pen.tagId);
     const sampleValue = tag ? numericTagValue(tag) : null;
-    return penSampleToTsDoc({
+    return {
+      event: 'pen_sample',
       at,
       projectName: runtime?.projectName,
-      tagId: pen.tagId,
-      tagType: tag?.type,
       running: !!runtime?.running,
+      pen,
+      tag: tagSnapshot(tag),
       sampleValue,
       scaledValue: sampleValue != null
         ? (sampleValue * (pen.scale || 1) + (pen.offset || 0))
         : null,
-    });
+    };
   });
-  const ok = await insertManySamples(docs);
+  const ok = await insertMany(docs);
   return { ok, count: docs.length };
-}
-
-function buildSampleTsFilter({ fromMs, toMs, tagIds, projectName }) {
-  const filter = {
-    timestamp: { $gte: new Date(fromMs), $lte: new Date(toMs) },
-  };
-  if (tagIds?.length) filter['metadata.tagId'] = { $in: tagIds };
-  if (projectName) filter['metadata.projectName'] = projectName;
-  return filter;
-}
-
-function buildLegacySampleFilter({ fromMs, toMs, tagIds, projectName }) {
-  const filter = {
-    event: 'pen_sample',
-    at: { $gte: new Date(fromMs), $lte: new Date(toMs) },
-  };
-  if (tagIds?.length) filter['pen.tagId'] = { $in: tagIds };
-  if (projectName) filter.projectName = projectName;
-  return filter;
 }
 
 /**
@@ -465,15 +285,15 @@ async function queryPenHistory({ from, to, tagIds, projectName, limitPerTag }) {
   if (!(await connect())) return { ok: false, error: 'MongoDB not connected' };
 
   const lim = Math.min(Math.max(Number(limitPerTag) || DEFAULT_LIMIT_PER_TAG, 100), 20000);
-  const tsFilter = buildSampleTsFilter({ fromMs, toMs, tagIds, projectName });
-  const legacyFilter = buildLegacySampleFilter({ fromMs, toMs, tagIds, projectName });
+  const filter = {
+    event: 'pen_sample',
+    at: { $gte: new Date(fromMs), $lte: new Date(toMs) },
+  };
+  if (tagIds?.length) filter['pen.tagId'] = { $in: tagIds };
+  if (projectName) filter.projectName = projectName;
 
   try {
-    const [tsDocs, legacyDocs] = await Promise.all([
-      samplesCollection.find(tsFilter).sort({ timestamp: 1 }).toArray(),
-      collection.find(legacyFilter).sort({ at: 1 }).toArray(),
-    ]);
-    const docs = [...legacyDocs, ...tsDocs];
+    const docs = await collection.find(filter).sort({ at: 1 }).toArray();
     const { history, counts, downsampled } = docsToHistory(docs, tagIds, lim);
     return {
       ok: true,
@@ -487,7 +307,6 @@ async function queryPenHistory({ from, to, tagIds, projectName, limitPerTag }) {
         totalDocs: docs.length,
         downsampled,
         source: 'mongo',
-        samplesCollection: samplesCollectionName(),
       },
     };
   } catch (e) {
@@ -537,7 +356,7 @@ function buildSeedPens() {
 }
 
 /**
- * Build pen_sample time-series documents for demo historian data (pure, for tests and seeding).
+ * Build pen_sample documents for demo historian data (pure, for tests and seeding).
  */
 function generateSeedSampleDocs({
   days = SEED_DEFAULT_DAYS,
@@ -570,16 +389,25 @@ function generateSeedSampleDocs({
           + 25 * Math.sin((hours / 24) * Math.PI * 2 + analogIdx * 0.7);
         sampleValue = Math.round((base + (rnd() - 0.5) * 6) * 100) / 100;
       }
-      docs.push(penSampleToTsDoc({
+      const tag = {
+        id: tagId,
+        type: isDigital ? 'BOOL' : 'REAL',
+        role: 'input',
+        value: isDigital ? sampleValue === 1 : sampleValue,
+        wordWidth: 16,
+        quality: 'good',
+      };
+      docs.push({
+        event: 'pen_sample',
         at,
         projectName,
-        tagId,
-        tagType: isDigital ? 'BOOL' : 'REAL',
         running: false,
+        source: 'seed',
+        pen,
+        tag: tagSnapshot(tag),
         sampleValue,
         scaledValue: sampleValue * (pen.scale || 1) + (pen.offset || 0),
-        source: 'seed',
-      }));
+      });
     }
     tick++;
   }
@@ -599,56 +427,24 @@ async function purgeHistory({ from, to, tagIds, projectName, events, all }) {
   if (!enabled()) return { ok: false, error: 'MongoDB logger not configured' };
   if (!(await connect())) return { ok: false, error: 'MongoDB not connected' };
 
+  const filter = {};
+  if (!all) {
+    const fromMs = typeof from === 'number' ? from : Date.parse(from);
+    const toMs = typeof to === 'number' ? to : Date.parse(to);
+    if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) {
+      return { ok: false, error: 'Invalid from/to timestamps' };
+    }
+    if (toMs <= fromMs) return { ok: false, error: 'End time must be after start time' };
+    filter.at = { $gte: new Date(fromMs), $lte: new Date(toMs) };
+  }
   const evts = events?.length ? events : ['pen_sample', 'pen_selection'];
-  let deletedCount = 0;
+  filter.event = evts.length === 1 ? evts[0] : { $in: evts };
+  if (tagIds?.length) filter['pen.tagId'] = { $in: tagIds };
+  if (projectName) filter.projectName = projectName;
 
   try {
-    if (evts.includes('pen_sample')) {
-      const sampleFilter = {};
-      if (!all) {
-        const fromMs = typeof from === 'number' ? from : Date.parse(from);
-        const toMs = typeof to === 'number' ? to : Date.parse(to);
-        if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) {
-          return { ok: false, error: 'Invalid from/to timestamps' };
-        }
-        if (toMs <= fromMs) return { ok: false, error: 'End time must be after start time' };
-        sampleFilter.timestamp = { $gte: new Date(fromMs), $lte: new Date(toMs) };
-      }
-      if (tagIds?.length) sampleFilter['metadata.tagId'] = { $in: tagIds };
-      if (projectName) sampleFilter['metadata.projectName'] = projectName;
-      const sampleResult = await samplesCollection.deleteMany(sampleFilter);
-      deletedCount += sampleResult.deletedCount;
-
-      const legacyFilter = { event: 'pen_sample' };
-      if (!all) {
-        const fromMs = typeof from === 'number' ? from : Date.parse(from);
-        const toMs = typeof to === 'number' ? to : Date.parse(to);
-        legacyFilter.at = { $gte: new Date(fromMs), $lte: new Date(toMs) };
-      }
-      if (tagIds?.length) legacyFilter['pen.tagId'] = { $in: tagIds };
-      if (projectName) legacyFilter.projectName = projectName;
-      const legacyResult = await collection.deleteMany(legacyFilter);
-      deletedCount += legacyResult.deletedCount;
-    }
-
-    if (evts.includes('pen_selection')) {
-      const selectionFilter = { event: 'pen_selection' };
-      if (!all) {
-        const fromMs = typeof from === 'number' ? from : Date.parse(from);
-        const toMs = typeof to === 'number' ? to : Date.parse(to);
-        if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) {
-          return { ok: false, error: 'Invalid from/to timestamps' };
-        }
-        if (toMs <= fromMs) return { ok: false, error: 'End time must be after start time' };
-        selectionFilter.at = { $gte: new Date(fromMs), $lte: new Date(toMs) };
-      }
-      if (tagIds?.length) selectionFilter['pen.tagId'] = { $in: tagIds };
-      if (projectName) selectionFilter.projectName = projectName;
-      const selectionResult = await collection.deleteMany(selectionFilter);
-      deletedCount += selectionResult.deletedCount;
-    }
-
-    return { ok: true, deletedCount };
+    const result = await collection.deleteMany(filter);
+    return { ok: true, deletedCount: result.deletedCount };
   } catch (e) {
     return { ok: false, error: e.message || String(e) };
   }
@@ -667,7 +463,7 @@ async function seedDemoHistory({
   try {
     for (let i = 0; i < generated.docs.length; i += SEED_BATCH_SIZE) {
       const batch = generated.docs.slice(i, i + SEED_BATCH_SIZE);
-      await samplesCollection.insertMany(batch, { ordered: false });
+      await collection.insertMany(batch, { ordered: false });
       inserted += batch.length;
     }
     return {
@@ -683,7 +479,6 @@ async function seedDemoHistory({
       intervalMs: generated.intervalMs,
       digitalCount: SEED_DIGITAL_IDS.length,
       analogCount: SEED_ANALOG_IDS.length,
-      samplesCollection: samplesCollectionName(),
     };
   } catch (e) {
     return { ok: false, error: e.message || String(e), inserted };
@@ -696,18 +491,8 @@ async function close() {
   }
   client = null;
   collection = null;
-  samplesCollection = null;
   edgeCollection = null;
   featuresCollectionHandle = null;
-}
-
-function resolveEdgeAssetId(item, body) {
-  if (item?.assetId) return String(item.assetId);
-  const pumpIndex = item?.pumpIndex ?? item?.pump ?? body?.pumpIndex;
-  if (pumpIndex != null && Number.isFinite(Number(pumpIndex))) {
-    return `pump-${Math.trunc(Number(pumpIndex))}`;
-  }
-  return body?.assetId || body?.deviceId || null;
 }
 
 function normalizeEdgeInference(raw) {
@@ -743,11 +528,10 @@ function extractEdgePayloads(body) {
   for (const item of list) {
     const norm = normalizeEdgeInference(item);
     if (!norm) continue;
-    const assetId = resolveEdgeAssetId(item, body);
     docs.push({
       event: 'edge_inference',
       deviceId,
-      assetId: assetId || item.assetId || body.assetId || deviceId,
+      assetId: norm.assetId || item.assetId || body.assetId || deviceId,
       modelId: norm.modelId,
       inference: norm.inference,
       features: norm.features,
@@ -760,9 +544,11 @@ async function logEdgeInferences(docs) {
   if (!enabled() || !docs?.length) return { ok: false, skipped: true };
   if (!(await connect())) return { ok: false, error: 'MongoDB not connected' };
   try {
-    const tsDocs = docs.map((d) => edgeInferenceToTsDoc(d));
-    await edgeCollection.insertMany(tsDocs, { ordered: false });
-    return { ok: true, count: tsDocs.length };
+    await edgeCollection.insertMany(
+      docs.map((d) => ({ ...d, at: d.at || new Date() })),
+      { ordered: false }
+    );
+    return { ok: true, count: docs.length };
   } catch (e) {
     console.warn('[MooreVIEW] MongoDB edge insert:', e.message);
     return { ok: false, error: e.message || String(e) };
@@ -777,8 +563,7 @@ async function logEdgeFromReport(body) {
 
 async function insertPenDocs(docs) {
   if (!enabled() || !docs?.length) return false;
-  const tsDocs = docs.map((d) => legacyPenDocToTs(d)).filter(Boolean);
-  return insertManySamples(tsDocs);
+  return insertMany(docs);
 }
 
 async function queryPenDocs({ from, to, tagIds, projectName }) {
@@ -786,42 +571,31 @@ async function queryPenDocs({ from, to, tagIds, projectName }) {
   const fromMs = typeof from === 'number' ? from : Date.parse(from);
   const toMs = typeof to === 'number' ? to : Date.parse(to);
   if (!(await connect())) return [];
-  const tsFilter = buildSampleTsFilter({ fromMs, toMs, tagIds, projectName });
-  const legacyFilter = buildLegacySampleFilter({ fromMs, toMs, tagIds, projectName });
+  const filter = {
+    event: 'pen_sample',
+    at: { $gte: new Date(fromMs), $lte: new Date(toMs) },
+  };
+  if (tagIds?.length) filter['pen.tagId'] = { $in: tagIds };
+  if (projectName) filter.projectName = projectName;
   try {
-    const [tsDocs, legacyDocs] = await Promise.all([
-      samplesCollection.find(tsFilter).sort({ timestamp: 1 }).toArray(),
-      collection.find(legacyFilter).sort({ at: 1 }).toArray(),
-    ]);
-    return [...legacyDocs, ...tsDocs];
+    return await collection.find(filter).sort({ at: 1 }).toArray();
   } catch {
     return [];
   }
 }
 
-async function queryEdgeDocs({ from, to, assetId, deviceId, cameraId }) {
+async function queryEdgeDocs({ from, to, assetId, deviceId }) {
   if (!enabled()) return [];
   const fromMs = typeof from === 'number' ? from : Date.parse(from);
   const toMs = typeof to === 'number' ? to : Date.parse(to);
   if (!(await connect())) return [];
-  const tsFilter = {
-    timestamp: { $gte: new Date(fromMs), $lte: new Date(toMs) },
-  };
-  if (assetId) tsFilter['metadata.assetId'] = assetId;
-  if (deviceId) tsFilter['metadata.deviceId'] = deviceId;
-  if (cameraId) tsFilter['metadata.cameraId'] = cameraId;
-  const legacyFilter = {
+  const filter = {
     at: { $gte: new Date(fromMs), $lte: new Date(toMs) },
   };
-  if (assetId) legacyFilter.assetId = assetId;
-  if (deviceId) legacyFilter.deviceId = deviceId;
-  if (cameraId) legacyFilter.cameraId = cameraId;
+  if (assetId) filter.assetId = assetId;
+  if (deviceId) filter.deviceId = deviceId;
   try {
-    const [tsDocs, legacyDocs] = await Promise.all([
-      edgeCollection.find(tsFilter).sort({ timestamp: 1 }).toArray(),
-      edgeCollection.find(legacyFilter).sort({ at: 1 }).toArray(),
-    ]);
-    return [...legacyDocs.map(edgeDocForRead), ...tsDocs.map(edgeDocForRead)];
+    return await edgeCollection.find(filter).sort({ at: 1 }).toArray();
   } catch {
     return [];
   }
@@ -865,16 +639,6 @@ async function loadPdmFeatures({ assetId, from, to, collection: colName }) {
   }
 }
 
-async function getDb() {
-  if (!(await connect())) return null;
-  return client.db(dbName());
-}
-
-async function getClient() {
-  if (!(await connect())) return null;
-  return client;
-}
-
 module.exports = {
   HISTORIAN_MIN_CHUNK_MS,
   HISTORIAN_MAX_CHUNK_MS,
@@ -883,18 +647,12 @@ module.exports = {
   SEED_ALL_TAG_IDS,
   validateTimeRange,
   docsToHistory,
-  penSampleToTsDoc,
-  legacyPenDocToTs,
-  edgeInferenceToTsDoc,
-  tagIdFromSampleDoc,
-  timestampFromSampleDoc,
   buildSeedTagDefinitions,
   buildSeedPens,
   generateSeedSampleDocs,
   setConfig: async (cfg) => {
     override = cfg && typeof cfg === 'object' ? { ...cfg } : null;
     await close();
-    if (enabled()) await connect().catch(() => {});
   },
   clearConfig: async () => {
     override = null;
@@ -903,8 +661,6 @@ module.exports = {
   enabled,
   status,
   connect,
-  getDb,
-  getClient,
   logPenSelection,
   logPenSamples,
   queryPenHistory,

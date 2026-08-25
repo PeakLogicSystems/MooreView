@@ -78,8 +78,9 @@ function makeLiftStationGrid() {
         return null;
       },
       setAttribute(name, value) { this.attributes[name] = value; },
+      setAttributeNS(_ns, name, value) { this.attributes[name] = value; },
       getAttribute(name) { return this.attributes[name] ?? ''; },
-      attributes: {},
+      attributes: id.includes('lamp_float') ? { r: '10' } : {},
     };
     nodes.push(el);
     return el;
@@ -89,6 +90,7 @@ function makeLiftStationGrid() {
   node('t1_1_z0__ind_p1_stopped');
   node('t1_1_z0__txt_p1_running', 'text');
   node('t1_1_z0__txt_p1_stopped', 'text');
+  node('t1_1_z0__btn_p1_auto');
   return { grid, get: (id) => nodes.find((n) => n.id === id) };
 }
 
@@ -156,5 +158,53 @@ describe('duplex lift station indicator bindings', () => {
     assert.equal(stopRect.getAttribute('fill'), '#cc0000');
     assert.equal(runText.getAttribute('fill'), '#555555');
     assert.equal(stopText.getAttribute('fill'), '#ffffff');
+  });
+
+  it('applyBinding highlights the selected HOA button via fill5', () => {
+    const { get } = makeLiftStationGrid();
+    const auto = get('t1_1_z0__btn_p1_auto');
+    const binding = {
+      tagId: 'MOTOR1_HOA',
+      elementId: 't1_1_z0__btn_p1_auto',
+      property: 'fill5',
+      interaction: 'hoaMode',
+      hoaValue: 0,
+      min: 0,
+      max: 2,
+      colors: ['#0044aa', '#333333', '#333333'],
+    };
+    HmiView.applyBinding(auto, binding, { MOTOR1_HOA: { type: 'INT', value: 0 } });
+    assert.equal(auto.getAttribute('fill'), '#0044aa');
+    HmiView.applyBinding(auto, binding, { MOTOR1_HOA: { type: 'INT', value: 2 } });
+    assert.equal(auto.getAttribute('fill'), '#333333');
+  });
+
+  it('applyBinding maps STATION_STA to Online/Fault/Warning/Offline text', () => {
+    const el = {
+      tagName: 'text',
+      id: 't1_1_z0__txt_station_status',
+      style: {},
+      classList: { contains: () => false },
+      dataset: {},
+      attributes: {},
+      setAttribute(name, value) { this.attributes[name] = value; },
+      getAttribute(name) { return this.attributes[name] ?? ''; },
+      closest() { return null; },
+    };
+    const binding = {
+      tagId: 'STATION_STA',
+      elementId: 't1_1_z0__txt_station_status',
+      property: 'text',
+      format: 'stationSta',
+      min: 0,
+      max: 3,
+      colors: ['#22c55e', '#ef4444', '#fbed20', '#64748b'],
+    };
+    const labels = ['ONLINE', 'FAULT', 'WARNING', 'OFFLINE'];
+    for (let i = 0; i < labels.length; i += 1) {
+      HmiView.applyBinding(el, binding, { STATION_STA: { type: 'INT', value: i } });
+      assert.equal(el.textContent, labels[i]);
+      assert.equal(el.getAttribute('fill'), binding.colors[i]);
+    }
   });
 });

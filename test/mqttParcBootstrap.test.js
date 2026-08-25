@@ -8,7 +8,9 @@ const {
   hubBootSkipReason,
   defaultMqttParcSettings,
   mergeMqttParcSettings,
-  remoteStIsAvailable,
+  applyCloudMqttParcEnv,
+  cloudHubMqttParcSettings,
+  tenantMqttParcMayReloadHub,
 } = require('../src/parc/mqttParcBootstrap');
 const { reconcileMqttParcDriversFromRegistry } = require('../src/devices/bulkAddParcOpta');
 
@@ -20,7 +22,7 @@ describe('mqttParcBootstrap', () => {
     );
     assert.equal(changed, true);
     assert.equal(settings.mqttParc.enabled, true);
-    assert.equal(settings.remoteExecution, false);
+    assert.equal(settings.remoteExecution, true);
   });
 
   it('hasEnabledMqttParcDriver detects opta_remote', () => {
@@ -37,8 +39,8 @@ describe('mqttParcBootstrap', () => {
     );
     assert.equal(settings.mqttParc.enabled, false);
     assert.equal(settings.mqttParc.brokerUrl, 'mqtt://x:1883');
-    assert.equal(changed, false);
-    assert.equal(settings.remoteExecution, false);
+    assert.equal(changed, true);
+    assert.equal(settings.remoteExecution, true);
   });
 
   it('auto-enables mqttParc when remoteExecution on and mqttParc unset', () => {
@@ -70,55 +72,58 @@ describe('mqttParcBootstrap', () => {
   });
 
   it('reconcileMqttParcDriversFromRegistry adds missing field devices', () => {
-    const now = new Date().toISOString();
     const registry = {
       listDevices: () => [
-        {
-          deviceId: 'opta_0123b636f1c23964ee',
-          lastReportAt: now,
-          ageSec: 5,
-          stale: false,
-          meta: { ateccSerial: '0123b636f1c23964ee' },
-        },
-        { deviceId: 'opta_st_01', lastReportAt: now, ageSec: 5, stale: false },
-        { deviceId: 'test-01', lastReportAt: now, ageSec: 5, stale: false },
-        { deviceId: 'mv_test_hmi_write', lastReportAt: now, ageSec: 5, stale: false },
+        { deviceId: 'opta_0123b636f1c23964ee' },
+        { deviceId: 'opta_st_01' },
+        { deviceId: 'test-01' },
       ],
-      getDevice: (id) => {
-        if (id === 'opta_0123b636f1c23964ee') {
-          return {
-            deviceId: id,
-            lastReportAt: now,
-            ageSec: 5,
-            stale: false,
-            meta: { ateccSerial: '0123b636f1c23964ee' },
-          };
-        }
-        return { deviceId: id, lastReportAt: now, ageSec: 5, stale: false };
-      },
     };
     const { drivers, changed, added } = reconcileMqttParcDriversFromRegistry(
       [{ id: 'mock1', type: 'mock', enabled: true }],
       registry,
     );
     assert.equal(changed, true);
-    assert.equal(added.length, 1);
+    assert.deepEqual(added, ['io_1']);
     assert.equal(drivers.length, 2);
     assert.equal(drivers[1].type, 'mqtt_parc');
-    assert.equal(drivers[1].id, added[0]);
+    assert.equal(drivers[1].id, 'io_1');
     assert.equal(drivers[1].deviceId, 'opta_0123b636f1c23964ee');
   });
 
-  it('defaultMqttParcSettings preserves explicit enabled=false', () => {
-    assert.equal(defaultMqttParcSettings({ enabled: false }).enabled, false);
-    assert.equal(defaultMqttParcSettings({}).enabled, true);
-  });
-
-  it('remoteStIsAvailable is false when MQTT hub disabled', () => {
-    const drivers = [{ id: 'opta_st_01', type: 'mqtt_parc', enabled: true }];
-    assert.equal(remoteStIsAvailable({ remoteExecution: true, mqttParc: { enabled: false } }, drivers), false);
-    assert.equal(remoteStIsAvailable({ remoteExecution: true, mqttParc: { enabled: true } }, drivers), true);
-    assert.equal(remoteStIsAvailable({ remoteExecution: false, mqttParc: { enabled: true } }, drivers), false);
+  it('applyCloudMqttParcEnv pins non-local tenant broker to env on cloud', () => {
+    const prev = {
+      MOOREVIEW_DEPLOYMENT: process.env.MOOREVIEW_DEPLOYMENT,
+      MOOREVIEW_MQTT_BROKER: process.env.MOOREVIEW_MQTT_BROKER,
+      MOSQUITTO_USER: process.env.MOSQUITTO_USER,
+      MOSQUITTO_PASS: process.env.MOSQUITTO_PASS,
+    };
+    process.env.MOOREVIEW_DEPLOYMENT = 'cloud';
+    process.env.MOOREVIEW_MQTT_BROKER = 'mqtts://mqtt.mooreview.io:8883';
+    process.env.MOSQUITTO_USER = 'mooreview';
+    process.env.MOSQUITTO_PASS = 'secret';
+    try {
+      const { settings, changed } = applyCloudMqttParcEnv({
+        mqttParc: { enabled: true, brokerUrl: 'mqtt://127.0.0.1:1883', username: '', password: '' },
+      });
+      assert.equal(changed, true);
+      assert.equal(settings.mqttParc.brokerUrl, 'mqtts://mqtt.mooreview.io:8883');
+      assert.equal(settings.mqttParc.username, 'mooreview');
+      assert.equal(settings.mqttParc.cloudTenantIngest, true);
+      const other = applyCloudMqttParcEnv({
+        mqttParc: { enabled: true, brokerUrl: 'mqtt://wrong-host:1883' },
+      });
+      assert.equal(other.settings.mqttParc.brokerUrl, 'mqtts://mqtt.mooreview.io:8883');
+      assert.equal(tenantMqttParcMayReloadHub(), false);
+      const hubCfg = cloudHubMqttParcSettings({ enabled: false, brokerUrl: 'mqtt://127.0.0.1:1883' });
+      assert.equal(hubCfg.enabled, true);
+      assert.equal(hubCfg.brokerUrl, 'mqtts://mqtt.mooreview.io:8883');
+    } finally {
+      for (const [k, v] of Object.entries(prev)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
   });
 
   it('hubBootSkipReason mentions Parc registry devices', () => {

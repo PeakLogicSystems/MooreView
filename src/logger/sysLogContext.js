@@ -20,15 +20,6 @@ function mergeContext(patch) {
 /** Cloud gateway / auth middleware attaches user on req; normalize for syslog. */
 function userFromRequest(req) {
   if (!req || typeof req !== 'object') return null;
-  if (req.mvAuth?.user && typeof req.mvAuth.user === 'object') {
-    const u = req.mvAuth.user;
-    return {
-      id: String(u.userId || u.id || '').trim() || null,
-      email: String(u.email || '').trim() || null,
-      name: String(u.name || u.displayName || '').trim() || null,
-      role: String(u.role || '').trim() || null,
-    };
-  }
   if (req.mooreviewUser && typeof req.mooreviewUser === 'object') {
     const u = req.mooreviewUser;
     return {

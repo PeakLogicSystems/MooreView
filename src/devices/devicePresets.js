@@ -18,9 +18,9 @@ const {
   modbusDintArrayTags,
 } = require('./tagBuilders');
 const { loadJsonTemplates } = require('./loadJsonTemplates');
-const { PRESET_PROFILES } = require('../pdm/pdmAssetSeedFromTemplate');
-const { buildEzMeterPreset } = require('../facilities/ezmeterPq');
-const { buildEzMeterPqDerivedPreset } = require('./applyDerivedPreset');
+const { defaultModbusRtuSerialPort } = require('../appliance/defaultRs485Port');
+
+const DEFAULT_RTU_SERIAL = defaultModbusRtuSerialPort();
 
 const BUILTIN_PRESETS = [
   {
@@ -139,12 +139,12 @@ const BUILTIN_PRESETS = [
     vendor: 'Waveshare',
     model: 'Modbus RTU IO 8CH',
     transport: 'modbus_rtu',
-    defaults: { serialPort: 'COM3', baud: 9600, slaveId: 1, parity: 'none' },
+    defaults: { serialPort: DEFAULT_RTU_SERIAL, baud: 9600, slaveId: 1, parity: 'none' },
     driver: (opts) => ({
       id: opts.driverId || 'ws_rtu_8',
       type: 'modbus_rtu',
       enabled: true,
-      serialPort: opts.serialPort || 'COM3',
+      serialPort: opts.serialPort || DEFAULT_RTU_SERIAL,
       baud: opts.baud ?? 9600,
       slaveId: opts.slaveId ?? 1,
       parity: opts.parity || 'none',
@@ -182,12 +182,12 @@ const BUILTIN_PRESETS = [
     vendor: 'Generic',
     model: '8DI/8DO RTU',
     transport: 'modbus_rtu',
-    defaults: { serialPort: 'COM3', baud: 9600, slaveId: 1, parity: 'none' },
+    defaults: { serialPort: DEFAULT_RTU_SERIAL, baud: 9600, slaveId: 1, parity: 'none' },
     driver: (opts) => ({
       id: opts.driverId || 'mb_rtu_8',
       type: 'modbus_rtu',
       enabled: true,
-      serialPort: opts.serialPort || 'COM3',
+      serialPort: opts.serialPort || DEFAULT_RTU_SERIAL,
       baud: opts.baud ?? 9600,
       slaveId: opts.slaveId ?? 1,
       parity: opts.parity || 'none',
@@ -201,7 +201,7 @@ const BUILTIN_PRESETS = [
 ];
 
 function allPresets() {
-  return [...BUILTIN_PRESETS, buildEzMeterPreset(), buildEzMeterPqDerivedPreset(), ...loadJsonTemplates()];
+  return [...BUILTIN_PRESETS, ...loadJsonTemplates()];
 }
 
 function listPresets() {
@@ -228,13 +228,9 @@ function listPresets() {
     aiCount: p.aiCount ?? 0,
     hrCount: p.hrCount ?? 0,
     tagsFromDevice: p.tagsFromDevice === true,
-    stationType: p.stationType || null,
-    defaultProgram: p.defaultProgram || null,
-    hasPdmSeed: !!(p.pdm?.assets?.length || PRESET_PROFILES[p.id]),
-    tagsOnly: p.tagsOnly === true,
-    defaultProgram: p.defaultProgram || null,
-    requiresTags: Array.isArray(p.requiresTags) ? p.requiresTags : null,
-    linkedDriverId: p.linkedDriverId || null,
+    stProgram: p.stProgram || '',
+    stProgramLabel: p.stProgramLabel || '',
+    stationType: p.stationType || '',
   }));
 }
 
@@ -259,8 +255,8 @@ function buildFromPreset(presetId, options = {}) {
     if (defined.port != null) opts.port = defined.port;
     for (const k of [
       'paramGroups', 'paramCount', 'paramStart', 'includeSystemTags',
-      'brokerUrl', 'serialNum', 'clientId', 'username', 'password', 'liftProfile',
-      'deviceId', 'remoteExecution',
+      'brokerUrl', 'serialNum', 'clientId', 'username', 'password',
+      'deviceId', 'topicPrefix',
     ]) {
       if (defined[k] != null) opts[k] = defined[k];
     }
@@ -271,6 +267,8 @@ function buildFromPreset(presetId, options = {}) {
     preset: { id: preset.id, label: preset.label },
     driver: preset.driver(opts),
     tags: preset.tagsFromDevice ? [] : preset.tags(opts),
+    stProgram: preset.stProgram || '',
+    stProgramLabel: preset.stProgramLabel || '',
   };
 }
 

@@ -67,6 +67,7 @@ void mvWatchdogLoopEnd(bool checkLiveness) {
   }
 
   if (checkLiveness && MV_WATCHDOG_LIVENESS_MS > 0 && mvWatchdogHasEthIp()
+      && mvMqttEverConnected()
       && !mvMqttTelemetryPaused()
       && now > MV_WATCHDOG_BOOT_GRACE_MS && s_idleMs > s_livenessMs) {
     MV_LOG_CMD2("watchdog liveness timeout idle ms=", (int)s_idleMs);

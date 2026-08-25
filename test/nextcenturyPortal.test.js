@@ -57,6 +57,8 @@ describe('nextcentury portal', () => {
     assert.match(html, /user@example\.com/);
     assert.match(html, /abc123/);
     assert.match(html, /sandbox=/);
+    assert.doesNotMatch(html, /allow-same-origin/);
+    assert.match(html, /allow-scripts/);
     assert.match(html, /app\.nextcenturymeters\.com/);
   });
 

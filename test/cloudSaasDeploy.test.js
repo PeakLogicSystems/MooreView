@@ -19,10 +19,9 @@ describe('cloud SaaS deploy assets', () => {
     assert.ok(fs.existsSync(path.join(root, 'docs/CLOUD_USER_GUIDE.md')));
   });
 
-  it('mooreview-saas.service binds SaaS on 3100 via start-saas.js', () => {
+  it('mooreview-saas.service uses root server.js', () => {
     const svc = fs.readFileSync(path.join(root, 'deploy/cloud/debian/mooreview-saas.service'), 'utf8');
-    assert.match(svc, /scripts\/start-saas\.js/);
-    assert.match(svc, /PORT=3100/);
+    assert.match(svc, /node server\.js/);
     assert.doesNotMatch(svc, /src\/server\.js/);
   });
 

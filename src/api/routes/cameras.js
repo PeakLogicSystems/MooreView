@@ -34,7 +34,6 @@ function isCamerasConfigRoute(req) {
   const path = req.path;
   const method = req.method;
   if (path === '/cameras/settings') return true;
-  if (path === '/cameras/ai/status' && method === 'GET') return true;
   if (path === '/cameras' && method === 'GET') return true;
   if (path === '/cameras/overview' && method === 'GET') return true;
   if (path === '/cameras' && method === 'POST') return true;

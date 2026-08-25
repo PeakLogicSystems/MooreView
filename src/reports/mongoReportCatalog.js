@@ -20,7 +20,7 @@ const SOURCES = [
     ],
     filters: [
       { id: 'level', label: 'Level', type: 'enum', options: ['error', 'warn', 'info', 'maintenance'] },
-      { id: 'category', label: 'Category', type: 'string', placeholder: 'e.g. alarms' },
+      { id: 'category', label: 'Category', type: 'string', placeholder: 'e.g. alarms, mqtt' },
       { id: 'userId', label: 'User id', type: 'string' },
     ],
   },
@@ -184,6 +184,22 @@ const TEMPLATES = [
     filter: { level: 'error' },
     columns: ['at', 'category', 'message', 'user.name'],
     title: 'System errors',
+  },
+  {
+    id: 'mqtt_auth_failures',
+    name: 'MQTT auth failures',
+    sourceId: 'sys_log',
+    filter: { category: 'mqtt', level: 'warn' },
+    columns: ['at', 'level', 'message', 'detail'],
+    title: 'MQTT broker auth failures',
+  },
+  {
+    id: 'mqtt_device_events',
+    name: 'MQTT device connect/disconnect',
+    sourceId: 'sys_log',
+    filter: { category: 'mqtt' },
+    columns: ['at', 'level', 'message', 'detail'],
+    title: 'MQTT broker device events',
   },
   {
     id: 'roi_assets',

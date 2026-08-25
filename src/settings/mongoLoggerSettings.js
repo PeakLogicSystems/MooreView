@@ -4,8 +4,8 @@ const DEFAULT_MONGO_LOGGER = {
   uri: 'mongodb://127.0.0.1:27017',
   db: 'mooreview',
   collection: 'tag_logs',
-  samplesCollection: 'tag_samples_ts',
-  edgeCollection: 'edge_inference_ts',
+  edgeCollection: 'edge_inference',
+  sysLogCollection: 'sys_log',
   sampleIntervalMs: 5000,
 };
 
@@ -20,6 +20,28 @@ function effectiveMongoLogger(stored) {
     return normalizeMongoLogger(ml, {});
   }
   return defaultMongoLogger();
+}
+
+function isLocalMongoUri(uri) {
+  return /127\.0\.0\.1|localhost/i.test(String(uri || '').trim());
+}
+
+/** Cloud SaaS: tenant settings must not point logger at localhost when platform MONGODB_URI is set. */
+function resolveMongoLoggerForDeployment(ml, deployment) {
+  const normalized = ml?.uri
+    ? normalizeMongoLogger(ml, {})
+    : (ml && typeof ml === 'object' ? { ...ml } : {});
+  const envUri = String(process.env.MONGODB_URI || process.env.MONGO_URL || '').trim();
+  if (deployment === 'cloud' && envUri && envUri !== 'memory') {
+    if (!normalized.uri || isLocalMongoUri(normalized.uri)) {
+      return normalizeMongoLogger({
+        ...normalized,
+        uri: envUri,
+        db: process.env.MONGODB_DB || normalized.db || 'mooreview_cloud',
+      }, {});
+    }
+  }
+  return normalized.uri ? normalizeMongoLogger(normalized, {}) : {};
 }
 
 function normalizeMongoLogger(incoming, prev = {}) {
@@ -44,25 +66,17 @@ function normalizeMongoLogger(incoming, prev = {}) {
     || DEFAULT_MONGO_LOGGER.db;
   const collection = String(incoming.collection ?? prevMl.collection ?? DEFAULT_MONGO_LOGGER.collection).trim()
     || DEFAULT_MONGO_LOGGER.collection;
-  const samplesCollection = String(
-    incoming.samplesCollection ?? prevMl.samplesCollection ?? DEFAULT_MONGO_LOGGER.samplesCollection
-  ).trim() || DEFAULT_MONGO_LOGGER.samplesCollection;
   const edgeCollection = String(incoming.edgeCollection ?? prevMl.edgeCollection ?? DEFAULT_MONGO_LOGGER.edgeCollection).trim()
     || DEFAULT_MONGO_LOGGER.edgeCollection;
+  const sysLogCollection = String(incoming.sysLogCollection ?? prevMl.sysLogCollection ?? DEFAULT_MONGO_LOGGER.sysLogCollection).trim()
+    || DEFAULT_MONGO_LOGGER.sysLogCollection;
   const sampleIntervalMs = Math.max(
     Number(incoming.sampleIntervalMs ?? prevMl.sampleIntervalMs ?? DEFAULT_MONGO_LOGGER.sampleIntervalMs)
       || DEFAULT_MONGO_LOGGER.sampleIntervalMs,
     1000
   );
 
-  return {
-    uri,
-    db,
-    collection,
-    samplesCollection,
-    edgeCollection,
-    sampleIntervalMs,
-  };
+  return { uri, db, collection, edgeCollection, sysLogCollection, sampleIntervalMs };
 }
 
 module.exports = {
@@ -70,4 +84,6 @@ module.exports = {
   defaultMongoLogger,
   effectiveMongoLogger,
   normalizeMongoLogger,
+  isLocalMongoUri,
+  resolveMongoLoggerForDeployment,
 };

@@ -1,7 +1,7 @@
 'use strict';
 
 const { QUALITY } = require('../tags/constants');
-const { buildOptaProgramBody } = require('../parc/mqttOptaProgram');
+const { buildOptaProgramBody, slimPutProgramBodyForMqtt } = require('../parc/mqttOptaProgram');
 const { optaHttpRequest } = require('./optaHttpClient');
 const programStore = require('../programs/programStore');
 const {
@@ -9,9 +9,6 @@ const {
   clientHeaders,
   clientDeployMeta,
   OPTA_PROGRAM_MAX_BYTES,
-  OPTA_PROGRAM_MAX_WIRE_BYTES,
-  assessOptaDeployLimits,
-  optaDeployLimitsFromDeviceStatus,
 } = require('./optaProtocol');
 
 const DEFAULT_TIMEOUT_MS = 8000;
@@ -198,28 +195,20 @@ class OptaRemoteDriver {
         errors: [this._lastError || `Cannot reach Opta at ${baseUrl(this.cfg)} — use Connect or check driver host/port`],
       };
     }
-    const { bcLimit, wireLimit } = optaDeployLimitsFromDeviceStatus(this._deviceStatus);
+    const limit = Number(this._deviceStatus?.programMaxBytes) || OPTA_PROGRAM_MAX_BYTES;
+    const deployBody = slimPutProgramBodyForMqtt(built.body, built.traceMap);
     const payload = JSON.stringify({
-      ...built.body,
+      ...deployBody,
       ...clientDeployMeta({ programName: programStore.activeRel() || '' }),
     });
     const payloadBytes = Buffer.byteLength(payload);
-    const bcBuf = Buffer.from(built.body.bc, 'base64');
-    const sizing = assessOptaDeployLimits({
-      bcBytes: bcBuf.length,
-      wireBytes: payloadBytes,
-      bcLimit,
-      wireLimit,
-    });
-    if (sizing.overLimit) {
+    if (payloadBytes >= limit) {
       return {
         ok: false,
-        errors: sizing.errors.length
-          ? sizing.errors
-          : [
-            `Program deploy exceeds Opta limit (bytecode ${bcBuf.length} B, wire ${payloadBytes} B). `
-            + 'Trim the ST program or re-flash MooreviewOptaMqttSt (MV_PROGRAM_JSON_MAX / MV_BC_MAX).',
-          ],
+        errors: [
+          `Program deploy is ${payloadBytes} bytes (Opta limit ${limit}). `
+          + 'Trim the ST program or re-flash est-pc/firmware/arduino-opta-st (MV_PROGRAM_JSON_MAX).',
+        ],
       };
     }
     try {
@@ -241,7 +230,7 @@ class OptaRemoteDriver {
       if (/ECONNRESET|connection was reset|fetch failed/i.test(msg)) {
         extra = ' — Opta reset the HTTP connection (power-cycle Opta, re-flash est-pc firmware, allow Node.js through Windows Firewall)';
       } else if (/program too large|body too large/i.test(msg)) {
-        extra = ` (bytecode ${bcBuf.length} B, wire ${payloadBytes} B, limit ${bcLimit} B)`;
+        extra = ` (${payloadBytes} bytes, limit ${limit})`;
       } else if (/timeout|aborted/i.test(msg)) {
         extra = ` (${payloadBytes} bytes — check Opta Serial for PUT/POST /api/program)`;
       } else if (/invalid json|json NoMemory|incomplete body/i.test(msg)) {

@@ -1,143 +1,106 @@
 'use strict';
 
 const { QUALITY } = require('../tags/constants');
-const { rawToEngineering } = require('../tags/tagAnalog');
-const { registry } = require('../parc/deviceRegistry');
+const { resolveParcRegistry } = require('../parc/deviceRegistry');
 const { getMqttCentralHub } = require('../parc/mqttCentralHub');
-const { parcDeployErrorHint } = require('../parc/cmdFailureHint');
-const { mirrorDuplexFloatLevels, DUPLEX_FLOAT_LVL } = require('../parc/duplexFloatMirror');
-const { buildParcTagSnap, isParcHardwareIoRow } = require('../parc/parcTagSync');
-const { resolveParcDeviceId, normalizeAteccSerialHex } = require('../parc/optaSerial');
-const { findRegistryDeviceForDriver } = require('../parc/parcDeviceResolve');
-const { clientDeployMeta, assessOptaDeployLimits, optaDeployLimitsFromDeviceStatus } = require('./optaProtocol');
+const { buildOptaProgramBody, slimPutProgramBodyForMqtt } = require('../parc/mqttOptaProgram');
+const { expandRemoteProgramTrace } = require('../parc/remoteProgramTrace');
+const { clientDeployMeta, semverCompare, buildSyncTimeBody, bcDeployCrc } = require('./optaProtocol');
+const { optaBrokerHint } = require('../parc/mqttBrokerHint');
+const { cmdFailureHint } = require('../parc/cmdFailureHint');
 const programStore = require('../programs/programStore');
 const persistence = require('../persistence');
-const {
-  buildPcProgramDeployArtifact,
-  evaluateProgramDeploy,
-  fetchDeviceProgramState,
-  skipDeployEnabled,
-  recordDeployVerdict,
-} = require('../parc/programDeployMatch');
 
-/** Active hardware_assignments row for this driver position (commissioned Opta). */
-function assignmentForDriverPosition(positionId) {
-  const id = String(positionId || '').trim();
-  if (!id) return null;
-  try {
-    const rows = persistence.readJson('hardware_assignments.json', { assignments: [] }).assignments || [];
-    const matches = rows.filter(
-      (r) => !r?.removedAt && String(r.positionId || '').trim() === id && String(r.deviceId || '').trim(),
-    );
-    if (!matches.length) return null;
-    matches.sort((a, b) => String(b.installedAt || '').localeCompare(String(a.installedAt || '')));
-    return matches[0];
-  } catch {
-    return null;
-  }
-}
-
-function isWriteMemoryUnsupportedError(err) {
-  return /unknown op/i.test(err?.message || String(err));
-}
-
-/** BOOL memory tags cleared by ST each scan — set_force must be pulsed, not latched. */
-function isMomentaryMemoryBoolTag(tag) {
-  if (!tag?.id || tag.type !== 'BOOL') return false;
-  if (/^MOTOR[12]_(START|STOP|RESET)$/.test(tag.id)) return true;
-  if (tag.id === 'ALT_BUMP') return true;
-  return false;
-}
-
-/** ST auto branch clears MOTORx_HAND every scan unless MOTORx_HOA=2 on device. */
-const HAND_HOA_COMPANION = {
-  MOTOR1_HAND: { hoaTag: 'MOTOR1_HOA', hoaValue: 2 },
-  MOTOR2_HAND: { hoaTag: 'MOTOR2_HOA', hoaValue: 2 },
-};
-
-/** Prevent ST re-latching HAND from stuck START/STOP memory after HMI pulse writes. */
-function motorPulseClearRows(handTagId) {
-  const match = /^MOTOR([12])_HAND$/.exec(String(handTagId || ''));
-  if (!match) return [];
-  const n = match[1];
-  return [
-    { id: `MOTOR${n}_START`, type: 'BOOL', value: false },
-    { id: `MOTOR${n}_STOP`, type: 'BOOL', value: false },
-  ];
-}
-
-function tagChannel(tag) {
-  const ch = tag?.driverAddress?.channel ?? tag?.driverAddress?.id;
-  return String(ch || tag?.id || '').trim();
-}
-
-function outputWriteValue(tag, store) {
-  const v = store?.get?.(tag.id)?.value ?? tag.value;
-  if (tag.type === 'BOOL') return !!v;
-  if (tag.type === 'INT') return Math.trunc(Number(v) || 0);
-  return Number(v) || 0;
-}
-
-/** JSON numbers for INT tags must stay integers so Opta set_force lands on .i not .r */
-function normalizeTagMemoryValue(tag) {
-  if (!tag) return tag?.value;
-  if (tag.type === 'BOOL') return !!tag.value;
-  if (tag.type === 'INT') return Math.trunc(Number(tag.value) || 0);
-  if (tag.type === 'REAL' || tag.type === 'PID' || tag.type === 'AVG') {
-    return Number(tag.value) || 0;
-  }
-  return tag.value;
-}
+const { resolveParcDeviceId } = require('../parc/optaSerial');
+const { findRegistryDeviceForDriver } = require('../parc/parcDeviceResolve');
 
 class MqttParcOptaDriver {
   constructor(cfg) {
     this.cfg = cfg;
     this.connected = false;
     this._lastError = '';
+    this._traceMap = [];
   }
 
   _deviceId() {
-    const cfg = this.cfg || {};
-    const raw = String(cfg.deviceId || cfg.id || '').trim();
-    let serial = normalizeAteccSerialHex(cfg.ateccSerial || '');
-    const assigned = !serial || raw === 'opta_st_01' || !/^mv_/i.test(raw)
-      ? assignmentForDriverPosition(cfg.id)
-      : null;
-    if (!serial && assigned?.serialNumber) {
-      serial = normalizeAteccSerialHex(assigned.serialNumber);
+    return resolveParcDeviceId(this.cfg);
+  }
+
+  _reg() {
+    return resolveParcRegistry();
+  }
+
+  _registryLookup() {
+    return findRegistryDeviceForDriver(this._reg(), this.cfg);
+  }
+
+  _deviceMode() {
+    const { device: dev } = this._registryLookup();
+    const mode = dev?.meta?.deviceMode || dev?.deviceMode || dev?.runtime?.deviceMode || 'standalone';
+    return mode === 'remote_io' ? 'remote_io' : 'standalone';
+  }
+
+  _modeMismatchHint() {
+    const mode = this._deviceMode();
+    if (this.cfg.remoteExecution && mode === 'remote_io') {
+      return 'Opta is Remote I/O mode — disable Remote ST on PC or set device to Standalone on /setup';
     }
-    const enriched = serial ? { ...cfg, ateccSerial: serial } : cfg;
-    const resolved = resolveParcDeviceId(enriched);
-    if (resolved && resolved !== raw) return resolved;
-    if ((raw === 'opta_st_01' || !/^mv_/i.test(raw)) && assigned?.deviceId) {
-      return String(assigned.deviceId).trim();
+    if (!this.cfg.remoteExecution && mode === 'standalone') {
+      const { device: dev } = this._registryLookup();
+      if (dev && !dev.stale) {
+        return 'Opta is Standalone — enable Remote ST or set device to Remote I/O on /setup';
+      }
     }
-    const { deviceId: liveId } = findRegistryDeviceForDriver(registry, enriched);
-    if (liveId && (raw === 'opta_st_01' || !registry.getDevice(raw) || registry.getDevice(raw)?.stale)) {
-      const live = registry.getDevice(liveId);
-      if (live && !live.stale) return liveId;
-    }
-    return resolved || raw;
+    return '';
   }
 
   _hub() {
-    return getMqttCentralHub(registry);
+    return getMqttCentralHub(this._reg());
   }
 
   health() {
+    const hub = this._hub();
+    if (!hub.isLive()) return this._lastError || 'MQTT hub offline';
     if (!this.connected) return this._lastError || 'disconnected';
-    const dev = registry.getDevice(this._deviceId());
-    if (dev?.stale) return 'stale telemetry';
+    const { device: dev } = this._registryLookup();
+    if (!dev) return 'linked · awaiting telemetry';
+    if (dev.stale) return 'linked · stale telemetry';
+    if (this.cfg.remoteExecution && dev.runtime && dev.runtime.running === false) {
+      return 'linked · ST not running (use Download & Start)';
+    }
+    const mismatch = this._modeMismatchHint();
+    if (mismatch) return `linked · ${mismatch}`;
+    if (this._lastError) return this._lastError;
     return 'OK';
   }
 
   _deviceOnline() {
-    const dev = registry.getDevice(this._deviceId());
+    const { device: dev } = this._registryLookup();
     return dev && !dev.stale;
   }
 
+  _liveTelemetry(maxAgeSec = 120) {
+    const { device: dev } = this._registryLookup();
+    if (!dev || dev.stale) return false;
+    if (dev.ageSec != null && dev.ageSec > maxAgeSec) return false;
+    return true;
+  }
+
+  _cmdFailureHint(dev) {
+    const { getMqttCentralHub } = require('../parc/mqttCentralHub');
+    const hub = getMqttCentralHub(this._reg());
+    return cmdFailureHint(dev, {
+      hubBrokerUrl: hub.status().brokerUrl,
+      deviceId: this._deviceId(),
+      registry: this._reg(),
+      mqttHubUsername: hub.cfg?.username,
+      ateccSerial: this.cfg.ateccSerial,
+    });
+  }
+
   async ensureConnected() {
-    if (this.connected && this._deviceOnline()) return true;
+    const hub = this._hub();
+    if (this.connected && this._deviceOnline() && hub.isLive()) return true;
     this.connected = false;
     return this.connect(this.cfg);
   }
@@ -145,49 +108,73 @@ class MqttParcOptaDriver {
   async connect(cfg) {
     this.cfg = { ...this.cfg, ...(cfg || {}) };
     const deviceId = this._deviceId();
-    const hub = this._hub();
-    if (!hub.status().connected) {
-      this.connected = false;
-      this._lastError = 'MQTT Parc hub not connected — start Mosquitto and check mqttParc.brokerUrl in settings';
-      return false;
-    }
     if (!deviceId) {
       this.connected = false;
       this._lastError = 'deviceId required';
       return false;
     }
-    if (this.cfg.remoteExecution === false || this.cfg.telemetryOnly === true) {
-      if (this._deviceOnline()) {
-        this.connected = true;
-        this._lastError = '';
-        return true;
-      }
-      const dev = registry.getDevice(deviceId);
+    const { ensureMqttHubConnected } = require('../parc/mqttParcBootstrap');
+    const hubReady = await ensureMqttHubConnected({ persist: false });
+    const hub = this._hub();
+    if (!hubReady.connected) {
       this.connected = false;
-      if (!dev) {
-        this._lastError = `Device ${deviceId} not seen on MQTT — check Dragino/Parc uplink topic and mqttParc hub broker`;
-      } else if (dev.stale) {
-        this._lastError = `Telemetry stale for ${deviceId} (last report ${dev.ageSec ?? '?'}s ago)`;
-      } else {
-        this._lastError = 'no Parc telemetry yet';
-      }
+      this._lastError = hubReady.error || 'MQTT Parc hub not connected';
       return false;
     }
     try {
-      await hub.sendCommand(deviceId, 'runtime_status', {});
+      const attempts = this.cfg.testConnection ? 1 : 3;
+      const timeoutMs = this.cfg.testConnection
+        ? Math.min(10000, Number(this.cfg.commandTimeoutMs) || 10000)
+        : Math.max(15000, Number(this.cfg.commandTimeoutMs) || 30000);
+      let lastErr;
+      for (let i = 0; i < attempts; i += 1) {
+        try {
+          await hub.sendCommand(deviceId, 'runtime_status', {}, { timeoutMs });
+          lastErr = null;
+          break;
+        } catch (e) {
+          lastErr = e;
+          if (i < attempts - 1) {
+            console.warn(
+              `[mqtt-parc] runtime_status connect attempt ${i + 1}/${attempts} failed for ${deviceId} (${e.message || e}) — retrying`,
+            );
+            await new Promise((r) => setTimeout(r, 2000));
+          }
+        }
+      }
+      if (lastErr) throw lastErr;
+      this._reg().touchReport(deviceId);
       this.connected = true;
       this._lastError = '';
+      try {
+        await this.syncTime({ deviceId });
+      } catch (e) {
+        console.warn(`[mqtt-parc] sync_time on connect failed for ${deviceId}: ${e.message || e}`);
+      }
       return true;
     } catch (e) {
-      if (this._deviceOnline()) {
+      const hubOnline = hub.isLive();
+      const online = this._deviceOnline();
+      const isCmdTimeout = /command timeout/i.test(e.message || '');
+      const telemetryOnly = !this.cfg.remoteExecution
+        && this._liveTelemetry()
+        && hubOnline
+        && !/hub not connected/i.test(e.message || '');
+      if (telemetryOnly) {
         this.connected = true;
         this._lastError = '';
         return true;
       }
+      if (this._liveTelemetry() && hubOnline && isCmdTimeout) {
+        const { device: dev } = this._registryLookup();
+        this.connected = false;
+        this._lastError = this._cmdFailureHint(dev);
+        return false;
+      }
       this.connected = false;
-      const dev = registry.getDevice(deviceId);
+      const { device: dev } = this._registryLookup();
       if (!dev) {
-        this._lastError = `Device ${deviceId} not seen on MQTT — Opta broker must be ${hub.status().brokerUrl} and deviceId must match firmware`;
+        this._lastError = `Device ${deviceId} not seen on MQTT — ${optaBrokerHint().optaSetupHint}`;
       } else if (dev.stale) {
         this._lastError = `Telemetry stale for ${deviceId} (last report ${dev.ageSec ?? '?'}s ago) — power-cycle Opta or check Ethernet`;
       } else {
@@ -204,45 +191,29 @@ class MqttParcOptaDriver {
         await this._hub().sendCommand(deviceId, 'runtime_stop', {});
       } catch { /* ignore */ }
     }
-    if (deviceId) registry.detach(deviceId);
+    if (deviceId) this._reg().detach(deviceId);
     this.connected = false;
   }
 
   _syncTagsFromParc(tags, store) {
-    const deviceId = this._deviceId();
-    const dev = registry.getDevice(deviceId);
+    const { device: dev } = this._registryLookup();
     const quality = !dev || dev.stale ? QUALITY.STALE : QUALITY.GOOD;
-    const snap = buildParcTagSnap(dev?.tags || []);
+    const snap = new Map((dev?.tags || []).map((t) => [t.id, t]));
     for (const t of tags) {
-      if (DUPLEX_FLOAT_LVL.has(t.id)) continue;
-      if (store.isDriverReadSkipped?.(t)) continue;
-      const row = snap.get(t.id) || (t.driverAddress?.channel ? snap.get(t.driverAddress.channel) : null);
+      const row = snap.get(t.id);
       if (!row) {
         if (quality === QUALITY.STALE) {
           store.setValue(t.id, store.get(t.id)?.value ?? t.value, QUALITY.STALE);
         }
         continue;
       }
-      let val = row.value;
-      if (t.type === 'BOOL') val = !!val;
-      else if (t.type === 'INT') {
-        const raw = Math.trunc(Number(val) || 0);
-        val = Math.trunc(rawToEngineering(raw, t));
-      } else if (t.type === 'REAL' || t.type === 'PID' || t.type === 'AVG') {
-        const raw = Number(val) || 0;
-        val = rawToEngineering(raw, t);
-      }
-      if (typeof store.applyParcTelemetry === 'function') {
-        store.applyParcTelemetry(t.id, {
-          value: val,
-          quality,
-          forceInput: row.forceInput,
-          forceOutput: row.forceOutput,
-          forceValue: row.forceValue,
-          logicValue: row.logicValue,
-          type: t.type,
-        });
+      if (typeof store.applyDeviceTelemetry === 'function') {
+        store.applyDeviceTelemetry(t.id, row, quality);
       } else {
+        let val = row.value;
+        if (t.type === 'BOOL') val = !!val;
+        else if (t.type === 'INT') val = Math.trunc(Number(val) || 0);
+        else if (t.type === 'REAL' || t.type === 'PID' || t.type === 'AVG') val = Number(val) || 0;
         store.setValue(t.id, val, quality);
       }
     }
@@ -258,282 +229,302 @@ class MqttParcOptaDriver {
   }
 
   async writeBatch(tags, store) {
-    if (this.cfg.remoteExecution || this.cfg.telemetryOnly) return;
+    if (this.cfg.remoteExecution) return;
+    const deviceId = this._deviceId();
+    if (!deviceId) return;
+    const mode = this._deviceMode();
+    if (mode !== 'remote_io') return;
     const outputs = {};
-    for (const t of tags || []) {
-      const key = tagChannel(t);
-      if (!key) continue;
-      const value = outputWriteValue(t, store);
-      outputs[key] = value;
-      if (t.id && t.id !== key) outputs[t.id] = value;
+    for (const t of tags) {
+      if (t.role !== 'output') continue;
+      const v = store.get(t.id)?.value;
+      outputs[t.id] = t.type === 'BOOL' ? !!v : Number(v) || 0;
     }
     if (!Object.keys(outputs).length) return;
-    const ok = await this.ensureConnected();
-    if (!ok) {
-      this._lastError = this._lastError || 'write_outputs skipped — device offline';
-      return;
+    const { ensureMqttHubConnected } = require('../parc/mqttParcBootstrap');
+    const hubReady = await ensureMqttHubConnected({ persist: false });
+    if (!hubReady.connected) {
+      throw new Error(hubReady.error || 'MQTT hub not connected');
     }
-    const deviceId = this._deviceId();
-    try {
-      await this._hub().sendCommand(deviceId, 'write_outputs', { outputs }, { timeoutMs: 4000 });
-      this._lastError = '';
-    } catch (e) {
-      this._lastError = e.message || String(e);
-      throw e;
+    await this._hub().sendCommand(deviceId, 'write_outputs', { outputs }, { timeoutMs: 8000 });
+  }
+
+  isTracePending() {
+    if (!this._traceMap?.length) return false;
+    const dev = this._reg().getDevice(this._deviceId());
+    const pt = dev?.programTrace;
+    return !Array.isArray(pt) || pt.length === 0;
+  }
+
+  getProgramTrace() {
+    const dev = this._reg().getDevice(this._deviceId());
+    return expandRemoteProgramTrace(this._traceMap, dev?.programTrace || []);
+  }
+
+  async _deployViaMqtt(hub, deviceId, body, payloadBytes, built) {
+    const attempts = 3;
+    let lastErr;
+    for (let i = 0; i < attempts; i += 1) {
+      try {
+        await hub.sendCommand(deviceId, 'put_program', body);
+        lastErr = null;
+        break;
+      } catch (e) {
+        lastErr = e;
+        if (i < attempts - 1) {
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+      }
     }
+    if (lastErr) throw lastErr;
+    this._traceMap = built.traceMap || [];
+    this.connected = true;
+    this._lastError = '';
+    this._reg().touchReport(deviceId);
+    console.log(
+      `[mqtt-parc] put_program OK (MQTT) → ${deviceId} (${payloadBytes} bytes, ${built.body?.tagCount ?? '?'} tags)`,
+    );
+    return { ok: true, errors: [] };
+  }
+
+  _optaAutoRunOnBoot() {
+    const settings = persistence.readJson('settings.json', {}) || {};
+    return settings.optaAutoRunOnBoot === true;
+  }
+
+  _deployMeta() {
+    return clientDeployMeta({
+      programName: programStore.activeRel() || '',
+      autoRunOnBoot: this._optaAutoRunOnBoot(),
+    });
+  }
+
+  shouldSkipNvDeploy(built, deviceId) {
+    if (!built?.ok || !built.body?.bc) return false;
+    const dev = this._reg().getDevice(deviceId);
+    const rt = dev?.runtime;
+    if (!rt?.programFromNv || !rt?.programOk || !rt?.programNvCrc) return false;
+    const crc = bcDeployCrc(built.body.bc);
+    return crc === Number(rt.programNvCrc);
   }
 
   async deployProgram(source, tagStore) {
-    const persistence = require('../persistence');
-    const settings = persistence.readJson('settings.json', {});
-    const artifact = buildPcProgramDeployArtifact(source, tagStore, this.cfg.id);
-    if (!artifact.ok) return artifact;
-
-    const programName = programStore.activeRel() || '';
+    const { ensureMqttHubConnected } = require('../parc/mqttParcBootstrap');
+    const hubReady = await ensureMqttHubConnected({ persist: false });
+    if (!hubReady.connected || !this._hub().isLive()) {
+      return { ok: false, errors: [hubReady.error || 'MQTT hub not connected'] };
+    }
+    const built = buildOptaProgramBody(source, tagStore, this.cfg.id);
+    if (!built.ok) return built;
     const body = {
-      ...artifact.body,
-      ...clientDeployMeta({ programName }),
+      ...built.body,
+      ...this._deployMeta(),
     };
-    const payloadBytes = Buffer.byteLength(JSON.stringify(body));
-    const deviceId = this._deviceId();
-    const { bcLimit, wireLimit } = optaDeployLimitsFromDeviceStatus(
-      registry.getDevice(deviceId)?.status,
-    );
-    const sizing = assessOptaDeployLimits({
-      bcBytes: artifact.bcBytes,
-      wireBytes: payloadBytes,
-      bcLimit,
-      wireLimit,
-    });
-    if (sizing.overLimit) {
+    const mqttBody = slimPutProgramBodyForMqtt(body, built.traceMap);
+    const payloadBytes = Buffer.byteLength(JSON.stringify(mqttBody));
+    const httpPayloadBytes = Buffer.byteLength(JSON.stringify(body));
+    const { OPTA_PROGRAM_MAX_BYTES } = require('./optaProtocol');
+    const { appendOptaBrokerHint } = require('../parc/mqttBrokerHint');
+    if (payloadBytes >= OPTA_PROGRAM_MAX_BYTES) {
       return {
         ok: false,
-        errors: sizing.errors.length
-          ? sizing.errors
-          : [`Program deploy exceeds Opta limit (bytecode ${artifact.bcBytes} B, wire ${payloadBytes} B)`],
+        errors: [`Program deploy is ${payloadBytes} bytes (limit ${OPTA_PROGRAM_MAX_BYTES})`],
       };
     }
+    const deviceId = this._deviceId();
     const hub = this._hub();
-    const pcMeta = {
-      crc: artifact.crc,
-      programName,
-      bcBytes: artifact.bcBytes,
-      tagCount: artifact.tagCount,
-    };
-    const programVersion = {
-      crc: artifact.crc,
-      programName,
-      bcBytes: artifact.bcBytes,
-      tagCount: artifact.tagCount,
-    };
-
-    if (skipDeployEnabled(settings)) {
-      const deviceState = await fetchDeviceProgramState(
-        hub,
-        deviceId,
-        registry.getDevice(deviceId),
-      );
-      const verdict = evaluateProgramDeploy({ pc: pcMeta, device: deviceState });
-      recordDeployVerdict(deviceId, pcMeta, deviceState, verdict);
-      if (verdict.action === 'skip' || verdict.action === 'skip_deploy') {
-        console.log(`[mqtt-parc] skip put_program → ${deviceId} (${verdict.reason})`);
-        return {
-          ok: true,
-          skipped: true,
-          needsRuntimeStart: verdict.needsRuntimeStart,
-          reason: verdict.reason,
-          crc: artifact.crc,
-          deviceCrc: deviceState.programNvCrc,
-          programVersion,
-          errors: [],
-        };
-      }
-      console.log(`[mqtt-parc] put_program required → ${deviceId} (${verdict.reason})`);
+    const dev = this._reg().getDevice(deviceId);
+    if (dev?.meta?.deviceMode === 'remote_io' || dev?.deviceMode === 'remote_io') {
+      return {
+        ok: false,
+        errors: ['Opta is in Remote I/O mode — ST runs on PC. Set Standalone on device /setup to deploy to Opta.'],
+      };
     }
+    const fw = String(dev?.meta?.firmwareVersion || dev?.firmwareVersion || '').trim();
 
-    console.log(
-      `[mqtt-parc] put_program → ${deviceId} (${payloadBytes} bytes, ${artifact.body?.tagCount ?? '?'} tags, CRC 0x${artifact.crc.toString(16)})`,
-    );
-    hub.publishDeviceConfig(deviceId, { pauseTelemetry: true });
-    try {
-      await hub.sendCommand(deviceId, 'put_program', body, { timeoutMs: 180000 });
-    } catch (e) {
-      const hint = parcDeployErrorHint(e.message || String(e));
-      console.error(`[mqtt-parc] put_program FAILED → ${deviceId}: ${hint}`);
-      return { ok: false, errors: [hint] };
-    } finally {
-      hub.publishDeviceConfig(deviceId, { pauseTelemetry: false });
-    }
-    recordDeployVerdict(
-      deviceId,
-      pcMeta,
-      { programNvCrc: artifact.crc, programName },
-      { action: 'deploy', reason: 'put_program completed', needsRuntimeStart: true },
-      { deployed: true },
-    );
-    console.log(
-      `[mqtt-parc] put_program OK → ${deviceId} (${payloadBytes} bytes, CRC 0x${artifact.crc.toString(16)})`,
-    );
-    return { ok: true, skipped: false, needsRuntimeStart: true, programVersion, errors: [] };
-  }
-
-  async ensureRemoteSession(opts = {}) {
-    const deviceId = String(opts.deviceId || this._deviceId()).trim();
-    if (!deviceId) throw new Error('deviceId required for ensureRemoteSession');
-    registry.attach(deviceId, { sessionId: 'mooreview-pc' });
-    const scanMs = Number(this.cfg.scanMs) || 100;
-    const reportMs = Math.max(
-      100,
-      Math.min(600000, Number(this.cfg.reportIntervalMs) || scanMs * 2),
-    );
-    this._hub().publishDeviceConfig(deviceId, {
-      pauseTelemetry: false,
-      debugAttached: true,
-      reportMs,
+    const { waitForParcCmdHealth } = require('../parc/waitForParcDevice');
+    const cmdHealth = await waitForParcCmdHealth(deviceId, {
+      attempts: 3,
+      timeoutMs: Math.max(12000, Number(this.cfg.commandTimeoutMs) || 15000),
+      retryDelayMs: 2000,
     });
+    if (!cmdHealth.ok) {
+      return { ok: false, errors: [cmdHealth.error] };
+    }
+
+    if (fw && semverCompare(fw, '2.3.18') < 0) {
+      return {
+        ok: false,
+        errors: [
+          `Opta firmware v${fw} is too old for Parc deploy — upload MooreviewOptaMqttSt v2.3.18+ via Arduino IDE (Parc deploy does not flash firmware)`,
+        ],
+      };
+    }
+
+    console.log(
+      `[mqtt-parc] put_program MQTT → ${deviceId} (${payloadBytes} bytes, fw=${fw || 'unknown'})`,
+    );
+    try {
+      return await this._deployViaMqtt(hub, deviceId, mqttBody, payloadBytes, built);
+    } catch (mqttErr) {
+      const host = String(dev?.meta?.ethIp || dev?.meta?.lastHost || this.cfg.host || '').trim();
+      if (!host) {
+        const msg = appendOptaBrokerHint(mqttErr.message || String(mqttErr));
+        return { ok: false, errors: [msg] };
+      }
+      console.warn(`[mqtt-parc] MQTT deploy failed (${mqttErr.message || mqttErr}) — trying HTTP`);
+      try {
+        const { deployOptaProgramHttp } = require('../parc/optaHttpDeploy');
+        console.log(
+          `[mqtt-parc] put_program HTTP → ${host} (${httpPayloadBytes} bytes, fw=${fw || 'unknown'})`,
+        );
+        await deployOptaProgramHttp(host, mqttBody, {
+          port: this.cfg.port || 80,
+          timeoutMs: Math.min(15000, this.cfg.programTimeoutMs || 60000),
+        });
+        this._traceMap = built.traceMap || [];
+        this.connected = true;
+        this._lastError = '';
+        console.log(
+          `[mqtt-parc] put_program OK (HTTP) → ${deviceId} (${payloadBytes} bytes, ${built.body?.tagCount ?? '?'} tags)`,
+        );
+        return { ok: true, errors: [] };
+      } catch (httpErr) {
+        const msg = appendOptaBrokerHint(
+          `MQTT: ${mqttErr.message || mqttErr}; HTTP: ${httpErr.message || httpErr}`,
+        );
+        return { ok: false, errors: [msg] };
+      }
+    }
   }
 
-  async startRuntime(opts = {}) {
-    const scanMs = Number(this.cfg.scanMs) || 100;
-    const deviceId = String(opts.deviceId || this._deviceId()).trim();
-    if (!deviceId) throw new Error('deviceId required for runtime_start');
-    if (opts.attach !== false) {
-      registry.attach(deviceId, { sessionId: 'mooreview-pc' });
+  async startRuntime() {
+    const { ensureMqttHubConnected } = require('../parc/mqttParcBootstrap');
+    const hubReady = await ensureMqttHubConnected({ persist: false });
+    if (!hubReady.connected || !this._hub().isLive()) {
+      throw new Error(hubReady.error || 'MQTT hub not connected');
     }
+    const scanMs = Number(this.cfg.scanMs) || 100;
+    const deviceId = this._deviceId();
+    this._reg().attach(deviceId, { sessionId: 'mooreview-pc' });
     const reportMs = Math.max(100, Math.min(600000, Number(this.cfg.reportIntervalMs) || scanMs * 2));
     this._hub().publishDeviceConfig(deviceId, {
       pauseTelemetry: false,
       debugAttached: true,
       reportMs,
     });
-    const timeoutMs = Math.max(3000, Number(opts.timeoutMs) || 15000);
-    await this._hub().sendCommand(deviceId, 'runtime_start', { scanMs }, { timeoutMs });
+    const attempts = 3;
+    const timeoutMs = Math.max(20000, Number(this.cfg.commandTimeoutMs) || 30000);
+    let lastErr;
+    for (let i = 0; i < attempts; i += 1) {
+      try {
+        await this._hub().sendCommand(deviceId, 'runtime_start', { scanMs }, { timeoutMs });
+        lastErr = null;
+        break;
+      } catch (e) {
+        lastErr = e;
+        if (i < attempts - 1) {
+          console.warn(
+            `[mqtt-parc] runtime_start attempt ${i + 1}/${attempts} failed (${e.message || e}) — retrying`,
+          );
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+      }
+    }
+    if (lastErr) throw lastErr;
+    this._reg().touchReport(deviceId);
+    this.connected = true;
+    this._lastError = '';
     console.log(`[mqtt-parc] runtime_start → ${deviceId} scanMs=${scanMs}`);
   }
 
   async stopRuntime() {
-    await this._hub().sendCommand(this._deviceId(), 'runtime_stop', {});
-  }
-
-  /** Tags to mirror from Parc telemetry — assigned to this driver or unassigned program tags on device. */
-  _tagsForParcSync(store) {
-    const dev = registry.getDevice(this._deviceId());
-    const parcIds = new Set((dev?.tags || []).map((row) => row.id));
-    return store.list().filter((t) => {
-      if (store.isDriverReadSkipped?.(t)) return false;
-      if (t.driverId === this.cfg.id) return true;
-      // Program/fixture tags often have driverId null until "Import from device".
-      if (!t.driverId && parcIds.has(t.id)) return true;
-      // Project template may use arduino_opta_st while auto-discovered driver is io_1 — still sync hardware I/O.
-      if (parcIds.has(t.id) && isParcHardwareIoRow(t)) return true;
-      return false;
-    });
-  }
-
-  /** Pull latest Parc registry telemetry into tag store (io-map + scan cycle). */
-  syncFromParcTelemetry(store) {
-    const dev = registry.getDevice(this._deviceId());
-    if (dev?.tags?.length) {
-      const { ensureParcHardwareTags } = require('../parc/parcTagSync');
-      ensureParcHardwareTags(store, dev.tags, { driverId: this.cfg.id });
+    const deviceId = this._deviceId();
+    try {
+      if (deviceId && this._hub().isLive()) {
+        await this._hub().sendCommand(deviceId, 'runtime_stop', {});
+      }
+    } catch { /* device may already be stopped or hub offline */ }
+    if (deviceId) {
+      this._reg().detach(deviceId);
+      if (this._hub().isLive()) {
+        this._hub().publishDeviceConfig(deviceId, {
+          pauseTelemetry: false,
+          debugAttached: false,
+        });
+      }
     }
-    const maps = this._tagsForParcSync(store);
-    this._syncTagsFromParc(maps, store);
-    mirrorDuplexFloatLevels(store);
-    return maps.length;
   }
 
-  async runScanCycle(store) {
-    const n = this.syncFromParcTelemetry(store);
-    return { ok: true, tags: n };
+  async syncTime(opts = {}) {
+    const { ensureMqttHubConnected } = require('../parc/mqttParcBootstrap');
+    const hubReady = await ensureMqttHubConnected({ persist: false });
+    if (!hubReady.connected) {
+      throw new Error(hubReady.error || 'MQTT hub not connected');
+    }
+    const deviceId = String(opts.deviceId || this._deviceId()).trim();
+    if (!deviceId) throw new Error('mqtt_parc driver missing deviceId');
+    const body = buildSyncTimeBody();
+    await this._hub().sendCommand(deviceId, 'sync_time', body, { timeoutMs: 8000 });
+    return { ok: true, deviceId, ...body };
   }
 
   async syncTagForce(tag, opts = {}) {
+    if (!tag?.id) return { ok: true, skipped: true };
+    const { ensureMqttHubConnected } = require('../parc/mqttParcBootstrap');
+    const hubReady = await ensureMqttHubConnected({ persist: false });
+    if (!hubReady.connected) {
+      throw new Error(hubReady.error || 'MQTT hub not connected');
+    }
     const deviceId = String(opts.deviceId || this._deviceId()).trim();
-    await this.ensureConnected();
-    const hub = this._hub();
-    if (!tag?.forceInput && !tag?.forceOutput) {
-      await hub.sendCommand(deviceId, 'clear_force', {
-        tagId: tag.id,
-        id: tag.id,
-      });
-      return;
+    if (!deviceId) throw new Error('mqtt_parc driver missing deviceId');
+    const body = { tagId: tag.id };
+    if (tag.forceInput || tag.forceOutput) {
+      body.forceInput = !!tag.forceInput;
+      body.forceOutput = !!tag.forceOutput;
+      if (tag.forceValue !== undefined) body.forceValue = tag.forceValue;
+      else body.forceValue = tag.value;
+      await this._hub().sendCommand(deviceId, 'set_force', body, { timeoutMs: 8000 });
+    } else {
+      await this._hub().sendCommand(deviceId, 'clear_force', body, { timeoutMs: 8000 });
     }
-    const forceValue = tag.forceValue === undefined
-      ? tag.forceValue
-      : normalizeTagMemoryValue({ ...tag, value: tag.forceValue });
-    await hub.sendCommand(deviceId, 'set_force', {
-      tagId: tag.id,
-      id: tag.id,
-      forceInput: !!tag.forceInput,
-      forceOutput: !!tag.forceOutput,
-      forceValue,
-    });
+    return { ok: true };
   }
 
-  async _clearRemoteForce(deviceId, tagId) {
-    await this._hub().sendCommand(deviceId, 'clear_force', {
-      tagId,
-      id: tagId,
-    });
+  async writeMemory(tag, opts = {}) {
+    return this.writeMemoryMany(tag ? [tag] : [], opts);
   }
 
-  async _pushRemoteMemoryForce(deviceId, row, opts = {}) {
-    const type = row.type || (String(row.id).endsWith('_HOA') ? 'INT' : 'BOOL');
-    const value = normalizeTagMemoryValue({ id: row.id, type, value: row.value });
-    // Opta clear_force drops force flags but leaves mirrored tag storage true — force false explicitly.
-    await this.syncTagForce({
-      id: row.id,
-      type,
-      forceInput: false,
-      forceOutput: true,
-      forceValue: value,
-    }, { deviceId });
-    // Release force flag so Live I/O shows ST logic, not permanent PLC force on memory tags.
-    if (!opts.retainForce) {
-      await this._clearRemoteForce(deviceId, row.id);
+  async writeMemoryMany(tags, opts = {}) {
+    const rows = (Array.isArray(tags) ? tags : [])
+      .filter((t) => t?.id)
+      .map((t) => ({
+        id: t.id,
+        value: t.type === 'BOOL' ? !!t.value : t.value,
+      }));
+    if (!rows.length) return { ok: true, skipped: true };
+    const { ensureMqttHubConnected } = require('../parc/mqttParcBootstrap');
+    const hubReady = await ensureMqttHubConnected({ persist: false });
+    if (!hubReady.connected) {
+      throw new Error(hubReady.error || 'MQTT hub not connected');
     }
-  }
-
-  async syncTagMemory(tag, opts = {}) {
     const deviceId = String(opts.deviceId || this._deviceId()).trim();
-    await this.ensureConnected();
-    const value = normalizeTagMemoryValue(tag);
-    const companion = HAND_HOA_COMPANION[tag.id];
-    const rows = [];
-    if (companion) {
-      rows.push({ id: companion.hoaTag, type: 'INT', value: companion.hoaValue });
-      rows.push(...motorPulseClearRows(tag.id));
-    }
-    if (/^MOTOR[12]_HOA$/.test(tag.id) && Math.trunc(Number(value)) !== 2) {
-      rows.push({ id: tag.id.replace('_HOA', '_HAND'), type: 'BOOL', value: false });
-    }
-    rows.push({ id: tag.id, type: tag.type, value });
+    if (!deviceId) throw new Error('mqtt_parc driver missing deviceId');
+    await this._hub().sendCommand(deviceId, 'write_memory', {
+      tags: rows,
+    }, { timeoutMs: 8000 });
+    return { ok: true, deviceId, written: rows.length };
+  }
 
-    if (isMomentaryMemoryBoolTag(tag) && tag.value) {
-      for (const row of rows) {
-        if (row.id !== tag.id) await this._pushRemoteMemoryForce(deviceId, row);
-      }
-      await this._pushRemoteMemoryForce(deviceId, { id: tag.id, type: tag.type, value: true }, { retainForce: true });
-      const scanMs = Math.max(50, Number(this.cfg.scanMs) || 100);
-      await new Promise((r) => setTimeout(r, scanMs * 2));
-      await this._clearRemoteForce(deviceId, tag.id);
-      await this._pushRemoteMemoryForce(deviceId, { id: tag.id, type: tag.type, value: false });
-      return;
+  async runScanCycle(store) {
+    const snapIds = new Set((this._reg().getDevice(this._deviceId())?.tags || []).map((t) => t.id));
+    const maps = store.list().filter((t) => t.driverId === this.cfg.id || snapIds.has(t.id));
+    this._syncTagsFromParc(maps, store);
+    if (this.cfg.remoteExecution) {
+      store.applyForcesAfterLogic();
     }
-
-    for (const row of rows) {
-      await this._pushRemoteMemoryForce(deviceId, row);
-    }
+    return { ok: true, tags: maps.length };
   }
 }
 
-module.exports = {
-  MqttParcOptaDriver,
-  isWriteMemoryUnsupportedError,
-  isMomentaryMemoryBoolTag,
-  normalizeTagMemoryValue,
-  tagChannel,
-  HAND_HOA_COMPANION,
-  motorPulseClearRows,
-};
+module.exports = { MqttParcOptaDriver };

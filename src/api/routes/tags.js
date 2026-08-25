@@ -5,14 +5,16 @@ const programStore = require('../../programs/programStore');
 const { ensureMotorTags } = require('../../programs/motorTags');
 const { ensureTpoTags } = require('../../programs/tpoTags');
 const { ensureProgramTags } = require('../../programs/ensureProgramTags');
-
-const { scheduleRemoteHmiMemoryWrite } = require('../pushRemoteTagForce');
+const { isCloudDeployment } = require('../../cloud/agentProtocol');
+const { canWriteHmiTag } = require('../../tenants/hmiOperatorPolicy');
 
 function createTagRoutes(deps) {
   const { tagStore, driverManager, scanEngine } = deps;
   const router = require('express').Router();
 
   router.get('/tags', (req, res) => {
+    const { syncMqttParcLiveIo } = require('../../parc/parcLiveIoSync');
+    syncMqttParcLiveIo(tagStore, driverManager);
     res.json({ tags: tagStore.list(), count: tagStore.count(), max: MAX_TAGS });
   });
 
@@ -40,21 +42,69 @@ function createTagRoutes(deps) {
     res.json({ ok: true, added, labeled, count });
   });
 
-  router.post('/tags/write', (req, res) => {
-    const tagId = req.body?.tagId;
-    if (!tagId) {
+  function writeRowsFromBody(body) {
+    if (Array.isArray(body?.tags) && body.tags.length) {
+      return body.tags.map((row) => ({
+        tagId: row?.tagId || row?.id,
+        value: row?.value,
+      }));
+    }
+    return [{ tagId: body?.tagId, value: body?.value }];
+  }
+
+  function ensureTagsForWrite(tagId) {
+    if (/^TPO1_(ON_MIN|OFF_MIN|PULSE_REM)$/.test(String(tagId))) {
+      ensureTpoTags(tagStore);
+    }
+    if (/^MOTOR\d+_(START|STOP|HAND|HOA)$/.test(String(tagId))) {
+      ensureMotorTags(tagStore);
+      const n = String(tagId).match(/^MOTOR(\d+)/i)?.[1];
+      const handId = n ? `MOTOR${n}_HAND` : '';
+      if (handId && !tagStore.get(handId) && tagStore.get(`MOTOR${n}_HOA`)) {
+        tagStore.upsert({
+          id: handId,
+          label: `Pump ${n} hand run latch`,
+          type: 'BOOL',
+          role: 'memory',
+          value: false,
+        });
+      }
+    }
+  }
+
+  router.post('/tags/write', async (req, res) => {
+    const rows = writeRowsFromBody(req.body).filter((row) => row.tagId);
+    if (!rows.length) {
       return res.status(400).json({ error: 'tagId required' });
     }
+    const written = [];
     try {
-      if (/^TPO1_(ON_MIN|OFF_MIN|PULSE_REM)$/.test(String(tagId))) {
-        ensureTpoTags(tagStore);
+      for (const row of rows) {
+        ensureTagsForWrite(row.tagId);
+        if (isCloudDeployment() && req.mvAuth?.user) {
+          if (!canWriteHmiTag(req.mvAuth.user, row.tagId, row.value, tagStore)) {
+            return res.status(403).json({
+              error: 'HMI write not allowed for your role — use Hand mode for operator controls.',
+            });
+          }
+        }
+        const t = tagStore.writeHmiMemory(row.tagId, row.value);
+        if (!t) {
+          return res.status(404).json({ error: `Tag not found: ${row.tagId}` });
+        }
+        written.push(t);
       }
-      const t = tagStore.writeHmiMemory(tagId, req.body?.value);
-      if (!t) {
-        return res.status(404).json({ error: 'Tag not found' });
+      try {
+        const { pushRemoteHmiMemoryMany } = require('../pushRemoteHmiMemory');
+        await pushRemoteHmiMemoryMany(driverManager, scanEngine, written);
+      } catch (e) {
+        return res.status(502).json({
+          error: e.message || 'Remote HMI write failed',
+          tag: written[0],
+          tags: written,
+        });
       }
-      scheduleRemoteHmiMemoryWrite(tagStore, driverManager, scanEngine, t);
-      res.json({ tag: t });
+      res.json({ tag: written[0], tags: written });
     } catch (e) {
       res.status(e.status || 500).json({ error: e.message });
     }

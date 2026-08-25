@@ -71,6 +71,13 @@ async function ensureConnected(cfg = config) {
 }
 
 function enrichReportForCloud(report, cfg = config) {
+  let cellular = report.meta?.cellular || null;
+  try {
+    const { registry } = require('../parc/deviceRegistry');
+    const dev = report?.deviceId ? registry.getDevice(report.deviceId) : null;
+    if (dev?.meta?.cellular) cellular = dev.meta.cellular;
+  } catch { /* optional */ }
+
   return {
     ...report,
     meta: {
@@ -83,7 +90,15 @@ function enrichReportForCloud(report, cfg = config) {
       systemSlug: cfg.systemSlug,
       relayedAt: new Date().toISOString(),
       source: 'mooreview-appliance',
+      ...(cellular ? { cellular } : {}),
     },
+    ...(cellular ? {
+      registration: {
+        deviceId: report.deviceId,
+        gatewayId: cellular.gatewayId || cfg.gatewayId || null,
+        cellular,
+      },
+    } : {}),
   };
 }
 

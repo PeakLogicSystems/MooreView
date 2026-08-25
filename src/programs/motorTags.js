@@ -10,6 +10,7 @@ const MOTOR_TAG_DEFS = [
   { id: 'MOTOR1_RESET', label: MOTOR_TAG_LABELS.MOTOR1_RESET, type: 'BOOL', role: 'memory', value: false },
   { id: 'MOTOR1_OFFLINE', label: MOTOR_TAG_LABELS.MOTOR1_OFFLINE, type: 'BOOL', role: 'memory', value: false },
   { id: 'MOTOR1_RUN', label: MOTOR_TAG_LABELS.MOTOR1_RUN, type: 'BOOL', role: 'memory', value: false },
+  { id: 'MOTOR1_HAND', label: MOTOR_TAG_LABELS.MOTOR1_HAND, type: 'BOOL', role: 'memory', value: false },
   { id: 'MOTOR1_HRS', label: MOTOR_TAG_LABELS.MOTOR1_HRS, type: 'REAL', role: 'memory', value: 0 },
   { id: 'MOTOR1_STARTS', label: MOTOR_TAG_LABELS.MOTOR1_STARTS, type: 'INT', role: 'memory', value: 0, wordWidth: 16 },
   { id: 'MOTOR1_CNTR', label: MOTOR_TAG_LABELS.MOTOR1_CNTR, type: 'COUNTER', role: 'memory', value: 0, preset: 999999, mode: 'CTU' },

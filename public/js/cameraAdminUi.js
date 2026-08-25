@@ -48,7 +48,10 @@
 
   function fmtTime(v) {
     if (!v) return '—';
-    try { return new Date(v).toLocaleString(); } catch { return String(v); }
+    try {
+      if (window.MooreviewTime?.formatFriendly) return window.MooreviewTime.formatFriendly(v);
+      return new Date(v).toLocaleString(undefined, window.MooreviewTime?.localeOpts?.() || {});
+    } catch { return String(v); }
   }
 
   function setMsg(id, text, ok) {

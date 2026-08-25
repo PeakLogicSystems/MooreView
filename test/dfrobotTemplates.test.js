@@ -74,46 +74,4 @@ describe('DFRobot RS485 sensor templates', () => {
     assert.equal(tags.find((t) => t.id === 'DO_MG_L').driverAddress.address, 2);
     assert.equal(tags.find((t) => t.id === 'DO_TEMP_C').driverAddress.address, 4);
   });
-
-  it('builds local pool chemistry RS-485 profile (SEN0711 + SEN0712 → PH_AI / ORP_AI)', () => {
-    const listed = listPresets().find((p) => p.id === 'dfrobot_pool_chemistry');
-    assert.ok(listed);
-    assert.equal(listed.transport, 'modbus_rtu');
-    assert.equal(listed.defaults.baud, 4800);
-    const { driver, tags } = buildFromPreset('dfrobot_pool_chemistry', { serialPort: 'COM7' });
-    assert.equal(driver.id, 'pool_chem_rtu');
-    assert.equal(driver.baud, 4800);
-    assert.equal(driver.serialPort, 'COM7');
-    assert.equal(tags.find((t) => t.id === 'PH_AI').driverAddress.slaveId, 1);
-    assert.equal(tags.find((t) => t.id === 'PH_AI').driverAddress.address, 1);
-    assert.equal(tags.find((t) => t.id === 'ORP_AI').driverAddress.slaveId, 2);
-    assert.equal(tags.find((t) => t.id === 'WATER_TEMP_C').scale, 0.1);
-    assert.ok(tags.find((t) => t.id === 'NH3_MG_L'));
-  });
-
-  it('lists Edge101 MQTT Parc controller template', () => {
-    const p = listPresets().find((x) => x.id === 'dfrobot_edge101_parc');
-    assert.ok(p, 'dfrobot_edge101_parc');
-    assert.equal(p.transport, 'mqtt_parc');
-    assert.equal(p.vendor, 'DFRobot');
-    assert.equal(p.stationType, 'pool_chemistry');
-  });
-
-  it('builds pool chemistry Dragino profile (SEN0711 + SEN0712)', () => {
-    const { getPreset } = require('../src/devices/devicePresets');
-    const p = getPreset('dfrobot_pool_chemistry_dragino');
-    assert.ok(p);
-    assert.equal(p.stationType, 'pool_chemistry');
-    assert.equal(p.defaults.baud, 4800);
-    assert.deepEqual(p.dragino.pollBlocks.map((b) => b.slaveId), [1, 2]);
-
-    const { driver, tags } = buildFromPreset('dfrobot_pool_chemistry_dragino');
-    assert.equal(driver.id, 'dragino_pool_chem');
-    assert.equal(tags.length, 4);
-    assert.equal(tags.find((t) => t.id === 'PH_PV').driverAddress.slaveId, 1);
-    assert.equal(tags.find((t) => t.id === 'PH_PV').driverAddress.address, 1);
-    assert.equal(tags.find((t) => t.id === 'PH_PV').wordWidth, 16);
-    assert.equal(tags.find((t) => t.id === 'CL_PV').driverAddress.slaveId, 2);
-    assert.equal(tags.find((t) => t.id === 'WATER_TEMP_C').scale, 0.1);
-  });
 });

@@ -11,11 +11,10 @@ describe('motor_tpo_combined fixture', () => {
     assert.ok(bundle);
     const ids = bundle.tags.map((t) => t.id);
     assert.ok(ids.includes('MOTOR1_RUN'));
-    assert.ok(ids.includes('R1'));
     assert.ok(ids.includes('TPO1_ON_MIN'));
     assert.ok(ids.includes('TPO1_OFF_MIN'));
     assert.ok(ids.includes('TPO1_24HR'));
-    assert.equal(ids.length, 24);
+    assert.equal(ids.length, 23);
   });
 
   it('validates combined ST program', () => {

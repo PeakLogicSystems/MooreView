@@ -1,15 +1,22 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+const { DATA_DIR } = require('../config');
 const { QUALITY } = require('../tags/constants');
 const { mergeNextcenturyTagsIntoStore } = require('./nextcenturyTagSync');
+const {
+  DEFAULT_POLL_MS,
+  PROPERTY_DELAY_MS,
+  DEFAULT_REPORT_ID,
+} = require('./nextcenturyConstants');
+const {
+  resolveCredentials,
+  loginNextcentury,
+  TOKEN_TTL_MS,
+} = require('./nextcenturyAuth');
 
-const AUTH_URL = 'https://api.nextcenturymeters.com/login';
 const BASE_API_URL = 'https://api.nextcenturymeters.com/api';
-const DEFAULT_POLL_MS = 15 * 60 * 1000;
-const DEFAULT_REPORT_ID = 'rt_4510';
-const PROPERTY_DELAY_MS = 600;
-const TOKEN_TTL_MS = 55 * 60 * 1000;
-
 const NUMERIC_FIELDS = new Set([
   'temperature',
   'currentReading',
@@ -20,6 +27,16 @@ const NUMERIC_FIELDS = new Set([
 
 function reportDateStr(d = new Date()) {
   return `${d.getMonth() + 1}-${d.getDate()}-${d.getFullYear()}`;
+}
+
+/** Folder where test-execute report dumps are written. */
+const REPORT_DUMP_DIR = path.join(DATA_DIR, 'nextcentury-reports');
+
+/** Filesystem-safe local timestamp: YYYY-MM-DD_HH-mm-ss. */
+function fileStamp(d = new Date()) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+    + `_${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
 }
 
 function sleep(ms) {
@@ -36,7 +53,7 @@ function parseRt4510Row(row, propertyId) {
     unknown2: row[4] || null,
     deviceType: row[5] || null,
     temperature: row[6] != null && row[6] !== '' ? Number(row[6]) : null,
-    deviceId: row[7] || null,
+    deviceId: (row[7] != null ? String(row[7]).trim() : '') || null,
     meterModel: row[8] || null,
     currentReading: row[9] != null && row[9] !== '' ? Number(row[9]) : null,
     previousReading: row[10] != null && row[10] !== '' ? Number(row[10]) : null,
@@ -49,8 +66,44 @@ function parseRt4510Row(row, propertyId) {
 function leakIsActive(leakStatus) {
   const s = String(leakStatus || '').trim().toLowerCase();
   if (!s) return false;
-  if (s.includes('no leak') || s === 'dry' || s === 'ok') return false;
+  // Non-leak / monitoring-disabled states must not be read as an active leak,
+  // even though the text contains the word "leak"
+  // (e.g. "Leak Monitoring Not Enabled").
+  if (
+    s.includes('no leak')
+    || s.includes('not enabled')
+    || s.includes('disabled')
+    || s.includes('not monitor')
+    || s === 'dry'
+    || s === 'ok'
+  ) return false;
   return s.includes('leak') || s.includes('wet');
+}
+
+/** NC rt_4510 walk-in freezer probes encode col-6 as (probe °F + 27.2). */
+const FREEZER_PROBE_TEMP_OFFSET_F = 27.2;
+
+function isFreezerProbeDoc(doc) {
+  const dt = String(doc?.deviceType || '').toLowerCase();
+  if (!dt.includes('transceiver')) return false;
+  const desc = String(doc.description || doc.area || '').toLowerCase();
+  return desc.includes('freezer');
+}
+
+function freezerProbeTempF(doc) {
+  if (!doc) return null;
+  const cur = doc.currentReading;
+  if (cur != null && Number.isFinite(Number(cur))) {
+    const n = Number(cur);
+    // Live polls often carry probe °F in currentReading (e.g. -22.2).
+    if (n !== 0 && n < 15) return n;
+  }
+  const raw = doc.temperature;
+  if (raw == null || Number.isNaN(Number(raw))) return null;
+  const r = Number(raw);
+  // Encoded col-6 value (e.g. 5 → -22.2 °F).
+  if (r <= 20) return r - FREEZER_PROBE_TEMP_OFFSET_F;
+  return r;
 }
 
 function fieldValue(doc, field) {
@@ -58,6 +111,9 @@ function fieldValue(doc, field) {
   if (field === 'leakActive') return leakIsActive(doc.leakStatus);
   if (field === '_deviceCount') return doc._deviceCount ?? null;
   if (field === '_lastCollectEpoch') return doc._lastCollectEpoch ?? null;
+  if (field === 'temperature' && isFreezerProbeDoc(doc)) {
+    return freezerProbeTempF(doc);
+  }
   if (NUMERIC_FIELDS.has(field)) {
     const v = doc[field];
     return v == null || Number.isNaN(Number(v)) ? null : Number(v);
@@ -99,12 +155,26 @@ class NextcenturyDriver {
     this._lastPollAt = 0;
     this._lastCollectEpoch = 0;
     this._propertyIds = [];
+    this._lastParsedReport = null;
+    this._lastReportFile = null;
+    this._lastSyncWarning = '';
   }
 
   health() {
     if (!this.connected) return this._lastError || 'disconnected';
+    const warn = this._lastSyncWarning ? ` · ${this._lastSyncWarning}` : '';
+    if (this.cfg.testConnection && this._lastReportFile) {
+      const devs = this._deviceCache ? this._deviceCache.size : 0;
+      return `OK · ${devs} device(s) · report saved to ${this._lastReportFile}${warn}`;
+    }
     const age = this._lastPollAt ? Math.round((Date.now() - this._lastPollAt) / 1000) : null;
-    return age != null ? `OK · last poll ${age}s ago` : 'OK';
+    return age != null ? `OK · last poll ${age}s ago${warn}` : `OK${warn}`;
+  }
+
+  /** Tag count and scan-load estimate for this driver (planning or live device cache). */
+  deployEstimate(opts = {}) {
+    const { estimateFromDriverInstance } = require('./nextcenturyDeployEstimate');
+    return estimateFromDriverInstance(this.cfg, this, opts);
   }
 
   _pollIntervalMs() {
@@ -113,29 +183,17 @@ class NextcenturyDriver {
   }
 
   _credentials() {
-    const email = String(this.cfg.email || process.env.NEXTCENTURY_EMAIL || '').trim();
-    const password = String(this.cfg.password || process.env.NEXTCENTURY_PASSWORD || '');
-    if (!email || !password) {
-      throw new Error('NextCentury email and password required (driver config or NEXTCENTURY_* env)');
-    }
-    return { email, password };
+    return resolveCredentials(this.cfg);
   }
 
   async _login() {
     if (this._jwtToken && Date.now() < this._tokenExpiry - 60_000) return;
-    const { email, password } = this._credentials();
-    const res = await fetch(AUTH_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-      signal: AbortSignal.timeout(this.cfg.timeoutMs || 15000),
-    });
-    if (!res.ok) throw new Error(`NextCentury login HTTP ${res.status}`);
-    const data = await res.json();
-    const token = data.token || data.access_token;
-    if (!token) throw new Error('NextCentury login: no token');
-    this._jwtToken = token;
-    this._tokenExpiry = Date.now() + TOKEN_TTL_MS;
+    const auth = await loginNextcentury(
+      this._credentials(),
+      this.cfg.timeoutMs || 15000,
+    );
+    this._jwtToken = auth.token;
+    this._tokenExpiry = auth.expiresAt;
   }
 
   async _apiGet(path) {
@@ -144,12 +202,7 @@ class NextcenturyDriver {
       headers: { Authorization: this._jwtToken },
       signal: AbortSignal.timeout(this.cfg.timeoutMs || 20000),
     });
-    if (!res.ok) {
-      const gatewayHint = res.status === 502 || res.status === 503 || res.status === 504
-        ? ' — NextCentury API gateway error; retry later or set propertyIds to limit poll scope'
-        : '';
-      throw new Error(`NextCentury HTTP ${res.status} ${path}${gatewayHint}`);
-    }
+    if (!res.ok) throw new Error(`NextCentury HTTP ${res.status} ${path}`);
     return res.json();
   }
 
@@ -174,14 +227,16 @@ class NextcenturyDriver {
     const delayMs = Number(this.cfg.propertyDelayMs) || PROPERTY_DELAY_MS;
     const nextCache = new Map();
     const collectedAt = Date.now();
+    const parsedProperties = [];
 
     await this._loadPropertyIds();
     for (const propertyId of this._propertyIds) {
-      const path = `/Properties/${propertyId}/RunReport/${reportId}?start=${dateStr}&end=${dateStr}`;
+      const reqPath = `/Properties/${propertyId}/RunReport/${reportId}?start=${dateStr}&end=${dateStr}`;
       try {
-        const data = await this._apiGet(path);
-        for (const row of data?.rows || []) {
-          const doc = parseRt4510Row(row, propertyId);
+        const data = await this._apiGet(reqPath);
+        const rows = (data?.rows || []).map((row) => parseRt4510Row(row, propertyId));
+        parsedProperties.push({ propertyId, rowCount: rows.length, rows });
+        for (const doc of rows) {
           if (!doc.deviceId) continue;
           nextCache.set(doc.deviceId, {
             ...doc,
@@ -190,6 +245,7 @@ class NextcenturyDriver {
         }
       } catch (e) {
         this._lastError = `Property ${propertyId}: ${e.message}`;
+        parsedProperties.push({ propertyId, error: e.message || String(e) });
       }
       if (delayMs > 0) await sleep(delayMs);
     }
@@ -197,8 +253,37 @@ class NextcenturyDriver {
     this._deviceCache = nextCache;
     this._lastPollAt = collectedAt;
     this._lastCollectEpoch = Math.floor(collectedAt / 1000);
+    this._lastParsedReport = {
+      reportId,
+      date: dateStr,
+      collectedAt: new Date(collectedAt).toISOString(),
+      propertyCount: this._propertyIds.length,
+      deviceCount: nextCache.size,
+      properties: parsedProperties,
+    };
     this.connected = true;
     this._lastError = '';
+  }
+
+  /**
+   * Write the last parsed report to data/nextcentury-reports as
+   * <REPORT_ID>_<YYYY-MM-DD_HH-mm-ss>.json. Used by test-execute so the raw
+   * parsed API result can be inspected offline. Returns the file path (or null).
+   */
+  _writeReportDump() {
+    const report = this._lastParsedReport;
+    if (!report) return null;
+    const reportId = String(report.reportId || DEFAULT_REPORT_ID).trim().toUpperCase();
+    const file = path.join(REPORT_DUMP_DIR, `${reportId}_${fileStamp()}.json`);
+    try {
+      fs.mkdirSync(REPORT_DUMP_DIR, { recursive: true });
+      fs.writeFileSync(file, JSON.stringify(report, null, 2), 'utf8');
+      this._lastReportFile = file;
+      return file;
+    } catch (e) {
+      this._lastError = `report dump failed: ${e.message || e}`;
+      return null;
+    }
   }
 
   async connect(cfg) {
@@ -208,6 +293,12 @@ class NextcenturyDriver {
       await this._loadPropertyIds();
       this.connected = true;
       this._lastError = '';
+      // On a test-execute, actually run the report and dump the parsed JSON so
+      // the raw API result is captured for inspection.
+      if (this.cfg.testConnection) {
+        await this._pollReports();
+        this._writeReportDump();
+      }
       return true;
     } catch (e) {
       this.connected = false;
@@ -282,9 +373,18 @@ class NextcenturyDriver {
       );
       if (merged.ok) {
         store.replaceAll(merged.tags, { keepForces: true });
+        try {
+          const persistence = require('../persistence');
+          const { syncNextcenturySemanticTags } = require('../settings/assistedLivingSettings');
+          const settings = persistence.readJson('settings.json', {});
+          syncNextcenturySemanticTags(store, settings.assistedLiving);
+        } catch (e) {
+          /* settings merge is best-effort after NC sync */
+        }
         tags = store.list().filter(
           (t) => t.driverId === this.cfg.id && t.driverAddress,
         );
+        this._lastSyncWarning = merged.warning || '';
       } else if (merged.error && !this._lastError) {
         this._lastError = merged.error;
       }
@@ -301,6 +401,12 @@ module.exports = {
   NextcenturyDriver,
   parseRt4510Row,
   leakIsActive,
+  isFreezerProbeDoc,
+  freezerProbeTempF,
   fieldValue,
   reportDateStr,
+  fileStamp,
+  REPORT_DUMP_DIR,
+  resolveCredentials,
+  loginNextcentury,
 };

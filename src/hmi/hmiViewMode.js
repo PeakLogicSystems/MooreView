@@ -1,10 +1,10 @@
 'use strict';
 
-/** HTTP fallback poll when WebSocket is unavailable (WebSocket is primary). */
-const HMI_POLL_MS_NORMAL = 2_000;
+/** Normal operator HMI / dashboard refresh (1 minute). */
+const HMI_POLL_MS_NORMAL = 60_000;
 
 /** Technician test mode — faster live refresh for commissioning. */
-const HMI_POLL_MS_TEST = 500;
+const HMI_POLL_MS_TEST = 10_000;
 
 function normalizeUserLevel(raw) {
   const v = String(raw ?? '').trim().toLowerCase();

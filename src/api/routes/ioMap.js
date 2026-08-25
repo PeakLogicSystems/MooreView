@@ -3,6 +3,7 @@
 const path = require('path');
 const persistence = require('../../persistence');
 const { normalizeHmi } = require('../../hmi/hmiConfig');
+const { ensureDuplexlsScreen2 } = require('../../hmi/duplexlsScreen');
 const { patchAssistedLivingHmi } = require('../../settings/assistedLivingSettings');
 const {
   listRoomDetailScreens,
@@ -129,45 +130,20 @@ function cloneBindings(bindings) {
   return (bindings || []).map((b) => ({ ...b }));
 }
 
-/** Scan engine polls fieldbus each tick; when runtime is off/paused, /io-map must poll on refresh. */
-function shouldPollFieldbusForIoMap(runtime) {
-  return !(runtime?.running && !runtime?.paused);
-}
-
-async function pollFieldbusForIoMap(driverManager, tagStore, runtime) {
-  if (!driverManager?.readFieldbus) return;
-  await driverManager.readFieldbus();
-  if (shouldPollFieldbusForIoMap(runtime) && typeof driverManager.readHostApi === 'function') {
-    await driverManager.readHostApi();
-  }
-  tagStore.applyForcesAfterRead?.();
-}
-
 function createIoMapRoutes(deps) {
   const { tagStore, scanEngine, driverManager } = deps;
   const router = require('express').Router();
 
-  router.get('/io-map', async (req, res) => {
+  router.get('/io-map', (req, res) => {
+    const { syncMqttParcLiveIo } = require('../../parc/parcLiveIoSync');
+    syncMqttParcLiveIo(tagStore, driverManager);
     const runtime = scanEngine.status();
-    const remoteExec = !!(runtime.remoteExecution ?? runtime.remoteExec);
-    try {
-      if (remoteExec && typeof driverManager?.syncParcTelemetry === 'function') {
-        await driverManager.syncParcTelemetry();
-        tagStore.applyForcesAfterRead?.();
-      } else if (shouldPollFieldbusForIoMap(runtime)) {
-        await pollFieldbusForIoMap(driverManager, tagStore, runtime);
-      }
-    } catch (e) {
-      console.warn('[io-map] fieldbus poll:', e.message || String(e));
-    }
     const tagList = tagStore.list();
     const points = tagList.filter(isIoMapTag).sort(sortIoMapTags).map(ioMapPointFromTag);
     const settings = persistence.readJson('settings.json', {});
-    const hmi = normalizeHmi(
-      patchAssistedLivingHmi(settings.hmi?.screens?.length ? settings.hmi : { screens: [], bindings: [] }),
-      tagList,
-      PUBLIC_ROOT,
-    );
+    const rawHmi = patchAssistedLivingHmi(settings.hmi?.screens?.length ? settings.hmi : { screens: [], bindings: [] });
+    ensureDuplexlsScreen2(rawHmi, PUBLIC_ROOT, settings.project?.name);
+    const hmi = normalizeHmi(rawHmi, tagList, PUBLIC_ROOT);
     const drivers = (driverManager?.list?.() || []).map((d) => ({
       id: d.id,
       type: d.type,
@@ -315,6 +291,4 @@ module.exports = {
   sortIoMapTags,
   ioMapPointFromTag,
   buildMirrorSuggestions,
-  shouldPollFieldbusForIoMap,
-  pollFieldbusForIoMap,
 };

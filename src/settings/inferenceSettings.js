@@ -32,18 +32,8 @@ function normalizeInferenceSettings(incoming, prev = {}) {
     ? incoming.hostEnabled === true
     : (prevInf.hostEnabled !== undefined ? prevInf.hostEnabled === true : DEFAULT_INFERENCE.hostEnabled);
 
-  let modelsDir = String(incoming.modelsDir ?? prevInf.modelsDir ?? DEFAULT_INFERENCE.modelsDir).trim()
+  const modelsDir = String(incoming.modelsDir ?? prevInf.modelsDir ?? DEFAULT_INFERENCE.modelsDir).trim()
     || DEFAULT_INFERENCE.modelsDir;
-  if (/^[A-Za-z]:[\\/]/.test(modelsDir) || modelsDir.startsWith('/')) {
-    const rel = path.relative(DATA_DIR, path.resolve(modelsDir));
-    modelsDir = rel && !rel.startsWith('..') && !path.isAbsolute(rel)
-      ? path.join(DATA_DIR, rel)
-      : DEFAULT_INFERENCE.modelsDir;
-  } else if (modelsDir.startsWith('./') || modelsDir.startsWith('.\\')) {
-    modelsDir = path.resolve(DATA_DIR, modelsDir);
-  } else if (modelsDir && !path.isAbsolute(modelsDir)) {
-    modelsDir = path.join(DATA_DIR, modelsDir);
-  }
 
   return {
     hostEnabled: mode === 'off' ? false : hostEnabled,

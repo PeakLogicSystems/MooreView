@@ -105,6 +105,7 @@ module.exports = {
     MOTOR1_RESET: 'Motor 1 reset',
     MOTOR1_OFFLINE: 'Motor 1 offline latch',
     MOTOR1_RUN: 'Motor 1 run',
+    MOTOR1_HAND: 'Motor 1 hand run latch',
     MOTOR1_HRS: 'Motor 1 run hours',
     MOTOR1_STARTS: 'Motor 1 start count',
     MOTOR1_CNTR: 'Motor 1 start counter',

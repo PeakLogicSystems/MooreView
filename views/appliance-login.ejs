@@ -3,16 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Sign in · MooreVIEW</title>
+  <title>Sign in · MooreView</title>
   <style>
     :root {
+      --ps-purple: #49104F;
+      --ps-purple-dark: #3a0d3f;
+      --ps-purple-light: #efd9f2;
       --bg: #f1f5f9;
       --sidebar: #1e293b;
-      --accent: #2563eb;
+      --accent: #49104F;
       --text: #0f172a;
       --muted: #64748b;
       --border: #cbd5e1;
-      --brand-cyan: #93c5fd;
     }
     * { box-sizing: border-box; }
     html, body {
@@ -30,7 +32,7 @@
       font-weight: 700;
       letter-spacing: 0.02em;
     }
-    .login-top span { color: var(--brand-cyan); font-weight: 600; }
+    .login-top span { color: var(--ps-purple-light); font-weight: 600; }
     .login-wrap {
       min-height: calc(100vh - 3rem);
       display: flex;
@@ -90,7 +92,7 @@
       font-weight: 600;
       cursor: pointer;
     }
-    .login-card button:hover { background: #1d4ed8; border-color: #1d4ed8; }
+    .login-card button:hover { background: var(--ps-purple-dark); border-color: var(--ps-purple-dark); }
     .login-err {
       color: #dc2626;
       font-size: 0.9rem;
@@ -113,11 +115,11 @@
   </style>
 </head>
 <body>
-  <header class="login-top">Moore<span>VIEW</span></header>
+  <header class="login-top">Moore<span>View</span></header>
   <div class="login-wrap">
     <form class="login-card" id="login-form" autocomplete="on">
       <h1>Site sign in</h1>
-      <p class="lead">Single-tenant appliance — sign in with your MooreVIEW account.</p>
+      <p class="lead">Single-tenant appliance — sign in with your MooreView account.</p>
       <label for="email">Email</label>
       <input id="email" name="email" type="email" autocomplete="username" required placeholder="admin@local">
       <label for="password">Password</label>

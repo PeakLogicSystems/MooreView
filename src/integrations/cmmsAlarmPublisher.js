@@ -21,6 +21,7 @@
 const mqtt = require('mqtt');
 const persistence = require('../persistence');
 const userStore = require('../users/userStore');
+const { resolveAlarmContext } = require('../alarms/alarmContext');
 const { SCHEMA, normalizeCmmsIntegration } = require('../settings/cmmsIntegrationSettings');
 
 let client = null;
@@ -156,7 +157,8 @@ async function publishAlarmTransition(evt) {
   const cfg = loadConfigFromDisk();
   if (!cfg.enabled) return { published: 0, skipped: 'disabled' };
 
-  const recipients = userStore.listNotificationRecipients(evt.level);
+  const alarmContext = resolveAlarmContext(evt);
+  const recipients = userStore.listNotificationRecipients(evt.level, alarmContext);
   const alarmPayload = buildAlarmPayload(evt, { config: cfg });
   const notifyPayload = buildNotifyPayload(evt, recipients, { config: cfg });
 

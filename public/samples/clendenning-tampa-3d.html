@@ -1,7 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <script src="/samples/mv-live-api.js"></script>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>12508 Clendenning Dr — Tampa — ECOPOD E300 3D</title>
@@ -71,12 +70,11 @@
     <h3>Live tags</h3>
     <dl id="detail-tags"></dl>
   </div>
-  <script type="importmap">{ "imports": { "three": "/vendor/three/build/three.module.js", "three/addons/": "/vendor/three/examples/jsm/" } }</script>
+  <script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }</script>
   <script type="module">
     import * as THREE from 'three';
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
     import { buildEcopod, ECOPOD_E300_DIMS } from './ecopod-3d.js';
-    import { mountNorthIndicator } from './mv-north-indicator.js';
 
     const SITE = {
   "name": "12508 Clendenning Dr — Tampa",
@@ -233,12 +231,9 @@
       showMeta(meta, label || meta.label);
     });
 
-    const north = mountNorthIndicator();
-
     function animate() {
       requestAnimationFrame(animate);
       controls.update();
-      north.update(camera);
       renderer.render(scene, camera);
     }
     animate();

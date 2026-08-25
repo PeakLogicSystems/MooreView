@@ -154,8 +154,6 @@ void mvUpdateFlowMeters();
 void mvUpdateAlternators();
 void mvTagsToJson(JsonObject out);
 void mvTagsToParcJson(JsonArray out);
-/** FNV-1a fingerprint of live tag values — for MQTT exception reporting. */
-uint32_t mvTagsValueFingerprint();
 bool mvRegisterTagIds(JsonArray ids);
 bool mvApplyTagMeta(JsonArray tags);
 uint8_t mvGlobalTagCount();

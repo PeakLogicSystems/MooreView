@@ -5,8 +5,6 @@ const path = require('path');
 const { listHmiAssets, resolveAssetPath } = require('../../hmi/hmiConfig');
 const { saveUserHmiAsset, userImportsDir } = require('../../hmi/hmiUserAssets');
 const { DATA_DIR } = require('../../config');
-const { mirrorUpload } = require('../../storage/gridfsMirror');
-const gridfs = require('../../storage/gridfsStore');
 
 const PUBLIC_ROOT = path.join(__dirname, '../../../public');
 
@@ -23,7 +21,7 @@ function createHmiRoutes(deps = {}) {
     }
   });
 
-  router.post('/hmi/assets/import', async (req, res) => {
+  router.post('/hmi/assets/import', (req, res) => {
     try {
       const filename = String(req.body?.filename || req.body?.name || '').trim();
       const b64 = String(req.body?.contentBase64 || '').trim();
@@ -33,20 +31,7 @@ function createHmiRoutes(deps = {}) {
       const buffer = Buffer.from(b64, 'base64');
       const saved = saveUserHmiAsset(dataDir, filename, buffer);
       if (!saved.ok) return res.status(400).json({ error: saved.error });
-      let gridfsFile = null;
-      try {
-        gridfsFile = await mirrorUpload(gridfs.BUCKETS.hmi_assets, buffer, {
-          filename: saved.asset?.filename || filename,
-          contentType: saved.asset?.mime || 'application/octet-stream',
-          metadata: { source: 'hmi-import', webPath: saved.path },
-        });
-      } catch { /* ignore */ }
-      res.json({
-        ok: true,
-        asset: saved.asset,
-        path: saved.path,
-        gridfsFileId: gridfsFile?.fileId || null,
-      });
+      res.json({ ok: true, asset: saved.asset, path: saved.path });
     } catch (err) {
       res.status(500).json({ error: String(err?.message || err) });
     }

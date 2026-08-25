@@ -2,6 +2,7 @@
 
 const persistence = require('../persistence');
 const userStore = require('../users/userStore');
+const { resolveAlarmContext } = require('../alarms/alarmContext');
 const {
   effectiveNotificationEmail,
   effectiveNotificationPhone,
@@ -22,7 +23,8 @@ function appendQueue(entry) {
  * @param {{ tagId: string, level: string, value?: * }} alarm
  */
 function notifyAlarm(alarm) {
-  const recipients = userStore.listNotificationRecipients(alarm.level);
+  const alarmContext = resolveAlarmContext(alarm);
+  const recipients = userStore.listNotificationRecipients(alarm.level, alarmContext);
   if (!recipients.length) return { queued: 0 };
 
   let queued = 0;

@@ -21,86 +21,6 @@ function statusBadge(status) {
 }
 
 let vendorCatalog = [];
-let featureFlags = { cloudSims: false, cellularSims: false };
-
-function fetchDashboard() {
-  const api = window.api;
-  const fn = api?.getDashboard || api?.dashboard;
-  if (typeof fn !== 'function') {
-    throw new Error('Dashboard API unavailable — hard-refresh this page (Ctrl+F5).');
-  }
-  return fn.call(api);
-}
-
-function syncCellularSectionsVisibility() {
-  const on = featureFlags.cellularSims === true;
-  ['cellular-vendors-section', 'cellular-sims-inventory-section'].forEach((id) => {
-    const el = document.getElementById(id);
-    if (el) el.classList.toggle('view-hidden', !on);
-  });
-}
-
-function syncCloudSimsLinkVisibility() {
-  const link = document.getElementById('conn-cloud-sims-open');
-  if (link) link.classList.toggle('view-hidden', featureFlags.cloudSims !== true);
-}
-
-async function refreshFeatureFlags() {
-  const cloudEl = document.getElementById('conn-cloud-sims-enabled');
-  const cellEl = document.getElementById('conn-cellular-sims-enabled');
-  if (!cloudEl && !cellEl) return;
-  try {
-    const data = await fetchDashboard();
-    const st = data?.settings || {};
-    featureFlags = {
-      cloudSims: st.cloudSims?.enabled === true,
-      cellularSims: st.cellularSims?.enabled === true,
-    };
-    if (cloudEl) cloudEl.checked = featureFlags.cloudSims;
-    if (cellEl) cellEl.checked = featureFlags.cellularSims;
-    syncCloudSimsLinkVisibility();
-    syncCellularSectionsVisibility();
-  } catch (e) {
-    const msg = document.getElementById('conn-features-msg');
-    if (msg) {
-      msg.textContent = e.message || 'Failed to load feature settings';
-      msg.classList.add('cellular-sims-msg-error');
-    }
-  }
-}
-
-async function saveFeatureFlags() {
-  const msg = document.getElementById('conn-features-msg');
-  const cloudEl = document.getElementById('conn-cloud-sims-enabled');
-  const cellEl = document.getElementById('conn-cellular-sims-enabled');
-  if (!cloudEl || !cellEl) return;
-  if (msg) {
-    msg.textContent = 'Saving…';
-    msg.classList.remove('cellular-sims-msg-error');
-  }
-  try {
-    await window.api.putSettings({
-      cloudSims: { enabled: cloudEl.checked === true },
-      cellularSims: { enabled: cellEl.checked === true },
-    });
-    featureFlags = {
-      cloudSims: cloudEl.checked === true,
-      cellularSims: cellEl.checked === true,
-    };
-    syncCloudSimsLinkVisibility();
-    syncCellularSectionsVisibility();
-    if (msg) msg.textContent = 'Feature settings saved. Reload if a section stays hidden.';
-    if (featureFlags.cellularSims) {
-      await refreshVendors();
-      await refreshSims();
-    }
-  } catch (e) {
-    if (msg) {
-      msg.textContent = e.message || 'Save failed';
-      msg.classList.add('cellular-sims-msg-error');
-    }
-  }
-}
 
 function renderCredentialFields(vendorId) {
   const wrap = document.getElementById('vendor-credential-fields');
@@ -174,6 +94,177 @@ function renderVendorsTable(vendors) {
     <thead><tr><th>Label</th><th>Vendor</th><th>Adapter</th><th>Enabled</th><th>Actions</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
+  renderBillingVendorSelect(vendors);
+}
+
+function defaultBillingPeriodFields() {
+  const now = new Date();
+  const periodStart = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-01 00:00:00`;
+  const periodEnd = now.toISOString().slice(0, 19).replace('T', ' ');
+  const startEl = document.getElementById('billing-period-start');
+  const endEl = document.getElementById('billing-period-end');
+  if (startEl && !startEl.value) startEl.value = periodStart;
+  if (endEl && !endEl.value) endEl.value = periodEnd;
+}
+
+function billingQueryFromForm() {
+  defaultBillingPeriodFields();
+  const query = {
+    vendor: 'simetry',
+    periodStart: document.getElementById('billing-period-start')?.value?.trim(),
+    periodEnd: document.getElementById('billing-period-end')?.value?.trim(),
+    tenantId: document.getElementById('billing-tenant-id')?.value?.trim(),
+  };
+  const vendorConfigId = document.getElementById('billing-vendor-config')?.value?.trim();
+  if (vendorConfigId) query.vendorConfigId = vendorConfigId;
+  return query;
+}
+
+function renderBillingVendorSelect(vendors) {
+  const sel = document.getElementById('billing-vendor-config');
+  if (!sel) return;
+  const simetry = (vendors || []).filter((v) => v.vendorId === 'simetry');
+  if (!simetry.length) {
+    sel.innerHTML = '<option value="">No Simetry vendor configured</option>';
+    return;
+  }
+  sel.innerHTML = [
+    '<option value="">All Simetry vendors</option>',
+    ...simetry.map((v) => `<option value="${esc(v.id)}">${esc(v.label)}</option>`),
+  ].join('');
+}
+
+function formatMoney(value, currency = 'USD') {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '—';
+  try {
+    return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(n);
+  } catch {
+    return `${n.toFixed(2)} ${currency}`;
+  }
+}
+
+function renderBillingSummary(report) {
+  const el = document.getElementById('cellular-billing-summary');
+  if (!el || !report) return;
+  const s = report.summary || {};
+  const invoice = report.invoice?.totalPrice;
+  const parts = [
+    `${s.count ?? 0} line(s)`,
+    `usage ${s.totalUsageMb ?? 0} MB`,
+    `total ${formatMoney(s.totalAmount, s.currency || 'USD')}`,
+  ];
+  if (invoice != null) parts.push(`invoice ${formatMoney(invoice, s.currency || 'USD')}`);
+  if (report.period?.periodStart && report.period?.periodEnd) {
+    parts.push(`${report.period.periodStart} → ${report.period.periodEnd}`);
+  }
+  el.textContent = parts.join(' · ');
+}
+
+function renderBillingTable(report) {
+  const wrap = document.getElementById('cellular-billing-table-wrap');
+  if (!wrap) return;
+  const lines = report?.lines || [];
+  if (!lines.length) {
+    wrap.innerHTML = '<p class="muted">No billing lines for this period. Sync billing from Simetry or widen the date range.</p>';
+    renderBillingSummary(report);
+    return;
+  }
+  const rows = lines.map((line) => `<tr>
+    <td><code>${esc(line.iccid)}</code></td>
+    <td>${esc(line.tenantId || '—')}</td>
+    <td>${esc(line.plan || '—')}</td>
+    <td>${line.usageMb != null ? esc(`${line.usageMb} MB`) : '—'}</td>
+    <td>${formatMoney(line.serviceFee, line.currency)}</td>
+    <td>${formatMoney(line.amount, line.currency)}</td>
+    <td><code>${esc(line.deviceId || line.gatewayId || '—')}</code></td>
+  </tr>`).join('');
+  wrap.innerHTML = `<table class="cellular-sims-table">
+    <thead><tr><th>ICCID</th><th>Tenant</th><th>Plan</th><th>Usage</th><th>Service fee</th><th>Amount</th><th>Linked</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+  renderBillingSummary(report);
+}
+
+async function refreshBillingReport(live = false) {
+  if (typeof window.api?.getCellularBillingReport !== 'function') return;
+  const query = billingQueryFromForm();
+  if (live) query.live = '1';
+  const data = await window.api.getCellularBillingReport(query);
+  renderBillingTable(data.report);
+  return data.report;
+}
+
+async function onSyncBilling() {
+  const msg = document.getElementById('cellular-billing-summary');
+  if (msg) msg.textContent = 'Syncing Simetry billing…';
+  try {
+    const body = billingQueryFromForm();
+    const result = await window.api.syncCellularBilling(body);
+    const summary = (result.results || [])
+      .map((r) => `${r.vendorConfigId}: ${r.ok ? `${r.updated}/${r.total} updated` : r.error}`)
+      .join('; ');
+    if (msg) msg.textContent = summary || 'Billing sync complete.';
+    await refreshBillingReport(false);
+    await refreshSims();
+  } catch (e) {
+    if (msg) {
+      msg.textContent = e.message || 'Billing sync failed';
+      msg.classList.add('cellular-sims-msg-error');
+    }
+  }
+}
+
+async function onExportBilling() {
+  try {
+    const csv = await window.api.exportCellularBillingCsv(billingQueryFromForm());
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `simetry-billing-${Date.now()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    window.alert(e.message || 'Export failed');
+  }
+}
+
+function gatewayLinkLabel(autoLink) {
+  if (!autoLink) return '—';
+  if (autoLink.linked) return 'Auto-linked';
+  if (autoLink.message === 'already linked') return 'Already linked';
+  if (autoLink.suggestSync) return 'Sync Simetry first';
+  if (autoLink.reason) return autoLink.reason;
+  return '—';
+}
+
+function renderGatewayReportsTable(reports) {
+  const wrap = document.getElementById('cellular-gateway-table-wrap');
+  if (!wrap) return;
+  if (!reports.length) {
+    wrap.innerHTML = '<p class="muted">No gateway cellular reports yet. Run <code>read-cellular</code> and <code>publish-cellular</code> on the NanoPi, or wait for the 15-minute cron.</p>';
+    return;
+  }
+  const rows = reports.map((report) => `<tr>
+    <td><code>${esc(report.gatewayId)}</code></td>
+    <td><code>${esc(report.iccid || '—')}</code></td>
+    <td>${esc(report.platform || '—')}</td>
+    <td>${esc(gatewayLinkLabel(report.autoLink))}</td>
+    <td class="muted">${esc(report.receivedAt || report.reportedAt || '—')}</td>
+  </tr>`).join('');
+  wrap.innerHTML = `<table class="cellular-sims-table">
+    <thead><tr><th>Gateway</th><th>ICCID</th><th>Platform</th><th>Link status</th><th>Last seen</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+async function refreshGatewayReports() {
+  if (typeof window.api?.getCellularGatewayReports !== 'function') return;
+  const data = await window.api.getCellularGatewayReports();
+  renderGatewayReportsTable(data.reports || []);
 }
 
 function renderSimsTable(sims) {
@@ -209,19 +300,12 @@ function renderSimsTable(sims) {
 
 async function refreshStatus() {
   const statusEl = document.getElementById('cellular-sims-status');
-  if (!statusEl) return;
   try {
     const parts = [];
     if (typeof window.api?.getMessagingStatus === 'function') {
       const msg = await window.api.getMessagingStatus();
       if (msg.mail?.configured) parts.push('mail ✓');
       if (msg.sms?.configured) parts.push('SMS ✓');
-    }
-    if (!featureFlags.cellularSims) {
-      statusEl.textContent = parts.length
-        ? `${parts.join(' · ')} · Cellular SIM management disabled`
-        : 'Cellular SIM management disabled';
-      return;
     }
     const mgr = await window.api.getCellularSimsStatus();
     parts.push(`${mgr.count ?? 0} SIM(s)`);
@@ -481,14 +565,8 @@ async function onTestSms(ev) {
 
 async function refreshVendors() {
   const tableWrap = document.getElementById('cellular-vendors-table-wrap');
-  if (!featureFlags.cellularSims) {
-    if (tableWrap) {
-      tableWrap.innerHTML = '<p class="muted">Enable Cellular SIM management under Platform features above.</p>';
-    }
-    return;
-  }
   if (typeof window.api?.getCellularVendorCatalog !== 'function') {
-    const err = 'Connectivity API client is missing — hard-refresh this page (Ctrl+F5). If it persists, restart the MooreVIEW server.';
+    const err = 'Cellular API client is outdated — restart the server and hard-refresh this page.';
     setVendorLoadError(err);
     if (tableWrap) tableWrap.innerHTML = `<p class="cellular-sims-msg-error">${esc(err)}</p>`;
     return;
@@ -509,31 +587,18 @@ async function refreshVendors() {
 }
 
 async function refreshSims() {
-  if (!featureFlags.cellularSims) {
-    const wrap = document.getElementById('cellular-sims-table-wrap');
-    if (wrap) {
-      wrap.innerHTML = '<p class="muted">Enable Cellular SIM management under Platform features above.</p>';
-    }
-    await refreshStatus();
-    return;
-  }
   const data = await window.api.getCellularSims();
   renderSimsTable(data.sims || []);
   await refreshStatus();
 }
 
 async function refreshAll() {
-  await refreshFeatureFlags();
   await refreshMessaging();
-  if (featureFlags.cellularSims) {
-    await refreshVendors();
-    await refreshSims();
-  } else {
-    syncCellularSectionsVisibility();
-    const wrap = document.getElementById('cellular-vendors-table-wrap');
-    if (wrap) wrap.innerHTML = '<p class="muted">Enable Cellular SIM management under Platform features above.</p>';
-    await refreshSims();
-  }
+  await refreshVendors();
+  defaultBillingPeriodFields();
+  await refreshBillingReport(false).catch(() => {});
+  await refreshGatewayReports().catch(() => {});
+  await refreshSims();
 }
 
 async function onAddVendor(ev) {
@@ -608,12 +673,6 @@ async function onSyncAll() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('conn-features-save')?.addEventListener('click', () => {
-    saveFeatureFlags().catch((e) => {
-      const msg = document.getElementById('conn-features-msg');
-      if (msg) msg.textContent = e.message || 'Save failed';
-    });
-  });
   document.getElementById('cellular-vendor-form')?.addEventListener('submit', onAddVendor);
   document.getElementById('vendor-id')?.addEventListener('change', (e) => renderCredentialFields(e.target.value));
   document.getElementById('cellular-vendors-table-wrap')?.addEventListener('click', onVendorTableClick);
@@ -621,6 +680,10 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('cellular-sync-all')?.addEventListener('click', onSyncAll);
   document.getElementById('cellular-sims-refresh')?.addEventListener('click', refreshSims);
   document.getElementById('cellular-vendors-refresh')?.addEventListener('click', refreshVendors);
+  document.getElementById('cellular-billing-sync')?.addEventListener('click', onSyncBilling);
+  document.getElementById('cellular-billing-refresh')?.addEventListener('click', () => refreshBillingReport(false));
+  document.getElementById('cellular-billing-export')?.addEventListener('click', onExportBilling);
+  document.getElementById('cellular-gateway-refresh')?.addEventListener('click', refreshGatewayReports);
   document.getElementById('messaging-mail-refresh')?.addEventListener('click', refreshMessaging);
   document.getElementById('messaging-sms-refresh')?.addEventListener('click', refreshMessaging);
   document.getElementById('messaging-mail-test-form')?.addEventListener('submit', onTestMail);

@@ -1,14 +1,15 @@
 'use strict';
 
 const persistence = require('../persistence');
-const { dedupeParcTags } = require('./parcTagSync');
+const {
+  extractAteccSerialFromReport,
+  isMvDeviceId,
+  legacyOptaDeviceIdFromAteccSerial,
+  normalizeAteccSerialHex,
+} = require('./optaSerial');
+const { extractGlobalSiteKeyFromReport } = require('./commissionFence');
 
 const PARC_FILE = 'parc.json';
-const SAVE_DEBOUNCE_MS = 300;
-
-let _saveTimer = null;
-let _pendingStore = null;
-let _saveFailRetryTimer = null;
 
 function defaultParcSettings() {
   return {
@@ -34,43 +35,32 @@ function loadStore() {
 function saveStore(store) {
   try {
     persistence.writeJson(PARC_FILE, store);
-    if (_saveFailRetryTimer) {
-      clearTimeout(_saveFailRetryTimer);
-      _saveFailRetryTimer = null;
-    }
-  } catch (err) {
-    console.warn(`[parc-registry] failed to save ${PARC_FILE}: ${err.message}`);
-    _pendingStore = store;
-    if (_saveFailRetryTimer) return;
-    _saveFailRetryTimer = setTimeout(() => {
-      _saveFailRetryTimer = null;
-      const pending = _pendingStore;
-      _pendingStore = null;
-      if (pending) saveStore(pending);
-    }, 2000);
+  } catch (e) {
+    console.warn('[parc] save:', e.message || e);
   }
 }
 
+let _saveTimer = null;
+
+/** Debounced save for high-rate MQTT telemetry (avoids Windows rename races on parc.json). */
 function scheduleSaveStore(store) {
-  _pendingStore = store;
   if (_saveTimer) clearTimeout(_saveTimer);
   _saveTimer = setTimeout(() => {
     _saveTimer = null;
-    const pending = _pendingStore;
-    _pendingStore = null;
-    if (pending) saveStore(pending);
-  }, SAVE_DEBOUNCE_MS);
+    try {
+      saveStore(store);
+    } catch (e) {
+      console.warn('[parc] save:', e.message || e);
+    }
+  }, 300);
 }
 
-function flushDebouncedSave() {
+function flushSaveStore(store) {
   if (_saveTimer) {
     clearTimeout(_saveTimer);
     _saveTimer = null;
   }
-  if (!_pendingStore) return;
-  const pending = _pendingStore;
-  _pendingStore = null;
-  saveStore(pending);
+  saveStore(store);
 }
 
 function normalizeDeviceId(id) {
@@ -95,46 +85,26 @@ function deviceSummary(rec, settings) {
     lastReportAt: rec.lastReportAt || null,
     ageSec,
     stale: ageSec == null || ageSec > staleAfterSec,
+    deviceMode: rec.meta?.deviceMode || rec.runtime?.deviceMode || 'standalone',
     runtime: rec.runtime || null,
     tagCount: Array.isArray(rec.tags) ? rec.tags.length : 0,
     expansionCount: rec.meta?.expansionCount ?? null,
     expansionModules: rec.meta?.expansionModules || [],
-    ethIp: rec.meta?.ethIp || null,
-    mqttBroker: rec.meta?.mqttBroker || null,
-    mqttBrokerPort: rec.meta?.mqttBrokerPort ?? null,
-    firmwareVersion: rec.meta?.firmwareVersion || null,
-    deviceMode: rec.meta?.deviceMode || rec.runtime?.deviceMode || null,
-    ctCal: rec.ctCal || null,
-    ctCalibrated: !!(rec.runtime?.ctCalibrated || (rec.ctCal?.zeroedCount > 0)),
     attached: !!rec.attach?.active,
     attachHost: rec.attach?.host || null,
     pauseReports: !!rec.attach?.active,
+    ateccSerial: rec.meta?.ateccSerial || '',
+    globalSiteKey: rec.meta?.globalSiteKey ?? rec.globalSiteKey ?? null,
   };
-}
-
-let _recoveryHook = null;
-
-function setParcRecoveryHook(fn) {
-  _recoveryHook = typeof fn === 'function' ? fn : null;
-}
-
-function _triggerRecovery(deviceId, opts) {
-  if (_recoveryHook) {
-    _recoveryHook(deviceId, opts);
-    return;
-  }
-  try {
-    const { maybeRecoverParcDevice } = require('./parcDeviceRecovery');
-    maybeRecoverParcDevice(deviceId, opts).catch((e) => {
-      console.warn(`[parc-recovery] hook failed for ${deviceId}:`, e.message || e);
-    });
-  } catch { /* optional during tests */ }
 }
 
 class DeviceRegistry {
   constructor() {
     this._store = loadStore();
-    this._offlineDevices = new Set();
+  }
+
+  reloadFromPersistence() {
+    this._store = loadStore();
   }
 
   settings() {
@@ -162,10 +132,33 @@ class DeviceRegistry {
     return {
       ...deviceSummary(rec, settings),
       tags: rec.tags || [],
+      programTrace: rec.programTrace || [],
       driverHealth: rec.driverHealth || [],
       meta: rec.meta || {},
       attach: rec.attach || { active: false },
+      cellular: rec.meta?.cellular || null,
+      iccid: rec.meta?.cellular?.iccid || '',
+      eid: rec.meta?.cellular?.eid || '',
+      gatewayId: rec.meta?.cellular?.gatewayId || rec.meta?.gatewayId || '',
     };
+  }
+
+  patchDeviceMeta(deviceId, metaPatch = {}) {
+    const id = normalizeDeviceId(deviceId);
+    const rec = this._store.devices[id];
+    if (!rec) return null;
+    const nextMeta = { ...(rec.meta || {}) };
+    for (const [key, value] of Object.entries(metaPatch)) {
+      if (key === 'cellular' && value && typeof value === 'object') {
+        nextMeta.cellular = { ...(nextMeta.cellular || {}), ...value };
+      } else if (value !== undefined) {
+        nextMeta[key] = value;
+      }
+    }
+    rec.meta = nextMeta;
+    this._store.devices[id] = rec;
+    scheduleSaveStore(this._store);
+    return this.getDevice(id);
   }
 
   ingestReport(body) {
@@ -176,76 +169,90 @@ class DeviceRegistry {
     const settings = this._store.settings;
     const existing = this._store.devices[deviceId] || { deviceId };
     const attach = existing.attach || { active: false };
-    const wasOffline = existing.meta?.online === false || this._offlineDevices.has(deviceId);
-    const goingOffline = body.meta?.online === false;
+    // Serial not in MQTT telemetry (redacted); keep registry/driver copy from first-seen or driver config.
+    const ateccSerial = extractAteccSerialFromReport(body) || existing.meta?.ateccSerial || '';
+    const globalSiteKey = extractGlobalSiteKeyFromReport(body);
 
-    const meta = {
-      ...(existing.meta || {}),
-      ...(body.meta || {}),
-      ...(body.ethIp ? { ethIp: String(body.ethIp) } : {}),
-      ...(body.mqttBroker ? { mqttBroker: String(body.mqttBroker) } : {}),
-      ...(body.mqttBrokerPort != null ? { mqttBrokerPort: Number(body.mqttBrokerPort) || 1883 } : {}),
-      ...(body.firmwareVersion ? { firmwareVersion: String(body.firmwareVersion) } : {}),
-      ...(body.deviceMode ? { deviceMode: String(body.deviceMode) } : {}),
-      ...(body.mqttAuth != null ? { mqttAuth: !!body.mqttAuth } : {}),
-      ...(Array.isArray(body.expansionModules)
-        ? { expansionModules: body.expansionModules }
-        : {}),
-      ...(body.expansionCount != null ? { expansionCount: body.expansionCount } : {}),
-    };
-
-    const ateccSerial = String(body.ateccSerial || body.meta?.ateccSerial || meta.ateccSerial || '').trim();
-    if (ateccSerial) meta.ateccSerial = ateccSerial;
-
-    if (body.mqttAuthFailed === true || body.meta?.mqttAuthFailed === true) {
-      meta.mqttAuthFailed = true;
-    } else if (
-      body.mqttAuthFailed === false
-      || body.meta?.mqttAuthFailed === false
-      || (body.mqttAuth === true && body.mqttAuthFailed !== true)
-      || (body.meta?.mqttAuth === true && body.meta?.mqttAuthFailed !== true)
-    ) {
-      meta.mqttAuthFailed = false;
+    let legacyRec = null;
+    let legacyKey = null;
+    if (isMvDeviceId(deviceId) && ateccSerial) {
+      try {
+        const expectedLegacy = legacyOptaDeviceIdFromAteccSerial(ateccSerial);
+        if (expectedLegacy !== deviceId && this._store.devices[expectedLegacy]) {
+          legacyRec = this._store.devices[expectedLegacy];
+          legacyKey = expectedLegacy;
+        }
+      } catch { /* invalid serial */ }
+      if (!legacyRec) {
+        for (const [key, rec] of Object.entries(this._store.devices)) {
+          if (key === deviceId) continue;
+          const otherSerial = normalizeAteccSerialHex(rec?.meta?.ateccSerial || '');
+          if (otherSerial === ateccSerial && key.startsWith('opta_')) {
+            legacyRec = rec;
+            legacyKey = key;
+            break;
+          }
+        }
+      }
     }
 
-    if (goingOffline) {
-      meta.online = false;
-    } else {
-      meta.online = true;
-    }
+    const mergedTags = Array.isArray(body.tags) && body.tags.length
+      ? body.tags
+      : (legacyRec?.tags?.length ? legacyRec.tags : (existing.tags || []));
 
     const rec = {
       ...existing,
+      ...(legacyRec || {}),
       deviceId,
-      name: body.name || existing.name || deviceId,
+      name: body.name || existing.name || legacyRec?.name || deviceId,
       platform: body.platform || existing.platform || '',
       reportIntervalSec: Math.max(
         30,
         Number(body.reportIntervalSec) || existing.reportIntervalSec || settings.defaultReportIntervalSec
       ),
       lastReportAt: new Date().toISOString(),
-      runtime: body.runtime != null ? body.runtime : existing.runtime || null,
-      ctCal: body.ctCal != null ? body.ctCal : (existing.ctCal || null),
-      tags: dedupeParcTags(Array.isArray(body.tags) ? body.tags : (existing.tags || [])),
+      runtime: body.runtime || null,
+      tags: mergedTags,
+      programTrace: Array.isArray(body.programTrace) ? body.programTrace : (existing.programTrace || []),
       driverHealth: Array.isArray(body.driverHealth) ? body.driverHealth : (existing.driverHealth || []),
-      meta,
+      meta: {
+        ...(legacyRec?.meta || {}),
+        ...(existing.meta || {}),
+        ...(body.meta || {}),
+        ...(body.firmwareVersion ? { firmwareVersion: String(body.firmwareVersion) } : {}),
+        ...(body.protocolVersion != null ? { protocolVersion: Number(body.protocolVersion) } : {}),
+        ...(ateccSerial ? { ateccSerial, serialNumber: ateccSerial } : {}),
+        ...(Array.isArray(body.expansionModules)
+          ? { expansionModules: body.expansionModules }
+          : {}),
+        ...(body.expansionCount != null ? { expansionCount: body.expansionCount } : {}),
+        ...(body.ethIp ? { ethIp: String(body.ethIp), lastHost: String(body.ethIp) } : {}),
+        ...(body.mqttBroker ? { mqttBroker: String(body.mqttBroker) } : {}),
+        ...(body.mqttBrokerPort != null ? { mqttBrokerPort: Number(body.mqttBrokerPort) } : {}),
+        ...(body.deviceMode ? { deviceMode: String(body.deviceMode) } : {}),
+        ...(globalSiteKey != null ? { globalSiteKey } : {}),
+        ...(body.meta?.cellular && typeof body.meta.cellular === 'object'
+          ? { cellular: { ...(existing.meta?.cellular || {}), ...body.meta.cellular } }
+          : {}),
+      },
       attach,
     };
 
     this._store.devices[deviceId] = rec;
-    scheduleSaveStore(this._store);
-
-    if (wasOffline && !goingOffline) {
-      this._offlineDevices.delete(deviceId);
-      _triggerRecovery(deviceId, { reason: 'telemetry' });
+    if (Array.isArray(rec.tags) && rec.tags.length) {
+      delete rec.meta.pendingTelemetry;
     }
+    if (legacyKey) {
+      delete this._store.devices[legacyKey];
+    }
+    scheduleSaveStore(this._store);
 
     const pauseReports = !!attach.active;
     const nextReportSec = pauseReports
       ? Math.max(rec.reportIntervalSec * 2, 600)
       : rec.reportIntervalSec;
 
-    const result = {
+    return {
       ok: true,
       deviceId,
       nextReportSec,
@@ -253,24 +260,6 @@ class DeviceRegistry {
       attached: pauseReports,
       reportIntervalSec: rec.reportIntervalSec,
     };
-
-    if (!pauseReports) {
-      try {
-        const { relayParcReportIfEnabled } = require('../integrations/applianceCloudRelay');
-        relayParcReportIfEnabled({
-          deviceId: rec.deviceId,
-          name: rec.name,
-          platform: rec.platform,
-          reportIntervalSec: rec.reportIntervalSec,
-          runtime: rec.runtime,
-          tags: rec.tags,
-          meta: rec.meta,
-          driverHealth: rec.driverHealth,
-        }).catch(() => {});
-      } catch { /* cloud remote optional */ }
-    }
-
-    return result;
   }
 
   reporterConfig(deviceId) {
@@ -313,56 +302,72 @@ class DeviceRegistry {
     return this.getDevice(id);
   }
 
-  /** Drop a device row from parc.json (test/noise cleanup). */
+  /** Refresh lastReportAt when MQTT cmd proves device is live (telemetry may be throttled). */
+  touchReport(deviceId) {
+    const id = normalizeDeviceId(deviceId);
+    const rec = this._store.devices[id];
+    if (!rec) return null;
+    rec.lastReportAt = new Date().toISOString();
+    this._store.devices[id] = rec;
+    scheduleSaveStore(this._store);
+    return this.getDevice(id);
+  }
+
   removeDevice(deviceId) {
     const id = normalizeDeviceId(deviceId);
     if (!this._store.devices[id]) return false;
     delete this._store.devices[id];
-    this._offlineDevices.delete(id);
-    saveStore(this._store);
+    flushSaveStore(this._store);
     return true;
-  }
-
-  markDeviceOffline(deviceId) {
-    const id = normalizeDeviceId(deviceId);
-    const rec = this._store.devices[id];
-    if (!rec) return null;
-    rec.meta = { ...(rec.meta || {}), online: false };
-    rec.runtime = { ...(rec.runtime || {}), running: false };
-    rec.attach = { active: false };
-    this._offlineDevices.add(id);
-    this._store.devices[id] = rec;
-    scheduleSaveStore(this._store);
-    return this.getDevice(id);
-  }
-
-  markDeviceOnline(deviceId) {
-    const id = normalizeDeviceId(deviceId);
-    const rec = this._store.devices[id];
-    if (!rec) {
-      this._offlineDevices.delete(id);
-      return null;
-    }
-    const wasOffline = rec.meta?.online === false || this._offlineDevices.has(id);
-    rec.meta = { ...(rec.meta || {}), online: true };
-    this._offlineDevices.delete(id);
-    this._store.devices[id] = rec;
-    scheduleSaveStore(this._store);
-    if (wasOffline) {
-      _triggerRecovery(id, { reason: 'online' });
-    }
-    return this.getDevice(id);
   }
 }
 
 const registry = new DeviceRegistry();
 
+function resolveRegistry() {
+  // Cloud MQTT ingest writes the fleet registry. Per-tenant DeviceRegistry
+  // copies created after 8/13 isolation stay empty — Live I/O must not use them.
+  if (process.env.MOOREVIEW_DEPLOYMENT === 'cloud') {
+    return registry;
+  }
+  try {
+    const active = require('../tenants/tenantRuntime').getActiveRegistry();
+    if (active) return active;
+  } catch {
+    /* boot / tests */
+  }
+  return registry;
+}
+
+/** Global fleet registry (MQTT ingest on cloud SaaS). */
+function getFleetRegistry() {
+  return registry;
+}
+
+/** Parc list/cmd/sync: cloud uses fleet registry; appliance uses tenant or appliance registry. */
+function resolveParcRegistry() {
+  if (process.env.MOOREVIEW_DEPLOYMENT === 'cloud') {
+    return registry;
+  }
+  return resolveRegistry();
+}
+
+const registryProxy = new Proxy(registry, {
+  get(_target, prop) {
+    const inst = resolveRegistry();
+    const val = inst[prop];
+    if (typeof val === 'function') return val.bind(inst);
+    return val;
+  },
+});
+
 module.exports = {
   DeviceRegistry,
-  registry,
+  registry: registryProxy,
+  getFleetRegistry,
+  resolveParcRegistry,
+  resolveRegistry,
   defaultParcSettings,
-  flushDebouncedSave,
-  SAVE_DEBOUNCE_MS,
-  setParcRecoveryHook,
   normalizeDeviceId,
+  flushSaveStore,
 };

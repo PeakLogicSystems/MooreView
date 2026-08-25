@@ -31,9 +31,10 @@
 
   function formatDate(iso) {
     if (!iso) return '—';
+    if (window.MooreviewTime?.formatFriendly) return window.MooreviewTime.formatFriendly(iso);
     const d = new Date(iso);
     if (!Number.isFinite(d.getTime())) return '—';
-    return d.toLocaleString();
+    return d.toLocaleString(undefined, window.MooreviewTime?.localeOpts?.() || {});
   }
 
   function markup() {

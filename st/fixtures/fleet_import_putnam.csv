@@ -1,7 +1,7 @@
-county,station_name,station_slug,station_type,lat,lng,serial_num,product,driver_id,tag_prefix,nexus_device_id,address,owner
-putnam,"Master Lift Station — 125 Yelvington Rd",yelvington-triplex,triplex,29.6441,-81.5888,40a36bce47f3,edge point industrial,ls_yelvington,YELV,6a33e1ef2a2ab59c9acfa6f8,"125 Yelvington Rd, E Palatka, FL 32131",Putnam County Utilities
-putnam,"Currie Lift Station",currie-duplex,dual_duplex,29.655,-81.585,40a36bcd7bb4,liftpoint,ls_currie,CURR,6a4660e1e1ab029d06f6842c,"111 Currie Rd, San Mateo, FL",Putnam County Utilities
-putnam,"Paradise Point Lift Station",paradise-point-duplex,dual_duplex,29.592,-81.598,40a36bc74cee,liftpoint,ls_paradise,PARA,6a5f7a60f2c86ccfdf65a40e,"341 Paradise Point Cir, San Mateo, FL",Putnam County Utilities
-putnam,"Hiawatha Lift Station",hiawatha-duplex,dual_duplex,29.652,-81.578,40a36bc74b17,liftpoint,ls_hiawatha,HIAW,6a33dc572a2ab59c9acfa2fb,"99 Hiawatha Court, E Palatka, FL",Putnam County Utilities
-putnam,"Putnam County Blvd Lift Station",pc-blvd-duplex,dual_duplex,29.661,-81.612,40a36bce4ce2,liftpoint,ls_pcblvd,PCBL,6a3edcade1ab029d06f586d2,"164 E Lois Broer Rd, E Palatka, FL",Putnam County Utilities
-putnam,"Port Buena Vista Lift Station",port-buena-vista-duplex,dual_duplex,29.568,-81.548,40a36bc74e62,liftpoint,ls_pbv,PBV,6a33dd072a2ab59c9acfa3a1,"123 Margarita Rd, Palatka, FL",Putnam County Utilities
+county,station_name,station_slug,station_type,lat,lng,device_id,device_slug,gateway_id,driver_id,address,owner
+putnam,125 Yelvington Rd Triplex,yelvington-triplex,triplex,29.6441,-81.5888,mv_pcu_yelvington_01,dev-pcu-yelvington,gw_pcu_yelvington_01,ls_yelvington,"125 Yelvington Rd, Palatka, FL 32131",Putnam County Utilities
+putnam,Reid St Simplex,reid-st-simplex,simplex,29.6486,-81.6304,mv_pcu_reid_01,dev-pcu-reid,gw_pcu_reid_01,ls_reid,"800 Reid St, Palatka, FL 32177",Putnam County Utilities
+putnam,Mosquito Lagoon Duplex,mosquito-lagoon-duplex,dual_duplex,29.6124,-81.5621,mv_pcu_mosquito_01,dev-pcu-mosquito,gw_pcu_mosquito_01,ls_mosquito,"Co Rd 309, East Palatka, FL 32131",Putnam County Utilities
+putnam,Cannan Grove Triplex,cannan-grove-triplex,triplex,29.6712,-81.7015,mv_pcu_cannan_01,dev-pcu-cannan,gw_pcu_cannan_01,ls_cannan,"Cannan Grove Rd, Palatka, FL 32177",Putnam County Utilities
+putnam,Bardin Rd Duplex,bardin-rd-duplex,dual_duplex,29.5898,-81.6543,mv_pcu_bardin_01,dev-pcu-bardin,gw_pcu_bardin_01,ls_bardin,"Bardin Rd, San Mateo, FL 32185",Putnam County Utilities
+putnam,SJR North Simplex,sjr-north-simplex,simplex,29.6335,-81.7152,mv_pcu_sjrn_01,dev-pcu-sjrn,gw_pcu_sjrn_01,ls_sjrn,"St Johns River Rd, Palatka, FL 32177",Putnam County Utilities

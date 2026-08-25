@@ -131,13 +131,15 @@ Opta setup **TLS → cloud** uses Let's Encrypt Generation Y (YE2 → Root YE �
 
 | Path | Purpose |
 |------|---------|
-| GET `/` or `/setup` | Setup page with **ST runtime status** panel (auto-refresh) |
+| GET `/` or `/setup` | Setup page: Ethernet/WiFi/MQTT, **device to host scan rate**, **RBE I/O**, expansions, ST status |
 | GET `/api/status` | JSON health + MQTT link state |
 | GET `/api/tags` | Live tags |
 | PUT `/api/program` | Deploy AST (local engineering) |
 | GET `/api/ota` | Firmware OTA status |
 | POST `/api/firmware` | Flash `.bin` (reboots) |
 | GET `/setup` | Ethernet/WiFi/expansion config |
+
+**Report by exception:** on `/setup`, select I/O that may publish immediately when they change. Unselected points stay on the programmed host report interval. Digital fires on any edge; analog uses the deadband. A minimum RBE interval (default 100 ms) prevents MQTT floods.
 
 ## mooreVIEW PC
 

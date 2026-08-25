@@ -4,12 +4,10 @@
   HMI composites: @composite/motor_hoa  +  @composite/tpo_daily
   Fixtures: st/fixtures/tags.motor_tpo_combined.json
 
-  Motor tags: MOTOR1_* , R1 (Opta base relay)
+  Motor tags: MOTOR1_* , VPB1
   TPO tags:   TPO1_* (minute-based window + ON/OFF pulse params)
 
-  Auto mode: motor runs when TPO1_OUT is on (combined schedule demo).
-
-  Both run independently each scan. Motor coil: MOTOR1_RUN drives Opta base R1.
+  Both run independently each scan. Wire MOTOR1_RUN / TPO1_OUT to field outputs as needed.
 *)
 
 (* ========== MOTOR HOA ========== *)
@@ -67,9 +65,6 @@ SetInt(MOTOR1_STARTS, CounterValue(MOTOR1_CNTR));
 
 TurnOFF(MOTOR1_START);
 TurnOFF(MOTOR1_STOP);
-
-(* Motor run → Opta base relay R1 *)
-IF IsON(MOTOR1_RUN) THEN TurnON(R1); ELSE TurnOFF(R1); END_IF;
 
 (* ========== TPO DAILY CYCLE ========== *)
 

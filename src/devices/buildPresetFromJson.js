@@ -1,16 +1,60 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+const { ST_DIR } = require('../config');
 const {
-  diTags, doTags, holdingRegTags, inputRegTags, explicitModbusTags, explicitVgreenTags, scanConcubeParameterTags,
-  optaExpansionTags,   optaParcModbusDraginoTags, edgepointGatewayTags, edgepointLiftStationTags,
-  liftStationLogicTagsFromFixture,
-  optaParcEzmeterTags,
-  edgepointEventsTopic,
-  normalizeEdgepointSerial,
-  mqttJsonInboundTags,
-  jxctSoil7in1Tags,
-  dfrobotPoolChemistryDraginoTags,
+  diTags, doTags, holdingRegTags, inputRegTags, explicitModbusTags, explicitVgreenTags, explicitPentairTags,
+  explicitJandyTags, explicitHaywardTags, scanConcubeParameterTags,
+  optaExpansionTags, edgepointGatewayTags, edgepointEventsTopic,
+  haloMqttTags, haloTelemetryTopic, halowMqttTags, halowTelemetryTopic, envTelemetryTopic, bme688MqttTags, nexcommTelemetryTopic,
 } = require('./tagBuilders');
+
+const FIXTURE_DIR = path.join(ST_DIR, 'fixtures');
+
+/** Load tag rows from one or more st/fixtures/*.json files and bind them to the driver. */
+function fixtureTags(driverId, fixture) {
+  const names = Array.isArray(fixture) ? fixture : [fixture];
+  const out = [];
+  for (const name of names) {
+    if (!name) continue;
+    const fp = path.join(FIXTURE_DIR, String(name));
+    if (!fs.existsSync(fp)) continue;
+    let arr;
+    try {
+      arr = JSON.parse(fs.readFileSync(fp, 'utf8'));
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(arr)) continue;
+    for (const t of arr) {
+      if (t && typeof t === 'object' && t.id) out.push({ ...t, driverId });
+    }
+  }
+  return out;
+}
+
+const NEXCOMM_MQTT_BLOCKS = [
+  { key: 'halo', defaultPrefix: 'nexcomm/halo' },
+  { key: 'halow', defaultPrefix: 'nexcomm/halow' },
+  { key: 'bme688', defaultPrefix: 'nexcomm/env' },
+];
+
+function resolveNexcommMqttTopic(tagsSpec, opts, defs) {
+  const mqttDeviceId = opts.deviceId || defs.deviceId
+    || NEXCOMM_MQTT_BLOCKS.map(({ key }) => tagsSpec?.[key]?.deviceId).find(Boolean)
+    || '';
+  if (!mqttDeviceId) return null;
+  for (const { key, defaultPrefix } of NEXCOMM_MQTT_BLOCKS) {
+    const block = tagsSpec?.[key];
+    if (!block) continue;
+    return nexcommTelemetryTopic(
+      mqttDeviceId,
+      opts.topicPrefix || block.topicPrefix || defs.topicPrefix || defaultPrefix,
+    );
+  }
+  return null;
+}
 
 /** Shared RS-485 bus (multi-slave DI/Q) vs dedicated driver row (explicit register map). */
 function inferSharedBus(tagsSpec, explicit) {
@@ -19,7 +63,9 @@ function inferSharedBus(tagsSpec, explicit) {
     || (tagsSpec.coil || []).length > 0
     || (tagsSpec.input || []).length > 0
     || (tagsSpec.holding || []).length > 0;
-  if (((tagsSpec.explicit || []).length > 0 || (tagsSpec.vgreen || []).length > 0) && !hasChannel) return false;
+  if (((tagsSpec.explicit || []).length > 0 || (tagsSpec.vgreen || []).length > 0
+      || (tagsSpec.pentair || []).length > 0 || (tagsSpec.jandy || []).length > 0
+      || (tagsSpec.hayward || []).length > 0) && !hasChannel) return false;
   if (tagsSpec.concube && !hasChannel) return false;
   return true;
 }
@@ -52,10 +98,10 @@ function buildPresetFromJson(spec) {
     aiCount: spec.aiCount,
     hrCount: spec.hrCount,
     tagsFromDevice: spec.tagsFromDevice === true,
-    stationType: spec.stationType || null,
-    defaultProgram: spec.defaultProgram || null,
-    pdm: spec.pdm && typeof spec.pdm === 'object' ? spec.pdm : null,
-    dragino: spec.dragino && typeof spec.dragino === 'object' ? spec.dragino : null,
+    stProgram: spec.stProgram || spec.defaultProgram || '',
+    stProgramLabel: spec.stProgramLabel || '',
+    stationType: spec.stationType || '',
+    pdm: spec.pdm || undefined,
     defaults: spec.defaults || {},
     driver: (opts) => {
       const id = opts.driverId || driverIdDefault;
@@ -71,24 +117,6 @@ function buildPresetFromJson(spec) {
           timeoutMs: d.timeoutMs ?? 1000,
         };
       }
-      if (spec.transport === 'pentair_rs485') {
-        const defs = spec.defaults || {};
-        return {
-          id,
-          type: 'pentair_rs485',
-          enabled: d.enabled !== false,
-          serialPort: opts.serialPort || d.serialPort || defs.serialPort || 'COM4',
-          baud: opts.baud ?? d.baud ?? defs.baud ?? 9600,
-          deviceAddr: opts.deviceAddr ?? d.deviceAddr ?? defs.deviceAddr,
-          deviceClass: opts.deviceClass || d.deviceClass || defs.deviceClass,
-          parity: opts.parity || d.parity || defs.parity || 'none',
-          stopBits: opts.stopBits ?? d.stopBits ?? defs.stopBits ?? 1,
-          timeoutMs: d.timeoutMs ?? 2000,
-          frameDelayMs: d.frameDelayMs ?? 30,
-          busGapMs: opts.busGapMs ?? d.busGapMs ?? defs.busGapMs ?? 120,
-          pollIntervalMs: opts.pollIntervalMs ?? d.pollIntervalMs ?? defs.pollIntervalMs ?? 60000,
-        };
-      }
       if (spec.transport === 'vgreen_epc') {
         return {
           id,
@@ -100,23 +128,73 @@ function buildPresetFromJson(spec) {
           parity: opts.parity || d.parity || 'none',
           stopBits: opts.stopBits ?? d.stopBits ?? 1,
           timeoutMs: d.timeoutMs ?? 2000,
+          pollIntervalMs: opts.pollIntervalMs ?? d.pollIntervalMs ?? spec.defaults?.pollIntervalMs ?? 0,
         };
       }
-      if (spec.transport === 'opta_remote' || spec.transport === 'mqtt_parc' || spec.transport === 'mqtt_parc_telemetry') {
+      if (spec.transport === 'pentair_rs485') {
         const defs = spec.defaults || {};
-        const telemetryOnly = spec.transport === 'mqtt_parc_telemetry'
-          || d.telemetryOnly === true
-          || defs.telemetryOnly === true;
+        return {
+          id,
+          type: 'pentair_rs485',
+          enabled: d.enabled !== false,
+          serialPort: opts.serialPort || d.serialPort || defs.serialPort || 'COM3',
+          baud: opts.baud ?? d.baud ?? defs.baud ?? 9600,
+          deviceAddr: opts.deviceAddr ?? opts.slaveId ?? d.deviceAddr ?? d.slaveId ?? defs.deviceAddr ?? 0x70,
+          deviceClass: opts.deviceClass || d.deviceClass || defs.deviceClass || 'ultratemp',
+          parity: opts.parity || d.parity || defs.parity || 'none',
+          stopBits: opts.stopBits ?? d.stopBits ?? defs.stopBits ?? 1,
+          timeoutMs: d.timeoutMs ?? defs.timeoutMs ?? 2000,
+          pollIntervalMs: opts.pollIntervalMs ?? d.pollIntervalMs ?? defs.pollIntervalMs ?? 300000,
+          frameDelayMs: opts.frameDelayMs ?? d.frameDelayMs ?? defs.frameDelayMs ?? 30,
+        };
+      }
+      if (spec.transport === 'jandy_rs485') {
+        const defs = spec.defaults || {};
+        return {
+          id,
+          type: 'jandy_rs485',
+          enabled: d.enabled !== false,
+          serialPort: opts.serialPort || d.serialPort || defs.serialPort || 'COM3',
+          baud: opts.baud ?? d.baud ?? defs.baud ?? 9600,
+          deviceAddr: opts.deviceAddr ?? opts.slaveId ?? d.deviceAddr ?? d.slaveId ?? defs.deviceAddr ?? 0x78,
+          deviceClass: opts.deviceClass || d.deviceClass || defs.deviceClass || 'epump',
+          parity: opts.parity || d.parity || defs.parity || 'none',
+          stopBits: opts.stopBits ?? d.stopBits ?? defs.stopBits ?? 1,
+          timeoutMs: d.timeoutMs ?? defs.timeoutMs ?? 2000,
+          pollIntervalMs: opts.pollIntervalMs ?? d.pollIntervalMs ?? defs.pollIntervalMs ?? 60000,
+          frameDelayMs: opts.frameDelayMs ?? d.frameDelayMs ?? defs.frameDelayMs ?? 30,
+          busGapMs: opts.busGapMs ?? d.busGapMs ?? defs.busGapMs ?? 120,
+        };
+      }
+      if (spec.transport === 'hayward_rs485') {
+        const defs = spec.defaults || {};
+        return {
+          id,
+          type: 'hayward_rs485',
+          enabled: d.enabled !== false,
+          serialPort: opts.serialPort || d.serialPort || defs.serialPort || 'COM3',
+          baud: opts.baud ?? d.baud ?? defs.baud ?? 19200,
+          deviceAddr: opts.deviceAddr ?? opts.hua ?? opts.slaveId ?? d.deviceAddr ?? d.hua ?? defs.deviceAddr ?? 0,
+          deviceClass: opts.deviceClass || d.deviceClass || defs.deviceClass || 'vs_pump',
+          parity: opts.parity || d.parity || defs.parity || 'none',
+          stopBits: opts.stopBits ?? d.stopBits ?? defs.stopBits ?? 2,
+          timeoutMs: d.timeoutMs ?? defs.timeoutMs ?? 2000,
+          pollIntervalMs: opts.pollIntervalMs ?? d.pollIntervalMs ?? defs.pollIntervalMs ?? 5000,
+          frameDelayMs: opts.frameDelayMs ?? d.frameDelayMs ?? defs.frameDelayMs ?? 30,
+          keepaliveMs: opts.keepaliveMs ?? d.keepaliveMs ?? defs.keepaliveMs ?? 1000,
+          maxRpm: opts.maxRpm ?? d.maxRpm ?? defs.maxRpm ?? 3450,
+          useSimpleFrames: opts.useSimpleFrames ?? d.useSimpleFrames ?? defs.useSimpleFrames !== false,
+        };
+      }
+      if (spec.transport === 'opta_remote' || spec.transport === 'mqtt_parc'
+          || spec.transport === 'mqtt_parc_telemetry') {
+        const defs = spec.defaults || {};
         return {
           id,
           type: 'mqtt_parc',
           enabled: d.enabled !== false,
           deviceId: opts.deviceId || d.deviceId || defs.deviceId || id,
-          platform: d.platform || defs.platform,
-          remoteExecution: telemetryOnly
-            ? false
-            : (opts.remoteExecution ?? d.remoteExecution ?? defs.remoteExecution !== false),
-          telemetryOnly: telemetryOnly || undefined,
+          remoteExecution: opts.remoteExecution ?? d.remoteExecution ?? defs.remoteExecution !== false,
           scanMs: opts.scanMs ?? d.scanMs ?? defs.scanMs ?? 100,
           reportIntervalMs: opts.reportIntervalMs
             ?? d.reportIntervalMs
@@ -142,9 +220,13 @@ function buildPresetFromJson(spec) {
       }
       if (spec.transport === 'mqtt') {
         const defs = spec.defaults || {};
-        const serialRaw = opts.serialNum || d.serialNum || defs.serialNum || '';
-        const serialNum = serialRaw ? normalizeEdgepointSerial(serialRaw) : '';
+        const tagsSpec = spec.tags || {};
+        const serialNum = opts.serialNum || d.serialNum || defs.serialNum || '';
+        const mqttDeviceId = opts.deviceId || d.deviceId || defs.deviceId
+          || NEXCOMM_MQTT_BLOCKS.map(({ key }) => tagsSpec[key]?.deviceId).find(Boolean)
+          || '';
         const eventsTopic = serialNum ? edgepointEventsTopic(serialNum) : null;
+        const nexcommTopic = resolveNexcommMqttTopic(tagsSpec, opts, defs);
         const subscriptions = opts.subscriptions || d.subscriptions || defs.subscriptions;
         return {
           id,
@@ -156,8 +238,9 @@ function buildPresetFromJson(spec) {
           password: opts.password || d.password || defs.password,
           subscribeQos: opts.subscribeQos ?? d.subscribeQos ?? defs.subscribeQos ?? 0,
           publishQos: opts.publishQos ?? d.publishQos ?? defs.publishQos ?? 0,
-          subscriptions: subscriptions || (eventsTopic ? [eventsTopic] : undefined),
+          subscriptions: subscriptions || (eventsTopic ? [eventsTopic] : nexcommTopic ? [nexcommTopic] : undefined),
           serialNum: serialNum || undefined,
+          deviceId: mqttDeviceId || undefined,
           timeoutMs: d.timeoutMs ?? 10000,
         };
       }
@@ -187,17 +270,22 @@ function buildPresetFromJson(spec) {
           timeoutMs: d.timeoutMs ?? 1000,
         };
       }
-      return {
-        id,
-        type: 'modbus_rtu',
-        enabled: d.enabled !== false,
-        serialPort: opts.serialPort || d.serialPort || 'COM3',
-        baud: opts.baud ?? d.baud ?? 9600,
-        slaveId: opts.slaveId ?? d.slaveId ?? 1,
-        parity: opts.parity || d.parity || 'none',
-        stopBits: opts.stopBits ?? d.stopBits ?? 1,
-        timeoutMs: d.timeoutMs ?? 1000,
-      };
+      {
+        const defs = spec.defaults || {};
+        return {
+          id,
+          type: 'modbus_rtu',
+          enabled: d.enabled !== false,
+          serialPort: opts.serialPort || d.serialPort || defs.serialPort || 'COM3',
+          baud: opts.baud ?? d.baud ?? defs.baud ?? 9600,
+          slaveId: opts.slaveId ?? d.slaveId ?? defs.slaveId ?? 1,
+          parity: opts.parity || d.parity || defs.parity || 'none',
+          stopBits: opts.stopBits ?? d.stopBits ?? defs.stopBits ?? 1,
+          timeoutMs: d.timeoutMs ?? defs.timeoutMs ?? 1000,
+          pollIntervalMs: opts.pollIntervalMs ?? d.pollIntervalMs ?? defs.pollIntervalMs ?? 0,
+          frameDelayMs: opts.frameDelayMs ?? d.frameDelayMs ?? defs.frameDelayMs ?? 0,
+        };
+      }
     },
     tags: (opts) => buildTagsFromSpec(opts.driverId || driverIdDefault, spec.tags || {}, opts),
   };
@@ -205,6 +293,9 @@ function buildPresetFromJson(spec) {
 
 function buildTagsFromSpec(driverId, tagsSpec, applyOpts = {}) {
   const out = [];
+  if (tagsSpec.fixture) {
+    out.push(...fixtureTags(driverId, tagsSpec.fixture));
+  }
   for (const block of tagsSpec.discrete || []) {
     out.push(...diTags(driverId, block.count ?? 8, block.prefix || 'DI', block.start ?? 0));
   }
@@ -225,6 +316,9 @@ function buildTagsFromSpec(driverId, tagsSpec, applyOpts = {}) {
   }
   out.push(...explicitModbusTags(driverId, tagsSpec.explicit));
   out.push(...explicitVgreenTags(driverId, tagsSpec.vgreen));
+  out.push(...explicitPentairTags(driverId, tagsSpec.pentair));
+  out.push(...explicitJandyTags(driverId, tagsSpec.jandy));
+  out.push(...explicitHaywardTags(driverId, tagsSpec.hayward));
   if (tagsSpec.concube) {
     const perGroup = tagsSpec.concube.paramsPerGroup ?? 4;
     const groups = Math.max(1, Math.min(16, Number(applyOpts.paramGroups) || tagsSpec.concube.defaultGroups || 1));
@@ -244,59 +338,17 @@ function buildTagsFromSpec(driverId, tagsSpec, applyOpts = {}) {
     const serialNum = applyOpts.serialNum || tagsSpec.edgepoint.serialNum;
     out.push(...edgepointGatewayTags(driverId, serialNum, tagsSpec.edgepoint));
   }
-  if (tagsSpec.edgepointLift) {
-    const serialNum = applyOpts.serialNum || tagsSpec.edgepointLift.serialNum;
-    const profile = applyOpts.liftProfile || tagsSpec.edgepointLift.profile || 'epi_master';
-    out.push(...edgepointLiftStationTags(driverId, serialNum, {
-      ...tagsSpec.edgepointLift,
-      profile,
-    }));
+  if (tagsSpec.halo) {
+    const deviceId = applyOpts.deviceId || tagsSpec.halo.deviceId;
+    out.push(...haloMqttTags(driverId, deviceId, tagsSpec.halo));
   }
-  if (tagsSpec.mqttJson) {
-    const cfg = typeof tagsSpec.mqttJson === 'object' ? tagsSpec.mqttJson : {};
-    const serialRaw = applyOpts.serialNum || cfg.serialNum || '';
-    const serialNum = serialRaw ? normalizeEdgepointSerial(serialRaw) : '';
-    const topicTpl = cfg.topicTemplate || '/devices/{serial}/messages/events/';
-    const topic = cfg.topic
-      || (serialNum ? topicTpl.replace(/\{serial\}/gi, serialNum) : topicTpl.replace(/\{serial\}/gi, 'REPLACE_SERIAL'));
-    out.push(...mqttJsonInboundTags(driverId, topic, cfg));
+  if (tagsSpec.halow) {
+    const deviceId = applyOpts.deviceId || tagsSpec.halow.deviceId;
+    out.push(...halowMqttTags(driverId, deviceId, tagsSpec.halow));
   }
-  if (tagsSpec.logicFixture) {
-    out.push(...liftStationLogicTagsFromFixture(tagsSpec.logicFixture));
-  }
-  if (tagsSpec.optaParcDragino) {
-    const cfg = typeof tagsSpec.optaParcDragino === 'object' ? tagsSpec.optaParcDragino : {};
-    out.push(...optaParcModbusDraginoTags(driverId, cfg));
-  }
-  if (tagsSpec.optaParcEzmeter) {
-    const cfg = typeof tagsSpec.optaParcEzmeter === 'object' ? tagsSpec.optaParcEzmeter : {};
-    out.push(...optaParcEzmeterTags(driverId, cfg));
-  }
-  if (tagsSpec.jxctSoil7in1) {
-    const cfg = typeof tagsSpec.jxctSoil7in1 === 'object' ? tagsSpec.jxctSoil7in1 : {};
-    out.push(...jxctSoil7in1Tags(driverId, cfg));
-  }
-  if (Array.isArray(tagsSpec.pentair)) {
-    for (const t of tagsSpec.pentair) {
-      out.push({
-        id: t.id,
-        type: t.type || 'INT',
-        role: t.role || 'input',
-        value: t.value ?? (t.type === 'BOOL' ? false : 0),
-        wordWidth: t.type === 'INT' ? 16 : undefined,
-        driverId,
-        driverAddress: {
-          pentair: t.point,
-          deviceClass: t.deviceClass,
-          ...(t.deviceAddr != null ? { deviceAddr: t.deviceAddr } : {}),
-        },
-        comment: t.comment,
-      });
-    }
-  }
-  if (tagsSpec.dfrobotPoolChemistry) {
-    const cfg = typeof tagsSpec.dfrobotPoolChemistry === 'object' ? tagsSpec.dfrobotPoolChemistry : {};
-    out.push(...dfrobotPoolChemistryDraginoTags(driverId, cfg));
+  if (tagsSpec.bme688) {
+    const deviceId = applyOpts.deviceId || tagsSpec.bme688.deviceId;
+    out.push(...bme688MqttTags(driverId, deviceId, tagsSpec.bme688));
   }
   return out;
 }

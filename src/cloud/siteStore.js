@@ -80,7 +80,7 @@ class SiteStore {
   /**
    * Create a site and return one-time pairing code (plaintext only once).
    */
-  createSite({ siteId, name, tenantId } = {}) {
+  createSite({ siteId, name, tenantId, address, county, lat, lng, cloudProject, hmiScreenId } = {}) {
     const id = String(siteId || `site_${Date.now()}`).trim()
       .replace(/[^a-zA-Z0-9._-]/g, '_')
       .slice(0, 64);
@@ -94,6 +94,12 @@ class SiteStore {
       siteId: id,
       name: String(name || id).trim() || id,
       tenantId: String(tenantId || process.env.MOOREVIEW_TENANT_ID || 'demo').trim() || 'demo',
+      address: String(address || '').trim(),
+      county: String(county || '').trim().toLowerCase(),
+      lat: Number.isFinite(Number(lat)) ? Number(lat) : null,
+      lng: Number.isFinite(Number(lng)) ? Number(lng) : null,
+      cloudProject: String(cloudProject || 'duplex-lift-station').trim(),
+      hmiScreenId: String(hmiScreenId || 'screen_1').trim(),
       pairingCodeHash: hashToken(pairingCode),
       agentTokenHash: hashToken(agentToken),
       agentOnline: false,
@@ -178,13 +184,19 @@ class SiteStore {
     return { site: this._publicSite(rec), pairingCode, agentToken };
   }
 
-  updateSite(siteId, { name } = {}) {
+  updateSite(siteId, { name, address, county, lat, lng, cloudProject, hmiScreenId } = {}) {
     const rec = this.getSiteRecord(siteId);
     if (!rec) return null;
     if (name != null) {
       const next = String(name).trim();
       if (next) rec.name = next;
     }
+    if (address != null) rec.address = String(address).trim();
+    if (county != null) rec.county = String(county).trim().toLowerCase();
+    if (lat != null) rec.lat = Number.isFinite(Number(lat)) ? Number(lat) : null;
+    if (lng != null) rec.lng = Number.isFinite(Number(lng)) ? Number(lng) : null;
+    if (cloudProject != null) rec.cloudProject = String(cloudProject).trim();
+    if (hmiScreenId != null) rec.hmiScreenId = String(hmiScreenId).trim();
     saveStore(this._store);
     return this._publicSite(rec);
   }
@@ -263,6 +275,12 @@ class SiteStore {
       siteId: rec.siteId,
       name: rec.name,
       tenantId: rec.tenantId || null,
+      address: rec.address || '',
+      county: rec.county || '',
+      lat: rec.lat != null ? rec.lat : null,
+      lng: rec.lng != null ? rec.lng : null,
+      cloudProject: rec.cloudProject || '',
+      hmiScreenId: rec.hmiScreenId || '',
       agentOnline: !!(rec.agentOnline && fresh),
       lastHeartbeatAt: rec.lastHeartbeatAt || null,
       pairedAt: rec.pairedAt || null,

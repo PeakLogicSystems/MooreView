@@ -258,8 +258,7 @@ Serial always-on: `[MV*]` boot, subscribe, cmd lines @ **115200**.
 | **PC `pentair_rs485`** | PC Pentair master | UltraTemp/MasterTemp heat pump @ 9600 8N1; use `pollIntervalMs` (e.g. 300000) |
 | **PC `vgreen_epc`** | PC Regal GEN3 master | SPECK BADU pump @ 19200; default `pollIntervalMs` 120000 |
 | **Opta `mqtt_parc`** | ST + I/O over MQTT | Primary integration — no RS-485 in default firmware |
-| **Opta `mv_fieldbus` + `MV_EZMETER=1`** | Edge master → MQTT tags | Polls EZ Meter DDS-RGB on RS485; publishes `DDS_*` + estimated `MECH_PQ_THD_*`. Template `arduino_opta_parc_ezmeter`. |
-| **Opta `mv_fieldbus` (stub)** | Edge master → MQTT tags | `mv_fieldbus.cpp` — compile with `-DMV_FIELDBUS=1` without `MV_EZMETER` for future Pentair/Modbus profiles |
+| **Opta `mv_fieldbus` (stub)** | Edge master → MQTT tags | `mv_fieldbus.cpp` — compile with `-DMV_FIELDBUS=1` for future Pentair/Modbus profiles. EZ Meter is PC Modbus RTU, not Opta Parc. |
 
 **Single transceiver rule:** one RS-485 port cannot be Modbus master and slave at the same time. Split buses (different COM ports / adapters) or use Opta edge polling + MQTT.
 

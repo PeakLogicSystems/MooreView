@@ -38,25 +38,9 @@
     #detail-panel dl { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; font-size: 12px; }
     #detail-panel dt { color: #94a3b8; }
     #detail-panel dd { text-align: right; font-family: Consolas, monospace; }
-    #detail-panel .actions { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
-    #detail-panel button {
-      background: #1e293b; color: #f1f5f9; border: 1px solid #334155;
-      border-radius: 6px; padding: 6px 10px; font-size: 12px; cursor: pointer;
-    }
-    #detail-panel button:hover { border-color: #64748b; }
     #fleet-list { bottom: 14px; right: 14px; width: 300px; max-height: 40vh; overflow: auto; }
     #fleet-list ul { list-style: none; margin-top: 8px; }
-    #fleet-list li {
-      font-size: 12px; padding: 4px 0; border-bottom: 1px solid rgba(148,163,184,0.12);
-      display: flex; justify-content: space-between; gap: 8px;
-    }
-    #fleet-list li { cursor: pointer; }
-    #fleet-list li:hover { color: #f8fafc; }
-    #fleet-list li.selected {
-      background: rgba(56, 189, 248, 0.12); border-radius: 4px;
-      padding-left: 4px; margin-left: -4px;
-    }
-    #canvas-wrap.hover-space { cursor: pointer; }
+    #fleet-list li { font-size: 12px; padding: 4px 0; border-bottom: 1px solid rgba(148,163,184,0.12); display: flex; justify-content: space-between; gap: 8px; }
     #fleet-list .alm { color: #f87171; font-weight: 600; }
     #fleet-list .ok { color: #86efac; }
     #fleet-list .off { color: #64748b; }
@@ -69,7 +53,7 @@
 
   <div id="title-panel" class="panel">
     <h1>Putnam County Utilities</h1>
-    <p>MLE WWTP and six lift stations — click the <strong>large green markers</strong> or fleet list. Double-click opens the faceplate screen.</p>
+    <p>MLE WWTP (IOT-LINK + cloud) and six cellular lift stations. Click a station for live Parc telemetry.</p>
   </div>
 
   <div id="detail-panel" class="panel">
@@ -77,10 +61,6 @@
     <div id="detail-status" class="muted">Select a lift station.</div>
     <dl id="detail-tags"></dl>
     <p class="hint" id="detail-hint"></p>
-    <div class="actions">
-      <button type="button" id="btn-open-hmi">Open lift faceplate</button>
-      <button type="button" id="btn-close-detail">Close</button>
-    </div>
   </div>
 
   <div id="legend" class="panel">
@@ -91,7 +71,7 @@
   </div>
 
   <div id="fleet-list" class="panel">
-    <strong>Fleet status (6 lifts)</strong>
+    <strong>Fleet status</strong>
     <ul id="fleet-items"></ul>
   </div>
 
@@ -107,8 +87,8 @@
     import * as THREE from 'three';
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
     import { buildLiftStation, applyLiftStationLevel, LIFT_STATION_TYPES } from './lift-station-3d.js';
-    import { mountNorthIndicator } from './mv-north-indicator.js';
 
+    // Stations match data/projects/putnam-county putnamFleet (Nexus / Nexcomm EPI sites).
     const FLEET = {
       tenant: 'putnam-county-utilities',
       plant: {
@@ -117,40 +97,30 @@
         lat: 29.6488,
         lng: -81.6372,
         gatewayId: 'mv_pcu_mle_plant_01',
+        deviceId: 'mv_pcu_mle_plant_01',
+        alarmTag: 'PLANT_ALM',
         color: 0x38bdf8,
-        hmiScreenNumber: 1,
       },
       lifts: [
-        { name: 'Master Lift Station — 125 Yelvington Rd', slug: 'yelvington-triplex', type: 'triplex', lat: 29.6441, lng: -81.5888, driverId: 'ls_yelvington', alarmTag: 'YELV_TPX_ALM', levelTag: 'YELV_TANK_LVL', hmiScreenNumber: 7 },
-        { name: 'Currie Lift Station', slug: 'currie-duplex', type: 'dual_duplex', lat: 29.655, lng: -81.585, driverId: 'ls_currie', alarmTag: 'CURR_ALT_FAULT', levelTag: 'CURR_TANK_LVL', hmiScreenNumber: 8 },
-        { name: 'Paradise Point Lift Station', slug: 'paradise-point-duplex', type: 'dual_duplex', lat: 29.592, lng: -81.598, driverId: 'ls_paradise', alarmTag: 'PARA_ALT_FAULT', levelTag: 'PARA_TANK_LVL', hmiScreenNumber: 9 },
-        { name: 'Hiawatha Lift Station', slug: 'hiawatha-duplex', type: 'dual_duplex', lat: 29.652, lng: -81.578, driverId: 'ls_hiawatha', alarmTag: 'HIAW_ALT_FAULT', levelTag: 'HIAW_TANK_LVL', hmiScreenNumber: 10 },
-        { name: 'Putnam County Blvd Lift Station', slug: 'pc-blvd-duplex', type: 'dual_duplex', lat: 29.661, lng: -81.612, driverId: 'ls_pcblvd', alarmTag: 'PCBL_ALT_FAULT', levelTag: 'PCBL_TANK_LVL', hmiScreenNumber: 11 },
-        { name: 'Port Buena Vista Lift Station', slug: 'port-buena-vista-duplex', type: 'dual_duplex', lat: 29.568, lng: -81.548, driverId: 'ls_pbv', alarmTag: 'PBV_ALT_FAULT', levelTag: 'PBV_TANK_LVL', hmiScreenNumber: 12 },
+        { name: '125 Yelvington Rd (Master)', slug: 'yelvington-triplex', type: 'triplex', lat: 29.6441, lng: -81.5888, deviceId: '40a36bce47f3', alarmTag: 'TPX_ALM', levelTag: 'TANK_LVL' },
+        { name: 'Currie Lift Station', slug: 'currie-duplex', type: 'duplex', lat: 29.655, lng: -81.585, deviceId: '40a36bcd7bb4', alarmTag: 'ALT_FAULT', levelTag: 'TANK_LVL' },
+        { name: 'Paradise Point Lift Station', slug: 'paradise-point-duplex', type: 'duplex', lat: 29.592, lng: -81.598, deviceId: '40a36bc74cee', alarmTag: 'ALT_FAULT', levelTag: 'TANK_LVL' },
+        { name: 'Hiawatha Lift Station', slug: 'hiawatha-duplex', type: 'duplex', lat: 29.652, lng: -81.578, deviceId: '40a36bc74b17', alarmTag: 'ALT_FAULT', levelTag: 'TANK_LVL' },
+        { name: 'Putnam County Blvd Lift Station', slug: 'pc-blvd-duplex', type: 'duplex', lat: 29.661, lng: -81.612, deviceId: '40a36bce4ce2', alarmTag: 'ALT_FAULT', levelTag: 'TANK_LVL' },
+        { name: 'Port Buena Vista Lift Station', slug: 'port-buena-vista-duplex', type: 'duplex', lat: 29.568, lng: -81.548, deviceId: '40a36bc74e62', alarmTag: 'ALT_FAULT', levelTag: 'TANK_LVL' },
       ],
     };
 
-    /** Visual + click-target sizing for fleet map (embedded HMI iframe). */
-    const LIFT_MODEL_SCALE = 1.9;
-    const PLANT_RADIUS = 9;
-    const PLANT_HEIGHT = 4.5;
-    const LIFT_HIT_RADIUS = 16;
-    const LIFT_PIN_RADIUS = 3.2;
-    const LIFT_PIN_HEIGHT = 12;
-    const LIFT_RING_INNER = 9;
-    const LIFT_RING_OUTER = 11.5;
-
     const wrap = document.getElementById('canvas-wrap');
-    const viewW = () => wrap.clientWidth || window.innerWidth;
-    const viewH = () => wrap.clientHeight || window.innerHeight;
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setSize(viewW(), viewH());
+    renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor(0x0f172a);
     wrap.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(45, viewW() / viewH(), 0.1, 2000);
+    scene.fog = new THREE.Fog(0x0f172a, 120, 520);
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 500);
     camera.position.set(0, 55, 75);
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -161,6 +131,18 @@
     sun.position.set(40, 80, 30);
     scene.add(sun);
 
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(200, 200),
+      new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.95 }),
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -0.05;
+    scene.add(ground);
+
+    const grid = new THREE.GridHelper(180, 36, 0x334155, 0x1e293b);
+    grid.position.y = 0.01;
+    scene.add(grid);
+
     function latLngToScene(lat, lng) {
       const lat0 = FLEET.plant.lat;
       const lng0 = FLEET.plant.lng;
@@ -169,98 +151,28 @@
       return { x, z };
     }
 
-    function fleetBounds() {
-      const xs = [];
-      const zs = [];
-      const plantPos = latLngToScene(FLEET.plant.lat, FLEET.plant.lng);
-      xs.push(plantPos.x);
-      zs.push(plantPos.z);
-      for (const st of FLEET.lifts) {
-        const p = latLngToScene(st.lat, st.lng);
-        xs.push(p.x);
-        zs.push(p.z);
-      }
-      const pad = 40;
-      return {
-        minX: Math.min(...xs) - pad,
-        maxX: Math.max(...xs) + pad,
-        minZ: Math.min(...zs) - pad,
-        maxZ: Math.max(...zs) + pad,
-        cx: (Math.min(...xs) + Math.max(...xs)) / 2,
-        cz: (Math.min(...zs) + Math.max(...zs)) / 2,
-        span: Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs), 120),
-      };
-    }
-
-    const bounds = fleetBounds();
-    const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(bounds.span * 1.35, bounds.span * 1.35),
-      new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.95 }),
-    );
-    ground.rotation.x = -Math.PI / 2;
-    ground.position.set(bounds.cx, -0.05, bounds.cz);
-    scene.add(ground);
-
-    const grid = new THREE.GridHelper(bounds.span * 1.2, Math.round(bounds.span / 5), 0x334155, 0x1e293b);
-    grid.position.set(bounds.cx, 0.01, bounds.cz);
-    scene.add(grid);
-
     const stationMeshes = [];
     const rayPickables = [];
-    const tagValues = new Map();
 
-    function tagValue(tagId) {
-      if (!tagId) return null;
-      return tagValues.has(tagId) ? tagValues.get(tagId) : null;
-    }
-
-    function isAlarm(alarmTag) {
-      const v = tagValue(alarmTag);
-      return v === true || v === 1 || v === 'true';
-    }
-
-    async function refreshLive() {
-      try {
-        const res = await fetch(`${window.MV_API_BASE || '/api'}/live`, { credentials: 'same-origin' });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        tagValues.clear();
-        for (const t of (data.live || data.tags || [])) {
-          const id = t.tagId || t.id;
-          if (id) tagValues.set(id, t.value ?? t.val);
-        }
-        mvStatus.textContent = `MV live: ${tagValues.size} tags`;
-        mvStatus.className = 'panel ok';
-      } catch (e) {
-        mvStatus.textContent = `MV live: offline (${e.message}) — map markers still work`;
-        mvStatus.className = 'panel err';
-      }
-      updateFleetUi();
-      updateStationColors();
+    function tagValue(device, tagId) {
+      const row = (device?.tags || []).find((t) => t.id === tagId);
+      if (!row) return null;
+      return row.value;
     }
 
     function addPlant() {
       const { x, z } = latLngToScene(FLEET.plant.lat, FLEET.plant.lng);
-      const geo = new THREE.CylinderGeometry(PLANT_RADIUS, PLANT_RADIUS + 1, PLANT_HEIGHT, 28);
+      const geo = new THREE.CylinderGeometry(6, 7, 3, 24);
       const mat = new THREE.MeshStandardMaterial({ color: FLEET.plant.color, roughness: 0.6 });
       const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.set(x, PLANT_HEIGHT / 2, z);
+      mesh.position.set(x, 1.5, z);
       mesh.userData = { kind: 'plant', meta: FLEET.plant };
       scene.add(mesh);
       stationMeshes.push(mesh);
       rayPickables.push(mesh);
 
-      const plantHit = new THREE.Mesh(
-        new THREE.CylinderGeometry(PLANT_RADIUS + 4, PLANT_RADIUS + 4, 6, 24),
-        new THREE.MeshBasicMaterial({ color: FLEET.plant.color, transparent: true, opacity: 0.1, depthWrite: false }),
-      );
-      plantHit.position.set(x, 3, z);
-      plantHit.userData = { kind: 'plant', meta: FLEET.plant, isHitZone: true };
-      scene.add(plantHit);
-      rayPickables.push(plantHit);
-
       const ring = new THREE.Mesh(
-        new THREE.RingGeometry(PLANT_RADIUS + 2, PLANT_RADIUS + 3.2, 32),
+        new THREE.RingGeometry(7.5, 8.2, 32),
         new THREE.MeshBasicMaterial({ color: FLEET.plant.color, side: THREE.DoubleSide, transparent: true, opacity: 0.35 }),
       );
       ring.rotation.x = -Math.PI / 2;
@@ -268,62 +180,40 @@
       scene.add(ring);
     }
 
-    const liftUiBySlug = new Map();
-
     function addLift(st) {
       const mapType = st.type === 'dual_duplex' ? 'duplex' : st.type;
-      const { group, meta } = buildLiftStation(THREE, mapType, { name: st.name, scale: LIFT_MODEL_SCALE });
+      const { group, pickables, meta } = buildLiftStation(THREE, mapType, { name: st.name, scale: 0.85 });
       const { x, z } = latLngToScene(st.lat, st.lng);
       group.position.set(x, 0, z);
-      const liftMeta = { ...st, ...meta };
-      group.userData = { kind: 'lift', meta: liftMeta };
+      group.userData = { kind: 'lift', meta: { ...st, ...meta } };
       scene.add(group);
+      for (const p of pickables) {
+        p.userData = { ...group.userData, parentGroup: group };
+        rayPickables.push(p);
+      }
       stationMeshes.push(group);
-
-      const ui = { slug: st.slug, hitZone: null, pin: null, ring: null };
-
-      const hitZone = new THREE.Mesh(
-        new THREE.CylinderGeometry(LIFT_HIT_RADIUS, LIFT_HIT_RADIUS, 6, 28),
-        new THREE.MeshBasicMaterial({ color: 0x34d399, transparent: true, opacity: 0.14, depthWrite: false }),
-      );
-      hitZone.position.set(x, 3, z);
-      hitZone.userData = { kind: 'lift', meta: liftMeta, isHitZone: true, isMapPin: true };
-      scene.add(hitZone);
-      rayPickables.push(hitZone);
-      ui.hitZone = hitZone;
-
-      const pin = new THREE.Mesh(
-        new THREE.CylinderGeometry(LIFT_PIN_RADIUS, LIFT_PIN_RADIUS + 0.8, LIFT_PIN_HEIGHT, 20),
-        new THREE.MeshStandardMaterial({
-          color: 0x34d399,
-          emissive: 0x065f46,
-          emissiveIntensity: 0.45,
-          roughness: 0.5,
-        }),
-      );
-      pin.position.set(x, LIFT_PIN_HEIGHT / 2, z);
-      pin.userData = { kind: 'lift', meta: liftMeta, isMapPin: true };
-      scene.add(pin);
-      rayPickables.push(pin);
-      ui.pin = pin;
-
-      const ring = new THREE.Mesh(
-        new THREE.RingGeometry(LIFT_RING_INNER, LIFT_RING_OUTER, 40),
-        new THREE.MeshBasicMaterial({ color: 0x34d399, side: THREE.DoubleSide, transparent: true, opacity: 0.5 }),
-      );
-      ring.rotation.x = -Math.PI / 2;
-      ring.position.set(x, 0.04, z);
-      ring.userData = { kind: 'lift', meta: liftMeta, isMapPin: true };
-      scene.add(ring);
-      rayPickables.push(ring);
-      ui.ring = ring;
-
-      liftUiBySlug.set(st.slug, ui);
       return group;
     }
 
     addPlant();
     const liftGroups = FLEET.lifts.map(addLift);
+
+    function fitCameraToFleet() {
+      const box = new THREE.Box3();
+      for (const obj of stationMeshes) box.expandByObject(obj);
+      if (box.isEmpty()) return;
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      const span = Math.max(size.x, size.z, 40);
+      controls.target.copy(center);
+      camera.position.set(center.x + span * 0.55, span * 0.85, center.z + span * 0.75);
+      camera.far = Math.max(800, span * 5);
+      camera.updateProjectionMatrix();
+      if (scene.fog) scene.fog.far = Math.max(520, span * 2.5);
+      controls.update();
+    }
+
+    fitCameraToFleet();
 
     const mvStatus = document.getElementById('mv-status');
     const fleetItems = document.getElementById('fleet-items');
@@ -332,157 +222,51 @@
     const detailStatus = document.getElementById('detail-status');
     const detailTags = document.getElementById('detail-tags');
     const detailHint = document.getElementById('detail-hint');
-    const btnOpenHmi = document.getElementById('btn-open-hmi');
-    let selectedMeta = null;
-    let hmiScreenCatalog = new Map();
 
-    function hmiScreenIdForNumber(num) {
-      const n = Number(num);
-      if (!Number.isFinite(n) || n < 1) return '';
-      for (const s of hmiScreenCatalog.values()) {
-        if (s.number === n) return s.id;
-      }
-      return `screen_${n}`;
-    }
-
-    function hmiScreenIdForMeta(meta) {
-      if (!meta) return '';
-      if (meta.hmiScreenNumber) return hmiScreenIdForNumber(meta.hmiScreenNumber);
-      if (meta.slug) {
-        const legacy = `screen_ls_${meta.slug}`;
-        if (hmiScreenCatalog.has(legacy)) return legacy;
-      }
-      return '';
-    }
-
-    function applyHmiScreenCatalog(screens) {
-      hmiScreenCatalog = new Map();
-      for (const s of screens || []) {
-        const id = String(s?.id || '').trim();
-        if (!id) continue;
-        hmiScreenCatalog.set(id, {
-          id,
-          number: Number(s.number) || 0,
-          name: String(s.name || '').trim(),
-        });
-      }
-      if (selectedMeta) syncDetailHmiButton(selectedMeta);
-    }
-
-    function hmiScreenLabel(screenId) {
-      const s = hmiScreenCatalog.get(String(screenId || '').trim());
-      if (!s) return `Screen ${screenId}`;
-      if (s.number === 1) return s.name ? `Screen 1 — ${s.name}` : 'Screen 1 — Home';
-      return s.name ? `Screen ${s.number} — ${s.name}` : `Screen ${s.number}`;
-    }
-
-    function hmiScreenConfigured(screenId) {
-      return hmiScreenCatalog.has(String(screenId || '').trim());
-    }
-
-    function syncDetailHmiButton(meta) {
-      const sid = hmiScreenIdForMeta(meta);
-      btnOpenHmi.dataset.screen = sid || '';
-      btnOpenHmi.disabled = !sid;
-      if (sid && hmiScreenConfigured(sid)) {
-        btnOpenHmi.textContent = `Open ${hmiScreenLabel(sid)}`;
-      } else if (sid) {
-        btnOpenHmi.textContent = `Open screen ${meta.hmiScreenNumber || sid}`;
-      } else {
-        btnOpenHmi.textContent = 'Open lift faceplate';
-      }
-    }
-
-    function notifyParentHmiOpen(meta) {
-      const sid = hmiScreenIdForMeta(meta);
-      if (!sid || window.parent === window) return false;
+    let parcDevices = [];
+    let mvApiRoot = String(window.MV_API_BASE || '').trim();
+    if (!mvApiRoot) {
       try {
-        window.parent.postMessage({
-          type: 'mv-hmi-open-area',
-          screenId: sid,
-          label: meta.name || '',
-        }, window.location.origin);
-        return true;
-      } catch {
-        return false;
-      }
-    }
-
-    function openMvHmiForSelection() {
-      if (!selectedMeta) return;
-      if (notifyParentHmiOpen(selectedMeta)) return;
-      const sid = hmiScreenIdForMeta(selectedMeta) || 'screen_1';
-      window.open(`${location.origin}/?hmi=${encodeURIComponent(sid)}`, '_blank');
-    }
-
-    function fitCameraToFleet() {
-      const b = fleetBounds();
-      camera.position.set(b.cx - b.span * 0.28, b.span * 0.72, b.cz + b.span * 0.82);
-      controls.target.set(b.cx, 0, b.cz);
-      controls.update();
-    }
-
-    function pointerFromEvent(ev) {
-      const rect = renderer.domElement.getBoundingClientRect();
-      pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
-      pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
-    }
-
-    function pickMetaFromEvent(ev) {
-      pointerFromEvent(ev);
-      raycaster.setFromCamera(pointer, camera);
-      const hits = raycaster.intersectObjects(rayPickables, false);
-      for (const h of hits) {
-        if (h.object?.userData?.meta) return h.object.userData.meta;
-      }
-      return pickNearestLift(ev);
-    }
-
-    /** Forgive clicks near a station when the ray hits ground/grid first. */
-    function pickNearestLift(ev) {
-      const rect = renderer.domElement.getBoundingClientRect();
-      const ndcX = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
-      const ndcY = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
-      const probe = new THREE.Vector3(ndcX, ndcY, 0.5).unproject(camera);
-      const dir = probe.sub(camera.position).normalize();
-      if (Math.abs(dir.y) < 1e-4) return null;
-      const t = -camera.position.y / dir.y;
-      if (t < 0) return null;
-      const hitX = camera.position.x + dir.x * t;
-      const hitZ = camera.position.z + dir.z * t;
-      let best = null;
-      let bestDist = LIFT_HIT_RADIUS;
-      for (const st of FLEET.lifts) {
-        const p = latLngToScene(st.lat, st.lng);
-        const d = Math.hypot(hitX - p.x, hitZ - p.z);
-        if (d < bestDist) {
-          bestDist = d;
-          best = st;
+        if (window.parent !== window && window.parent.MOOREVIEW_API_BASE) {
+          mvApiRoot = String(window.parent.MOOREVIEW_API_BASE).trim();
         }
+      } catch { /* cross-origin */ }
+    }
+    if (!mvApiRoot) mvApiRoot = '/api';
+    window.addEventListener('message', (ev) => {
+      const data = ev?.data;
+      if (!data || typeof data !== 'object') return;
+      if (data.type === 'mooreview-api-base' && typeof data.apiBase === 'string' && data.apiBase.trim()) {
+        mvApiRoot = data.apiBase.trim().replace(/\/$/, '');
       }
-      return best;
+      if (data.type === 'mv-hmi-poll-config' && typeof data.apiBase === 'string' && data.apiBase.trim()) {
+        mvApiRoot = data.apiBase.trim().replace(/\/$/, '');
+      }
+    });
+
+    async function refreshParc() {
+      try {
+        const res = await fetch(`${mvApiRoot}/parc/devices`, { credentials: 'same-origin' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        parcDevices = data.devices || [];
+        mvStatus.textContent = `MV live: ${parcDevices.length} Parc device(s)`;
+        mvStatus.className = 'panel ok';
+        updateFleetUi();
+        updateStationColors();
+      } catch (e) {
+        mvStatus.textContent = `MV live: offline (${e.message})`;
+        mvStatus.className = 'panel err';
+      }
     }
 
-    function setLiftPinColors(slug, alarm, selected) {
-      const ui = liftUiBySlug.get(slug);
-      if (!ui) return;
-      const color = alarm ? 0xef4444 : 0x34d399;
-      const emissive = alarm ? 0x7f1d1d : 0x065f46;
-      if (ui.pin?.material) {
-        ui.pin.material.color.setHex(color);
-        ui.pin.material.emissive.setHex(emissive);
-      }
-      if (ui.ring?.material) ui.ring.material.color.setHex(color);
-      if (ui.hitZone?.material) {
-        ui.hitZone.material.color.setHex(color);
-        ui.hitZone.material.opacity = selected ? 0.28 : 0.14;
-      }
+    function deviceById(id) {
+      return parcDevices.find((d) => d.deviceId === id);
     }
 
-    function refreshLiftPinHighlight() {
-      for (const st of FLEET.lifts) {
-        setLiftPinColors(st.slug, isAlarm(st.alarmTag), selectedMeta?.slug === st.slug);
-      }
+    function isAlarm(device, alarmTag) {
+      const v = tagValue(device, alarmTag);
+      return v === true || v === 1;
     }
 
     function updateStationColors() {
@@ -490,7 +274,9 @@
         const idx = FLEET.lifts.indexOf(st);
         const group = liftGroups[idx];
         if (!group) continue;
-        const alarm = isAlarm(st.alarmTag);
+        const dev = deviceById(st.deviceId);
+        const alarm = dev ? isAlarm(dev, st.alarmTag) : false;
+        const tint = alarm ? 0xef4444 : 0x34d399;
         group.traverse((obj) => {
           if (obj.isMesh && obj.material?.userData?.baseColor) {
             obj.material.color.copy(obj.material.userData.baseColor);
@@ -498,151 +284,85 @@
             else obj.material.emissive = new THREE.Color(0x000000);
           }
         });
-        const lvl = Number(tagValue(st.levelTag));
-        if (Number.isFinite(lvl)) applyLiftStationLevel(group, lvl);
-        setLiftPinColors(st.slug, alarm, selectedMeta?.slug === st.slug);
+        const lvl = dev ? Number(tagValue(dev, st.levelTag)) : NaN;
+        if (Number.isFinite(lvl)) applyLiftStationLevel(group.userData?.meta || group, lvl);
       }
+    }
+
+    function appendFleetRow(name, dev, alarmTag) {
+      const li = document.createElement('li');
+      const online = dev && !dev.stale;
+      const alarm = dev && alarmTag && isAlarm(dev, alarmTag);
+      const cls = alarm ? 'alm' : online ? 'ok' : 'off';
+      const label = alarm ? 'ALARM' : online ? 'OK' : 'offline';
+      li.innerHTML = `<span>${name}</span><span class="${cls}">${label}</span>`;
+      fleetItems.appendChild(li);
     }
 
     function updateFleetUi() {
       fleetItems.innerHTML = '';
+      appendFleetRow(FLEET.plant.name, deviceById(FLEET.plant.deviceId), FLEET.plant.alarmTag);
       for (const st of FLEET.lifts) {
-        const li = document.createElement('li');
-        const hasTags = tagValues.has(st.alarmTag) || tagValues.has(st.levelTag);
-        const alarm = isAlarm(st.alarmTag);
-        const cls = alarm ? 'alm' : hasTags ? 'ok' : 'off';
-        const label = alarm ? 'ALARM' : hasTags ? 'OK' : 'no data';
-        li.innerHTML = `<span>${st.name}</span><span class="${cls}">${label}</span>`;
-        if (selectedMeta?.slug === st.slug) li.classList.add('selected');
-        li.addEventListener('click', () => showDetail(st));
-        li.addEventListener('dblclick', () => {
-          showDetail(st);
-          openMvHmiForSelection();
-        });
-        fleetItems.appendChild(li);
+        appendFleetRow(st.name, deviceById(st.deviceId), st.alarmTag);
       }
-    }
-
-    function detailTagRows(meta) {
-      if (meta.driverId) {
-        return [
-          ['Station alarm', meta.alarmTag],
-          ['Wet well level %', meta.levelTag],
-        ];
-      }
-      return [['Plant gateway', meta.gatewayId || '—']];
     }
 
     function showDetail(meta) {
-      selectedMeta = meta;
       detailPanel.classList.add('open');
       detailTitle.textContent = meta.name;
+      const dev = meta.deviceId ? deviceById(meta.deviceId) : null;
       detailTags.innerHTML = '';
-      syncDetailHmiButton(meta);
-      updateFleetUi();
-      refreshLiftPinHighlight();
-      const hasTags = meta.alarmTag
-        ? (tagValues.has(meta.alarmTag) || tagValues.has(meta.levelTag))
-        : false;
-      if (!hasTags && meta.driverId) {
-        detailStatus.textContent = 'No live MQTT tags yet — start lift sim or connect Nexcomm bridge.';
+      if (!dev) {
+        detailStatus.textContent = 'No Parc telemetry yet — verify deviceId and cellular gateway.';
         detailStatus.className = 'muted';
-        detailHint.textContent = meta.driverId
-          ? `driverId: ${meta.driverId} — tags like ${meta.alarmTag} in putnam-county project`
-          : '';
+        detailHint.textContent = meta.deviceId ? `Expected deviceId: ${meta.deviceId}` : `Plant gateway: ${meta.gatewayId}`;
         return;
       }
-      if (meta.gatewayId) {
-        detailStatus.textContent = 'MLE wastewater plant';
-        detailStatus.className = 'ok';
-        detailHint.textContent = `Gateway: ${meta.gatewayId} · Screen ${meta.hmiScreenNumber || 1}`;
-        return;
-      }
-      const alarm = isAlarm(meta.alarmTag);
-      detailStatus.textContent = alarm ? 'ALARM active' : 'Normal';
-      detailStatus.className = alarm ? 'alarm' : 'ok';
-      for (const [label, tagId] of detailTagRows(meta)) {
+      const alarm = isAlarm(dev, meta.alarmTag);
+      detailStatus.textContent = alarm ? 'ALARM active' : dev.stale ? 'Stale telemetry' : 'Normal';
+      detailStatus.className = alarm ? 'alarm' : dev.stale ? 'muted' : 'ok';
+      const typeMeta = LIFT_STATION_TYPES[meta.type === 'dual_duplex' ? 'duplex' : meta.type] || LIFT_STATION_TYPES.duplex;
+      const rows = typeMeta.detailTags || [[meta.alarmTag, meta.alarmTag], [meta.levelTag, meta.levelTag]];
+      for (const [label, tagId] of rows) {
         const dt = document.createElement('dt');
         dt.textContent = label;
         const dd = document.createElement('dd');
-        const v = tagValue(tagId);
+        const v = tagValue(dev, tagId);
         dd.textContent = v == null ? '—' : typeof v === 'boolean' ? (v ? 'ON' : 'OFF') : String(v);
         detailTags.appendChild(dt);
         detailTags.appendChild(dd);
       }
-      const sid = hmiScreenIdForMeta(meta);
-      detailHint.textContent = sid
-        ? `${hmiScreenLabel(sid)} · double-click map or use Open lift faceplate`
-        : (meta.driverId ? `driverId: ${meta.driverId}` : '');
+      detailHint.textContent = `deviceId: ${dev.deviceId}`;
     }
-
-    renderer.domElement.addEventListener('pointermove', (ev) => {
-      const meta = pickMetaFromEvent(ev);
-      wrap.classList.toggle('hover-space', !!meta?.driverId);
-    });
-    renderer.domElement.addEventListener('pointerleave', () => {
-      wrap.classList.remove('hover-space');
-    });
-
-    renderer.domElement.addEventListener('click', (ev) => {
-      const meta = pickMetaFromEvent(ev);
-      if (meta) showDetail(meta);
-    });
-    renderer.domElement.addEventListener('dblclick', (ev) => {
-      const meta = pickMetaFromEvent(ev);
-      if (meta) {
-        showDetail(meta);
-        openMvHmiForSelection();
-      }
-    });
-
-    btnOpenHmi.addEventListener('click', () => openMvHmiForSelection());
-    document.getElementById('btn-close-detail').addEventListener('click', () => {
-      detailPanel.classList.remove('open');
-      selectedMeta = null;
-      updateFleetUi();
-      refreshLiftPinHighlight();
-    });
-
-    window.addEventListener('message', (e) => {
-      if (e.origin !== window.location.origin) return;
-      const data = e.data;
-      if (!data || typeof data !== 'object') return;
-      if (data.type === 'mv-hmi-poll-config' && Number.isFinite(Number(data.pollMs))) {
-        const ms = Math.max(3000, Number(data.pollMs));
-        clearInterval(window.__putnamFleetPoll);
-        window.__putnamFleetPoll = setInterval(refreshLive, ms);
-      } else if (data.type === 'mv-hmi-screen-catalog' && Array.isArray(data.screens)) {
-        applyHmiScreenCatalog(data.screens);
-      }
-    });
-
-    fitCameraToFleet();
-    updateFleetUi();
-    refreshLiftPinHighlight();
 
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
-    const north = mountNorthIndicator();
+    renderer.domElement.addEventListener('click', (ev) => {
+      pointer.x = (ev.clientX / window.innerWidth) * 2 - 1;
+      pointer.y = -(ev.clientY / window.innerHeight) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+      const hits = raycaster.intersectObjects(rayPickables, true);
+      if (!hits.length) return;
+      let obj = hits[0].object;
+      while (obj && !obj.userData?.meta) obj = obj.parent;
+      if (obj?.userData?.meta) showDetail(obj.userData.meta);
+    });
 
     function animate() {
       requestAnimationFrame(animate);
       controls.update();
-      north.update(camera);
       renderer.render(scene, camera);
     }
 
     window.addEventListener('resize', () => {
-      const w = viewW();
-      const h = viewH();
-      camera.aspect = w / h;
+      camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
-      renderer.setSize(w, h);
-      fitCameraToFleet();
+      renderer.setSize(window.innerWidth, window.innerHeight);
     });
 
-    refreshLive();
-    setInterval(refreshLive, 3000);
+    updateFleetUi();
+    refreshParc();
+    setInterval(refreshParc, 3000);
     animate();
   </script>
 </body>

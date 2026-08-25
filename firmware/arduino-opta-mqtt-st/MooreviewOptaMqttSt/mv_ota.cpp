@@ -233,34 +233,45 @@ void mvOtaBegin() {
 #else
   g_ota.supported = false;
 #endif
-#if defined(MV_HAS_ARDUINO_OTA)
-  g_ota.wifiOta = true;
-  ArduinoOTA.setHostname("mooreview-opta-mqtt-st");
-  if (MV_OTA_PASSWORD[0]) ArduinoOTA.setPassword(MV_OTA_PASSWORD);
-  ArduinoOTA.onStart([]() {
-    if (g_runtimeRunning) *g_runtimeRunning = false;
-    g_ota.inProgress = true;
-    g_ota.error = false;
-    setPhase("wifi", "ArduinoOTA started");
-  });
-  ArduinoOTA.onEnd([]() {
-    setPhase("done", "ArduinoOTA complete");
-    g_ota.inProgress = false;
-  });
-  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-    g_ota.bytesWritten = progress;
-    g_ota.totalBytes = total;
-    setPhase("wifi", "ArduinoOTA writing");
-  });
-  ArduinoOTA.onError([](ota_error_t err) {
-    g_ota.error = true;
-    g_ota.inProgress = false;
-    setPhase("error", "ArduinoOTA failed");
-    (void)err;
-  });
-  ArduinoOTA.begin();
-#else
   g_ota.wifiOta = false;
+}
+
+void mvOtaWifiSync(bool enable) {
+#if defined(MV_HAS_ARDUINO_OTA)
+  static bool s_wifiOtaStarted = false;
+  if (enable) {
+    if (s_wifiOtaStarted) return;
+    ArduinoOTA.setHostname("mooreview-opta-mqtt-st");
+    if (MV_OTA_PASSWORD[0]) ArduinoOTA.setPassword(MV_OTA_PASSWORD);
+    ArduinoOTA.onStart([]() {
+      if (g_runtimeRunning) *g_runtimeRunning = false;
+      g_ota.inProgress = true;
+      g_ota.error = false;
+      setPhase("wifi", "ArduinoOTA started");
+    });
+    ArduinoOTA.onEnd([]() {
+      setPhase("done", "ArduinoOTA complete");
+      g_ota.inProgress = false;
+    });
+    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+      g_ota.bytesWritten = progress;
+      g_ota.totalBytes = total;
+      setPhase("wifi", "ArduinoOTA writing");
+    });
+    ArduinoOTA.onError([](ota_error_t err) {
+      g_ota.error = true;
+      g_ota.inProgress = false;
+      setPhase("error", "ArduinoOTA failed");
+      (void)err;
+    });
+    ArduinoOTA.begin();
+    s_wifiOtaStarted = true;
+    g_ota.wifiOta = true;
+  } else {
+    g_ota.wifiOta = false;
+  }
+#else
+  (void)enable;
 #endif
 }
 

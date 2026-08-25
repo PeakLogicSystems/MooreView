@@ -1,11 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1512 2344" width="1512" height="2344">
   <rect width="1512" height="2344" fill="#f1f5f9"/>
   <text id="sched_title" x="756" y="40" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="34" font-weight="700" fill="#0f172a">Weekly filter schedules</text>
-  <text x="756" y="72" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="20" fill="#64748b">Pump count in Project → Area configuration &#183; schedules side by side &#183; 7 days &#183; 6 starts/day</text>
+  <text x="756" y="72" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="20" fill="#64748b">Pump count in Project → Hardware &#183; schedules side by side &#183; 7 days &#183; 6 starts/day</text>
   
   <rect x="20" y="96" width="1472" height="72" rx="12" fill="#ffffff" stroke="#475569" stroke-width="2"/>
   <text x="40" y="130" font-size="24" font-weight="700" fill="#334155">Filter pumps on this body</text>
-  <text x="40" y="154" font-size="17" fill="#64748b">Count set in Project → Area configuration (max 8 site-wide)</text>
+  <text x="40" y="154" font-size="17" fill="#64748b">Count set in Project → Hardware (max 8 site-wide)</text>
   <rect x="1384" y="110" width="96" height="52" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="2"/>
   <text id="sch_fp_cnt" x="1432" y="146" text-anchor="middle" font-family="Consolas,monospace" font-size="40" font-weight="700" fill="#0f172a">1</text>
   

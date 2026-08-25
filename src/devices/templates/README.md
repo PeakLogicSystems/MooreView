@@ -4,7 +4,7 @@ Add a new Modbus device template by creating a `.json` file in this folder. Moor
 
 ## Example
 
-Copy `opta_rtu_slave.json`, `opta_parc_modbus_dragino.json`, or `datexel_dat10148.json` and edit:
+Copy `opta_rtu_slave.json` or `datexel_dat10148.json` and edit:
 
 | Field | Meaning |
 |-------|---------|
@@ -19,25 +19,9 @@ Copy `opta_rtu_slave.json`, `opta_parc_modbus_dragino.json`, or `datexel_dat1014
 | `tags.input` | INT inputs — FC04 (`start`, `suffix` optional) |
 | `tags.holding` | INT memory — FC03 (`H1`… style) |
 | `tags.explicit` | Named tags with exact Modbus address (REAL float32, status words, etc.) |
-| `tags.optaParcDragino` | Full Opta Parc I/O map for Dragino gateway (`opta_parc_modbus_dragino.json`) — `I1`–`I8`, `R1`–`R4`, raw ADC, mA/scaled AI, MCSA pseudo-AI |
-
-## Waveshare ESP32-S3-Relay-1CH-U (pool satellite)
-
-| Template | Transport | Role |
-|----------|-----------|------|
-| `waveshare_esp32s3_relay_1ch_u.json` | `mqtt_parc` | Isolated 1-ch Wi-Fi relay — `R1` + aux `I1` |
-
-Flash `firmware/waveshare-esp32s3-relay-parc`. Bind pool tags with `MOOREVIEW_POOL_WAVESHARE_RELAYS` (see [WAVESHARE_ESP32S3_RELAY_POOL.md](../../../docs/WAVESHARE_ESP32S3_RELAY_POOL.md)). This is **not** the Modbus RTU 8CH module (`waveshare_rtu_io_8ch` in `devicePresets.js`).
-
-## Dragino + Opta RS485
-
-| Template | Role |
-|----------|------|
-| `dragino_rs485_nb.json` | Cloud `mqtt_parc` driver for the Dragino gateway |
-| `opta_parc_modbus_dragino.json` | Modbus map bound to Dragino via `bind-preset` — polls Opta slave ID 2 |
-| `arduino_opta_parc_ezmeter.json` | MQTT Parc + EZ Meter on Opta RS485 fieldbus (`MV_FIELDBUS=1` `MV_EZMETER=1`) |
-
-See [DRAGINO_PARC_CLOUD.md](../../../docs/DRAGINO_PARC_CLOUD.md#opta-parc-io-via-dragino). Facility PQ: [EZMETER_FACILITY_PQ.md](../../../docs/facilities/EZMETER_FACILITY_PQ.md).
+| `tags.fixture` | Load tag rows from one or more `st/fixtures/*.json` files (string or array). Every row is bound to the template's `driverId`. Use for devices whose tag set is defined by a shipped ST program fixture. |
+| `stProgram` | Path under `st/` to the Structured Text program that **lives on this device** (e.g. `logic/lift_station_duplex.st`). On **Apply device template** it is set as the active program so the runtime deploys it (locally, or to the remote Opta). |
+| `stProgramLabel` | Friendly name for the device's ST program (metadata only). |
 
 ## Blocks
 
@@ -68,20 +52,8 @@ Register map follows community spectro::lyser mapping (EnviroDIY S-CAN-Modbus): 
 | Template | Model | Tags |
 |----------|-------|------|
 | `jxct_npk_jxbs3001.json` | JXBS-3001-NPK-RS (7-in-1) | `SOIL_PH`, `SOIL_MOIST_PCT`, `SOIL_TEMP_C`, `SOIL_EC_US_CM`, `N_MG_KG`, `P_MG_KG`, `K_MG_KG` |
-| `jxct_npk_jxbs3001_dragino.json` | Same probe via **Dragino RS485-NB** (Modbus→MQTT) | Same tag names on `mqtt_parc` driver |
-| `jxct_npk_jxbs3001_dragino_x4.json` | **4 probes** on one Dragino (slaves **1–4**) | `S1_SOIL_PH` … `S4_K_MG_KG` (28 tags) |
 
-Default **9600 8N1**, slave **1**. FC03 holding: pH **0x0006**, moisture **0x0012**, temp **0x0013**, EC **0x0015**, N/P/K **0x001E–0x0020**. Config: address **0x0100**, baud **0x0101**. For multi-probe Dragino: set each probe to a unique address (1, 2, 3, 4) before binding.
-
-**Dragino cloud bind (×4):** `POST /api/parc/dragino-gateway/bind-preset` with `presetId: "jxct_npk_jxbs3001_dragino_x4"`, then `/plan` — four `AT+COMMAND*` lines (FC03 slave 1–4, start 0x0006, qty 27) and `AT+TDC=300`.
-
-## TENET UL212NT-E ultrasonic fuel level (Modbus RTU)
-
-| Template | Model | Tags |
-|----------|-------|------|
-| `tenet_ul212nt_e.json` | UL212NT-E / UL212-E (2.5 m) | `FUEL_LEVEL_MM`, `FUEL_TILT` |
-
-Default **9600 8N1**, net address **1**. Select **Protocol 17** in the UL212 Fuel app. ATO manual frames (FC03 qty 1): height **0x0100** `01 03 01 00 00 01 85 F6` (uint16 ×10 = 0.1 mm), tilt **0x0102** `01 03 01 02 00 01 24 36`. Poll each register separately. Sample ST: `st/modbus/09_ul212nt_e_level.st`. Extract: `st/fixtures/ul212nt-e-modbus-extract.txt`.
+Default **9600 8N1**, slave **1**. FC03 holding: pH **0x0006**, moisture **0x0012**, temp **0x0013**, EC **0x0015**, N/P/K **0x001E–0x0020**. Config: address **0x0100**, baud **0x0101**.
 
 ## Seeed Studio RS485 probes (Modbus RTU)
 
@@ -90,6 +62,16 @@ Default **9600 8N1**, net address **1**. Select **Protocol 17** in the UL212 Fue
 | `seeed_h2s_101990863.json` | 101990863 (S-H2S-01) | `H2S_PPM`, `H2S_TEMP_C`, `H2S_RH_PCT`, `H2S_MAX_PPM` |
 
 Default **9600 8N1**, slave **16** (0x10). Measurements are **holding registers** (FC03): H2S float32 @ **0x2000**, temperature @ **0x2004**, humidity @ **0x2006**.
+
+## APG True Echo radar (Modbus RTU)
+
+| Template | Model | Tags |
+|----------|-------|------|
+| `apg_true_echo_rtu.json` | True Echo CR-L / Plus (RS-485) | `TE_DIST_CM`, `TE_DIST_MM`, `TE_LVL_CM`, `TE_LVL_MM`, `TE_SPACE`, `TE_LEVEL`, `TE_DIST` |
+
+Default **9600 8N1**, slave **1**, `frameDelayMs` **100** (vendor minimum between transactions), `pollIntervalMs` **500**. Process values are **input registers** (FC04): uint16 distance/level at **0–3**; float32 **CDAB** space/level/distance at **36 / 38 / 40**. Bind `TE_LEVEL` to `TANK_LVL` / ALT analog for wet-well control. Manual: [apgsensors.com True Echo](https://apgsensors.com/).
+
+**Opta bring-up:** flash `firmware/arduino-opta-true-echo/` (standalone). Production mqtt-st is MQTT Parc ST + I/O only (no EZ Meter fieldbus). True Echo on Opta remains the sample sketch or PC `apg_true_echo_rtu` master.
 
 ## DFRobot RS485 water-quality probes (Modbus RTU)
 
@@ -101,17 +83,8 @@ Default **9600 8N1**, slave **16** (0x10). Measurements are **holding registers*
 | `dfrobot_sen0712_chlorine.json` | SEN0712 | `CL_MG_L` |
 | `dfrobot_sen0711_ammonia_ph.json` | SEN0711 | `NH3_MG_L`, `NH3_PH`, `NH3_TEMP_C` |
 | `dfrobot_sen0681_do.json` | SEN0681 | `DO_SAT_PCT`, `DO_MG_L`, `DO_TEMP_C` |
-| `dfrobot_pool_chemistry.json` | **SEN0711 + SEN0712** local RS-485 (IOT-LINK PORT B) | `PH_AI`, `ORP_AI` (CL2 ppm), `WATER_TEMP_C`, `NH3_MG_L` |
-| `dfrobot_pool_chemistry_dragino.json` | **SEN0711 + SEN0712** via **Dragino** (pool chemistry monitor) | `PH_PV`, `CL_PV`, `WATER_TEMP_C`, `NH3_MG_L` |
-| `dfrobot_edge101_parc.json` | **Edge101 DFR0886** MQTT Parc (Ethernet + isolated RS-485) | `PH_AI`, `ORP_AI`, `WATER_TEMP_C`, `NH3_MG_L`, `I1`, `I2`, `ETH_LINK`, `CHEM_OK` |
 
 Default **4800 8N1**, slave **1** (per DFRobot wiki). Integer registers use tag **scale** for ×10 / ×100; SEN0681 uses **float32** big-endian. Multiple probes on one RS-485 bus: give each probe a unique slave ID (reg **0x07D0**), add a separate driver row per probe, or merge tags with per-tag `slaveId` in **Tags**.
-
-**Pool chemistry (local IOT-LINK):** `MOOREVIEW_POOL_MODBUS_CHEM=true` — PORT B @ **4800 8N1**, SEN0711 slave **1** → `PH_AI`, SEN0712 slave **2** → `ORP_AI` (pool ST already treats ORP_* as CL2 ppm). Template: `dfrobot_pool_chemistry`.
-
-**Pool chemistry Dragino bind:** SEN0711 → slave **1**, SEN0712 → slave **2**, `presetId: "dfrobot_pool_chemistry_dragino"`. Plan emits two FC04 reads @ 4800 baud + `AT+TDC=300`. Sample: `st/fixtures/pool-chemistry-dragino-telemetry-sample.json`.
-
-**Edge101 field controller:** flash `firmware/dfrobot-edge101-parc`. Ethernet WAN + isolated RS-485 on the DFR0886. Template `dfrobot_edge101_parc` (`platform`: `dfrobot-edge101`).
 
 ## S::CAN con::cube
 
@@ -136,6 +109,47 @@ Explicit tag example:
 }
 ```
 
+## Pentair pool RS-485 (9600 8N1)
+
+Shared proprietary bus — **not Modbus**. One `pentair_rs485` driver can poll multiple device classes; tags carry `deviceClass` / `deviceAddr` in `driverAddress`.
+
+| Template | Device class | Default addr | Tags |
+|----------|--------------|--------------|------|
+| `pentair_intelliflo.json` | `intelliflo` | 96 (0x60) | RPM, watts, flow, run/speed cmds |
+| `pentair_intellichlor.json` | `intellichlor` | — (IC protocol) | Salt ppm, temp, errors, output % |
+| `pentair_ultratemp.json` | `ultratemp` | 112 (0x70) | Heat pump mode/run |
+| `pentair_valves.json` | `valve` | 16 (0x10 controller) | Valve 1–4 positions via panel GET |
+
+**Wiring:** A/B/GND to pump, chlorinator, and heat pump on same bus. Only one bus master — disable Pentair panel remote or use chlorinator takeover. Set `busGapMs` ≥ 120 when mixing IntelliFlo + IntelliChlor on one port.
+
+Fixtures: `st/fixtures/drivers.pentair_pool_bus.json`, `tags.pentair_*.json`.
+
+## Jandy AquaLink RS-485 (9600 8N1)
+
+DLE/STX/ETX framing — **not Modbus**. One `jandy_rs485` driver polls multiple Jandy device classes on the AquaLink bus.
+
+| Template | Device class | Default addr | Tags |
+|----------|--------------|--------------|------|
+| `jandy_epump.json` | `epump` | 120 (0x78) | RPM, watts, run/speed cmds |
+| `jandy_aquapure.json` | `aquapure` | 80 (0x50) | Salt ppm, SWG status, output % |
+| `jandy_jxi_heater.json` | `jxi_heater` | 104 (0x68) | JXi running/error |
+| `jandy_lx_heater.json` | `lx_heater` | 56 (0x38) | LX running/error |
+| `jandy_heat_pump.json` | `heat_pump` | 112 (0x70) | Heat pump status |
+
+Fixtures: `st/fixtures/drivers.jandy_pool_bus.json`, `tags.jandy_*.json`. IOT-LINK seed: `MOOREVIEW_POOL_JANDY_BUS=true`.
+
+## Hayward low-speed RS-485 (19200 8N2)
+
+Proprietary VS pump bus (EcoStar, TriStar VS, MaxFlo VS). Pump must be in **RS485 control mode** with a unique HUA (Hayward Unique Address).
+
+| Template | Device class | Default HUA | Tags |
+|----------|--------------|-------------|------|
+| `hayward_vs_pump.json` | `vs_pump` | 0 | Speed %, RPM, watts, run/speed cmds |
+| `hayward_ecostar_vs.json` | `vs_pump` | 0 | EcoStar (8N1 simple frames) |
+| `hayward_tristar_vs.json` | `vs_pump` | 0 | TriStar VS (OmniLogic 8N2) |
+
+Driver type: **`hayward_rs485`**. Sends keepalive speed commands ~1 s; pump stops if commands cease. Fixtures: `st/fixtures/drivers.hayward_pool_bus.json`, `tags.hayward_vs_pump.json`. IOT-LINK seed: `MOOREVIEW_POOL_HAYWARD_BUS=true`.
+
 ## SPECK BADU Pro-VI UVS (VGreen RS-485)
 
 | Template | Transport | Default comm |
@@ -146,15 +160,62 @@ Century VGreen motors use the **Regal GEN3 EPC** protocol (custom Modbus functio
 
 **Pump setup:** motor menu → digital input mode **Bus**; confirm baud **19200** and slave address. Sample ST: `st/logic/25_badu_pro_vi_filter_pump.st`.
 
-## EZ Meter DDS-RGB (Modbus RTU) — built-in presets
+## Nexcomm Halo (MQTT)
 
-Not a JSON file in this folder — presets are registered in code (`src/facilities/ezmeterPq.js`, `src/devices/applyDerivedPreset.js`).
+| Template | Transport | Tags |
+|----------|-----------|------|
+| `nexcomm_halo_mqtt.json` | MQTT subscribe | `BASE_TEMP`, `BASE_RH` + `X1`–`X10` (`*_TEMP`, `*_RH`) — 22 points |
 
-| Preset | Id | Driver | Tags |
-|--------|-----|--------|------|
-| Full register map | `ezmeter_dds_rgb_2025` | `dds_rgb` | 50 `DDS_*` (energy, V/I/W/Hz/PF/VA, control/status) |
-| Facility PQ derived set | `ezmeter_facility_pq_derived` | (tags only) | ~35 `MECH_PQ_*` / `MECH_METER_*` mirrors + memory |
+Topic: `nexcomm/halo/<deviceId>/telemetry`. JSON: `base.temp_C`, `base.rh_pct`, `X1.temp_C`, `X1.rh_pct`, … Sample payload: `st/fixtures/halo-telemetry-sample.json`.
 
-**Apply order:** (1) full map → (2) derived measurement set. Derived apply loads ST `logic/ezmeter_facility_pq.st` and enables `settings.assistedLiving.ezMeter`.
+## Nexcomm HaLoW leak detector (MQTT)
 
-Default **9600 8N1**, slave **1**. Reference: **`docs/facilities/EZMETER_FACILITY_PQ.md`**, F1 **EZ Meter DDS-RGB 2.025**.
+| Template | Transport | Tags |
+|----------|-----------|------|
+| `nexcomm_halow_leak_mqtt.json` | MQTT subscribe | 6× (`CHn_LEAK` BOOL, `CHn_FLOW` REAL, `CHn_TOTAL` REAL) — 18 points |
+
+Topic: `nexcomm/halow/<deviceId>/telemetry`. JSON per channel: `CHn.leak`, `CHn.flow_gpm`, `CHn.total_gal`. Sample: `st/fixtures/halow-telemetry-sample.json`.
+
+## Nexcomm BME688 env sensor (MQTT)
+
+| Template | Transport | Tags |
+|----------|-----------|------|
+| `nexcomm_bme688_env_mqtt.json` | MQTT subscribe | `BME_TEMP`, `BME_RH`, `BME_PRESS`, `BME_GAS_OHM`, `BME_IAQ`, `BME_IAQ_ACC`, `BME_VOC`, `BME_CO2_EQ` |
+
+Topic: `nexcomm/env/<deviceId>/telemetry`. JSON under `bme688`: `temp_C`, `rh_pct`, `press_hPa`, `gas_ohm`, `iaq`, `iaq_acc`, `voc_ppm`, `co2_eq_ppm`. Sample: `st/fixtures/bme688-telemetry-sample.json`.
+
+## MCXN947 edge devices (MooreVIEW Parc MQTT)
+
+Independent firmware projects on **NXP MCXN947**; only shared elements are the MCU and Parc MQTT topic layout.
+
+| Template | Firmware path | Role |
+|----------|---------------|------|
+| `mcxn947_hvac_mcsa.json` | `C:/Users/Public/data/MCSA` | HVAC motor MCSA monitor |
+| `mcxn947_pool_sensor.json` | `C:/Users/Public/data/mcxn947-pool-sensor` | Pool chemistry (CENSAR chip interface) |
+
+Topic: `mooreview/v1/<deviceId>/telemetry`. Pool sensor sample: `st/fixtures/pool-sensor-telemetry-sample.json`.
+
+## Lift stations (MooreVIEW Parc MQTT — ST lives on the device)
+
+Wet-well sewage/stormwater lift stations for discrete field locations. Each type is a self-contained edge device (Arduino Opta) that **runs its own ST program on-device** via remote execution. Applying the template deploys the matching ST program and publishes the station's alarm/status tags to the SCADA tag database and MooreVIEW cloud.
+
+| Template | Type | Pumps | ST program | Key alarm/status tags |
+|----------|------|-------|------------|-----------------------|
+| `lift_station_simplex.json` | Simplex | 1 | `st/logic/lift_station_simplex.st` | `SPX_ALM`, `SPX_HI_ALM`, `SPX_LO_ALM`, `SPX_P1_RUN`, `SPX_LEVEL` |
+| `lift_station_duplex.json` | Duplex | 2 (lead/lag) | `st/logic/lift_station_duplex.st` | `DPX_ALM`, `DPX_FAULT`, `DPX_HI_ALM`, `DPX_P1_RUN`, `DPX_P2_RUN`, `DPX_LEAD_RUN`, `DPX_LEVEL` |
+| `lift_station_triplex.json` | Triplex | 3 (lead/lag/lag2) | `st/logic/lift_station_triplex.st` | `TPX_ALM`, `TPX_FAULT`, `TPX_HI_ALM`, `TPX_P1_RUN`…`TPX_P3_RUN`, `TPX_LEAD_RUN`, `TPX_LEVEL` |
+
+Pump alternation uses the `ALT` function block (`ALT2`/`ALT3`) — lead rotation, lag/lag2 staging, high-level all-call, and auto-fault skip of offline pumps. Tag fixtures: `st/fixtures/tags.lift_station_{simplex,duplex,triplex}.json`.
+
+## Split HVAC (MooreVIEW Parc MQTT — ST lives on the device)
+
+Single and double split systems (outdoor condenser + air handler). Opta firmware v2.3.81+ with `/mcsa` (HVAC or dual-cond facility preset) and `/ahu-env` for supply/return NTC + pan leak.
+
+| Template | Bundled project | ST program | Key rollup tags |
+|----------|-----------------|------------|-----------------|
+| `arduino_opta_hvac_split.json` | `opta-split-hvac.est.zip` | `st/logic/opta_split_hvac.st` | `COND_ALM`, `AHU_ALM`, `SYS_ALM` |
+| `arduino_opta_hvac_double_split.json` | `opta-double-split-hvac.est.zip` | `st/logic/opta_double_split_hvac.st` | `COND1/2_ALM`, `AHU1/2_ALM`, `SYS_ALM` |
+
+3D viewers: `public/samples/opta-split-hvac-ortho-3d.html`, `opta-double-split-hvac-ortho-3d.html`. Generate with `npm run generate:opta-split-hvac` / `generate:opta-double-split-hvac`.
+
+**3D fleet map:** `public/samples/fl-service-area-3d.html` renders these three station types as 3D objects at discrete geographic (lat/lon) locations across a defined Florida service area, polling `/api/dashboard` for live alarm/level state. Reusable objects: `public/samples/lift-station-3d.js`. Point an HMI screen at it via `layout.facility3dUrl = '/samples/fl-service-area-3d.html'` with `composerMode: '3d'`.

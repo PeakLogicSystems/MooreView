@@ -145,26 +145,4 @@ describe('36_duplex_lift_station.st', () => {
     assert.equal(tagValue(tags, 'LEAD_CALL'), true);
     assert.equal(tagValue(tags, 'ALT_OFF_REQ'), false);
   });
-
-  it('clears R4 when ALT_FAULT is clear', () => {
-    const tags = runDuplex({});
-    assert.equal(tagValue(tags, 'ALT_FAULT'), false);
-    assert.equal(tagValue(tags, 'R4'), false);
-  });
-
-  it('drives R4 when both pumps are offline (alternator AltFault)', () => {
-    const tags = runDuplexScan({
-      MOTOR1_OFFLINE: true,
-      MOTOR2_OFFLINE: true,
-    });
-    assert.equal(tagValue(tags, 'ALT_FAULT'), true);
-    assert.equal(tagValue(tags, 'R4'), true);
-  });
-
-  it('derives POWER_FAIL from X1_I16 and drives R4 without ALT_FAULT', () => {
-    const tags = runDuplex({ X1_I2: true, X1_I4: true, X1_I16: true });
-    assert.equal(tagValue(tags, 'POWER_FAIL'), true);
-    assert.equal(tagValue(tags, 'ALT_FAULT'), false);
-    assert.equal(tagValue(tags, 'R4'), true);
-  });
 });

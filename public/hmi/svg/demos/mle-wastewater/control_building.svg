@@ -2,102 +2,26 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 768" width="1024" height="768">
   <rect width="1024" height="768" fill="#f1f5f9"/>
   <text x="32" y="48" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="600" fill="#0f172a">Control Building</text>
-  <text x="32" y="78" font-family="Segoe UI, Arial, sans-serif" font-size="14" fill="#64748b">Operator station, MCC / electrical, and shared plant summary</text>
+  <text x="32" y="78" font-family="Segoe UI, Arial, sans-serif" font-size="14" fill="#64748b">PLC, HMI, and integrated MLE plant alarm summary</text>
 
-  <!-- Operator station -->
-  <g transform="translate(40, 108)" font-family="Segoe UI, Arial, sans-serif">
-    <rect x="0" y="0" width="290" height="620" rx="8" fill="#fff" stroke="#cbd5e1" stroke-width="2"/>
-    <text x="16" y="32" font-size="18" font-weight="600" fill="#0f172a">Operator station</text>
-    <text x="16" y="52" font-size="12" fill="#64748b">HMI and plant alarm summary</text>
-
-    <rect x="24" y="72" width="242" height="150" rx="6" fill="#f8fafc" stroke="#94a3b8" stroke-width="2"/>
-    <rect x="48" y="92" width="194" height="110" rx="4" fill="#1e293b"/>
-    <rect x="56" y="100" width="178" height="86" rx="2" fill="#6f42c1" opacity="0.35"/>
-    <text x="145" y="158" text-anchor="middle" font-size="14" fill="#e2e8f0">Plant HMI</text>
-    <text x="145" y="176" text-anchor="middle" font-size="11" fill="#94a3b8">Operator graphics</text>
-
-    <text x="16" y="258" font-size="15" font-weight="600" fill="#334155">Plant alarms</text>
-    <text x="32" y="292" font-size="15" fill="#0f172a">Plant alarm</text>
-    <circle id="lamp_plant_alm" cx="248" cy="286" r="14" fill="#64748b" stroke="#334155" stroke-width="2"/>
-    <text x="32" y="328" font-size="15" fill="#0f172a">Tank 1 MLE alarm</text>
-    <circle id="lamp_t1_alm" cx="248" cy="322" r="14" fill="#64748b" stroke="#334155" stroke-width="2"/>
-    <text x="32" y="364" font-size="15" fill="#0f172a">Tank 2 MLE alarm</text>
-    <circle id="lamp_t2_alm" cx="248" cy="358" r="14" fill="#64748b" stroke="#334155" stroke-width="2"/>
-    <text x="32" y="400" font-size="15" fill="#0f172a">Control building alarm</text>
-    <circle id="lamp_ctrl_alm" cx="248" cy="394" r="14" fill="#64748b" stroke="#334155" stroke-width="2"/>
+  <g transform="translate(160, 160)">
+    <rect x="0" y="0" width="280" height="180" rx="6" fill="#cbd5e1" stroke="#475569" stroke-width="3"/>
+    <rect x="20" y="24" width="100" height="80" rx="4" fill="#1e293b"/>
+    <text x="140" y="70" font-family="Segoe UI, Arial" font-size="13" fill="#334155">MCC / PLC</text>
+    <rect x="160" y="24" width="100" height="80" rx="4" fill="#6f42c1" opacity="0.25"/>
+    <text x="210" y="70" text-anchor="middle" font-family="Segoe UI, Arial" font-size="13" fill="#334155">HMI</text>
   </g>
 
-  <!-- MCC & Electrical -->
-  <g transform="translate(360, 108)" font-family="Segoe UI, Arial, sans-serif">
-    <rect x="0" y="0" width="310" height="620" rx="8" fill="#fff" stroke="#cbd5e1" stroke-width="2"/>
-    <text x="16" y="32" font-size="18" font-weight="600" fill="#0f172a">MCC &amp; electrical</text>
-    <text x="16" y="52" font-size="12" fill="#64748b">Motor control, ATS, and standby generator</text>
-
-    <!-- One-line diagram -->
-    <rect x="24" y="72" width="262" height="200" rx="6" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
-    <text x="155" y="94" text-anchor="middle" font-size="11" fill="#64748b">Electrical one-line</text>
-
-    <rect x="40" y="118" width="52" height="36" rx="3" fill="#e2e8f0" stroke="#475569" stroke-width="1.5"/>
-    <text x="66" y="140" text-anchor="middle" font-size="10" fill="#334155">Utility</text>
-
-    <line x1="92" y1="136" x2="118" y2="136" stroke="#475569" stroke-width="2"/>
-    <rect x="118" y="118" width="56" height="36" rx="3" fill="#fef3c7" stroke="#b45309" stroke-width="2"/>
-    <text x="146" y="133" text-anchor="middle" font-size="9" fill="#92400e">Transfer</text>
-    <text x="146" y="145" text-anchor="middle" font-size="9" fill="#92400e">switch</text>
-
-    <line x1="174" y1="136" x2="200" y2="136" stroke="#475569" stroke-width="2"/>
-    <rect x="200" y="108" width="62" height="56" rx="4" fill="#cbd5e1" stroke="#334155" stroke-width="2"/>
-    <text x="231" y="132" text-anchor="middle" font-size="11" font-weight="600" fill="#0f172a">MCC</text>
-    <text x="231" y="148" text-anchor="middle" font-size="9" fill="#475569">Motor control</text>
-
-    <line x1="146" y1="154" x2="146" y2="178" stroke="#475569" stroke-width="2"/>
-    <line x1="146" y1="178" x2="146" y2="178" stroke="#475569" stroke-width="2"/>
-    <rect x="108" y="178" width="76" height="44" rx="4" fill="#dbeafe" stroke="#1d4ed8" stroke-width="2"/>
-    <text x="146" y="198" text-anchor="middle" font-size="11" font-weight="600" fill="#1e3a8a">Generator</text>
-    <text x="146" y="212" text-anchor="middle" font-size="9" fill="#1d4ed8">Standby diesel</text>
-
-    <line x1="146" y1="222" x2="146" y2="248" stroke="#1d4ed8" stroke-width="1.5" stroke-dasharray="4,3"/>
-
-    <!-- Status -->
-    <text x="16" y="302" font-size="15" font-weight="600" fill="#334155">Status</text>
-    <text x="32" y="334" font-size="14" fill="#0f172a">Generator running</text>
-    <circle id="lamp_gen_run" cx="268" cy="328" r="13" fill="#64748b" stroke="#334155" stroke-width="2"/>
-    <text x="32" y="370" font-size="14" fill="#0f172a">Transfer switch engaged</text>
-    <circle id="lamp_ats_engaged" cx="268" cy="364" r="13" fill="#64748b" stroke="#334155" stroke-width="2"/>
-
-    <!-- Electrical faults -->
-    <text x="16" y="412" font-size="15" font-weight="600" fill="#334155">Electrical faults</text>
-    <text x="32" y="444" font-size="14" fill="#0f172a">Low generator fuel</text>
-    <circle id="lamp_gen_fuel_low" cx="268" cy="438" r="13" fill="#64748b" stroke="#334155" stroke-width="2"/>
-    <text x="32" y="480" font-size="14" fill="#0f172a">Generator fault</text>
-    <circle id="lamp_gen_fault" cx="268" cy="474" r="13" fill="#64748b" stroke="#334155" stroke-width="2"/>
-  </g>
-
-  <!-- Shared blower farm -->
-  <g transform="translate(700, 108)" font-family="Segoe UI, Arial, sans-serif">
-    <rect x="0" y="0" width="284" height="620" rx="8" fill="#fff" stroke="#cbd5e1" stroke-width="2"/>
-    <text x="16" y="32" font-size="18" font-weight="600" fill="#0f172a">Shared blower farm</text>
-    <text x="16" y="52" font-size="12" fill="#64748b">3× centrifugal (aerobic) + 3× PD (anoxic)</text>
-
-    <text x="16" y="92" font-size="14" fill="#334155">Aerobic centrifugal</text>
-    <circle id="lamp_aer_cent1_run" cx="200" cy="86" r="12" fill="#64748b" stroke="#334155" stroke-width="2"/>
-    <text x="218" y="91" font-size="13">1</text>
-    <circle id="lamp_aer_cent2_run" cx="200" cy="118" r="12" fill="#64748b" stroke="#334155" stroke-width="2"/>
-    <text x="218" y="123" font-size="13">2</text>
-    <circle id="lamp_aer_cent3_run" cx="200" cy="150" r="12" fill="#64748b" stroke="#334155" stroke-width="2"/>
-    <text x="218" y="155" font-size="13">3</text>
-
-    <text x="16" y="192" font-size="14" fill="#334155">Anoxic PD</text>
-    <circle id="lamp_anox_pd1_run" cx="200" cy="186" r="12" fill="#64748b" stroke="#334155" stroke-width="2"/>
-    <text x="218" y="191" font-size="13">1</text>
-    <circle id="lamp_anox_pd2_run" cx="200" cy="218" r="12" fill="#64748b" stroke="#334155" stroke-width="2"/>
-    <text x="218" y="223" font-size="13">2</text>
-    <circle id="lamp_anox_pd3_run" cx="200" cy="250" r="12" fill="#64748b" stroke="#334155" stroke-width="2"/>
-    <text x="218" y="255" font-size="13">3</text>
-
-    <text x="16" y="300" font-size="14" fill="#0f172a">Aerobic blower alarm</text>
-    <circle id="lamp_aer_blow_alm" cx="248" cy="294" r="14" fill="#64748b" stroke="#334155" stroke-width="2"/>
-    <text x="16" y="340" font-size="14" fill="#0f172a">Anoxic blower alarm</text>
-    <circle id="lamp_anox_blow_alm" cx="248" cy="334" r="14" fill="#64748b" stroke="#334155" stroke-width="2"/>
+  <g font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#0f172a">
+    <text x="520" y="160">Plant alarm</text>
+    <circle id="lamp_plant_alm" cx="720" cy="152" r="18" fill="#64748b" stroke="#334155" stroke-width="2"/>
+    <text x="520" y="220">Tank 1 MLE alarm</text>
+    <circle id="lamp_t1_alm" cx="720" cy="212" r="18" fill="#64748b" stroke="#334155" stroke-width="2"/>
+    <text x="520" y="280">Tank 2 MLE alarm</text>
+    <circle id="lamp_t2_alm" cx="720" cy="272" r="18" fill="#64748b" stroke="#334155" stroke-width="2"/>
+    <text x="520" y="340">T1 blower alarm</text>
+    <circle id="lamp_t1_blow_alm" cx="720" cy="332" r="18" fill="#64748b" stroke="#334155" stroke-width="2"/>
+    <text x="520" y="400">T2 blower alarm</text>
+    <circle id="lamp_t2_blow_alm" cx="720" cy="392" r="18" fill="#64748b" stroke="#334155" stroke-width="2"/>
   </g>
 </svg>

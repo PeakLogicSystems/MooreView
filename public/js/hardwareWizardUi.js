@@ -45,6 +45,8 @@ window.MooreviewHwWizard = (function () {
       modbus_rtu: 'modbus_rtu',
       vgreen_epc: 'modbus_rtu',
       pentair_rs485: 'modbus_rtu',
+      jandy_rs485: 'modbus_rtu',
+      hayward_rs485: 'modbus_rtu',
       modbus_tcp: 'modbus_tcp',
       mqtt_parc: 'mqtt_parc',
       mqtt_parc_telemetry: 'mqtt_parc',
@@ -79,7 +81,7 @@ window.MooreviewHwWizard = (function () {
           label: 'Opta device ID',
           type: 'text',
           default: defs.deviceId || preset.driverId || 'opta_st_01',
-          hint: 'ATECC serial id from Opta /setup (opta_…)',
+          hint: 'ATECC serial id from Opta /setup (mv_… or opta_…)',
         },
         {
           id: 'driverId',
@@ -87,6 +89,13 @@ window.MooreviewHwWizard = (function () {
           type: 'text',
           default: preset.driverId || 'opta_st_01',
           hint: 'Stable plant name — tags and ST bind here',
+        },
+        {
+          id: 'brokerNote',
+          label: 'MQTT broker (Opta /setup)',
+          type: 'hint',
+          default: '',
+          hint: 'Set MooreView / IOT-LINK gateway LAN IP:1883 on the Opta /setup page (not 127.0.0.1). System setup broker stays mqtt://127.0.0.1:1883 on the gateway.',
         },
       ];
     }
@@ -193,7 +202,7 @@ window.MooreviewHwWizard = (function () {
       { id: 'mqtt_parc', label: 'MQTT Parc / Opta', hint: 'Arduino Opta remote ST' },
     ];
     body.innerHTML = `
-      <p class="panel-hint">Choose how this device talks to MooreVIEW. You can add more drivers later from <strong>Drivers</strong>.</p>
+      <p class="panel-hint">Choose how this device talks to MooreView. You can add more drivers later from <strong>Drivers</strong>.</p>
       <div class="hw-wizard-transport-grid">
         ${groups.map((g) => `
           <button type="button" class="hw-wizard-card${state.transportGroup === g.id ? ' selected' : ''}" data-transport-group="${esc(g.id)}">
@@ -276,6 +285,9 @@ window.MooreviewHwWizard = (function () {
       return;
     }
     const fieldHtml = fields.map((f) => {
+      if (f.type === 'hint') {
+        return `<p class="panel-hint span-all">${esc(f.hint || f.label)}</p>`;
+      }
       const val = state.values[f.id] ?? f.default;
       let input;
       if (f.type === 'port') {

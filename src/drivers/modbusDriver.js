@@ -5,7 +5,7 @@ const ModbusRTU = require('modbus-serial');
 const MODBUS_DEBUG = process.env.MODBUS_DEBUG === '1';
 const { QUALITY } = require('../tags/constants');
 const { shouldSkipFieldbusPoll, markFieldbusPolled } = require('./fieldbusPoll');
-const { rawToEngineering, engineeringToRaw } = require('../tags/tagAnalog');
+const { scaleRawToEng, scaleEngToRaw } = require('../tags/tagAnalog');
 const {
   isArrayTag,
   modbusRegSpan,
@@ -114,7 +114,7 @@ class ModbusDriver {
   }
 
   _scaled(raw, tag) {
-    return rawToEngineering(raw, tag);
+    return scaleRawToEng(raw, tag);
   }
 
   _combineWords(data, wordWidth, signed) {
@@ -128,20 +128,47 @@ class ModbusDriver {
     return v;
   }
 
+  /**
+   * Decode IEEE-754 float32 from two Modbus registers.
+   * Orders: BE/ABCD (default), LE/DCBA, CDAB (word-swap BE — APG True Echo), BADC (byte-swap).
+   */
   _decodeFloat32(data, byteOrder = 'BE') {
     if (!data || data.length < 2) return 0;
-    const hi = data[0] & 0xffff;
-    const lo = data[1] & 0xffff;
+    const r0 = data[0] & 0xffff;
+    const r1 = data[1] & 0xffff;
     const buf = Buffer.alloc(4);
-    const be = String(byteOrder).toUpperCase() !== 'LE';
-    if (be) {
-      buf.writeUInt16BE(hi, 0);
-      buf.writeUInt16BE(lo, 2);
+    const order = String(byteOrder || 'BE').toUpperCase();
+    if (order === 'LE' || order === 'DCBA') {
+      buf.writeUInt16LE(r1, 0);
+      buf.writeUInt16LE(r0, 2);
+      return buf.readFloatLE(0);
+    }
+    if (order === 'CDAB') {
+      // Word-swapped big-endian: first reg = CD, second = AB → assemble ABCD
+      buf.writeUInt16BE(r1, 0);
+      buf.writeUInt16BE(r0, 2);
       return buf.readFloatBE(0);
     }
-    buf.writeUInt16LE(lo, 0);
-    buf.writeUInt16LE(hi, 2);
-    return buf.readFloatLE(0);
+    if (order === 'BADC') {
+      buf.writeUInt16LE(r0, 0);
+      buf.writeUInt16LE(r1, 2);
+      return buf.readFloatBE(0);
+    }
+    // BE / ABCD
+    buf.writeUInt16BE(r0, 0);
+    buf.writeUInt16BE(r1, 2);
+    return buf.readFloatBE(0);
+  }
+
+  _frameDelayMs() {
+    const n = Number(this.cfg.frameDelayMs);
+    return Number.isFinite(n) && n > 0 ? Math.min(n, 5000) : 0;
+  }
+
+  async _sleepFrameDelay() {
+    const ms = this._frameDelayMs();
+    if (ms <= 0) return;
+    await new Promise((r) => setTimeout(r, ms));
   }
 
   _rawFromWords(slice, item, tag) {
@@ -240,7 +267,9 @@ class ModbusDriver {
     if (!this.connected || !tags.length) return;
     if (shouldSkipFieldbusPoll(this, this.cfg)) return;
     const blocks = this._groupReadBlocks(tags);
-    for (const block of blocks) {
+    for (let bi = 0; bi < blocks.length; bi++) {
+      const block = blocks[bi];
+      if (bi > 0) await this._sleepFrameDelay();
       this._ensureSlaveId(block.slaveId);
       const count = block.end - block.start + 1;
       try {
@@ -300,14 +329,14 @@ class ModbusDriver {
           await this.client.writeCoil(a.address || 0, !!v);
         } else if (isArrayTag(t)) {
           const vals = normalizeArrayValue(t, v);
-          const rawVals = vals.map((x) => engineeringToRaw(Number(x), t));
+          const rawVals = vals.map((x) => scaleEngToRaw(Number(x), t));
           const words = arrayToRegisterWords({ ...t, wordWidth }, rawVals);
           await this._withIoTimeout(
             this.client.writeRegisters(a.address || 0, words),
             `writeRegisters@${a.address || 0}`,
           );
         } else {
-          let raw = engineeringToRaw(Number(v), t);
+          let raw = scaleEngToRaw(Number(v), t);
           const words = this._splitWord(raw, wordWidth);
           if (words.length === 1) {
             await this._withIoTimeout(

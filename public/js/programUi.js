@@ -12,21 +12,134 @@ window.MooreviewProgram = (function () {
   let programTagRefs = [];
   let programCatalog = [];
   let programLoading = false;
+  let lastProgramMetaKey = '';
   let stEditor = null;
+  let traceDebugOn = false;
+  let lastDebugTrace = [];
 
   const ST_NEW_TEMPLATE = '(* New ST program — edit and Save program *)\nIF IsON(DI) THEN TurnON(Q); END_IF;\n';
+  let stParcMaxLines = 500;
+  const liveIoPref = () => window.MooreviewLiveIoUpdate || {};
+
+  function programMetaKey(meta, activeProgram) {
+    const m = meta && typeof meta === 'object' ? meta : {};
+    const path = String(m.path || activeProgram || programActivePath || '');
+    const mtimeMs = Number(m.mtimeMs) || 0;
+    const size = Number(m.size) || 0;
+    return `${path}|${mtimeMs}|${size}`;
+  }
+
+  function countStLines(source) {
+    if (source == null || source === '') return 0;
+    const lines = String(source).split(/\r?\n/);
+    if (lines.length > 0 && lines[lines.length - 1] === '') {
+      return lines.length - 1;
+    }
+    return lines.length;
+  }
+
+  function assessLinesClient(source, forParc) {
+    const lines = countStLines(source);
+    if (!forParc) {
+      return { lines, limit: null, overLimit: false, pct: 0 };
+    }
+    const limit = stParcMaxLines;
+    return {
+      lines,
+      limit,
+      overLimit: lines > limit,
+      pct: limit > 0 ? Math.min(100, Math.round((lines / limit) * 100)) : 0,
+    };
+  }
+
+  function isRemoteExecutionOn() {
+    return d().getLastSettings?.()?.remoteExecution === true
+      || $('prog-remote-exec')?.checked === true;
+  }
+
+  function renderProgramLineStatus() {
+    const el = $('prog-line-status');
+    if (!el) return;
+    const src = $('program-src')?.value ?? '';
+    const local = assessLinesClient(src, false);
+    const parc = assessLinesClient(src, true);
+    const remote = isRemoteExecutionOn();
+    const parts = [`${local.lines} lines (PC)`];
+    if (remote) parts.push(`${parc.lines} / ${parc.limit} (Parc deploy)`);
+    el.textContent = parts.join(' · ');
+    const overParc = remote && parc.overLimit;
+    el.className = overParc
+      ? 'prog-line-status err cell-mono'
+      : ((remote && parc.pct >= 85)
+        ? 'prog-line-status warn cell-mono'
+        : 'prog-line-status muted cell-mono');
+    el.title = overParc
+      ? `Trim ST program to ${parc.limit} lines or less for Parc/Opta deploy`
+      : (remote
+        ? `PC/Linux: no size limit · Parc/Opta deploy limit ${parc.limit} lines`
+        : 'PC/Linux runtime — no program size limit');
+  }
+
+  function syncProgramLineStatusFromDashboard(data) {
+    if (data?.programLimits?.parcMaxLines) stParcMaxLines = data.programLimits.parcMaxLines;
+    renderProgramLineStatus();
+  }
+
+  function readLiveIoUpdatePref() {
+    return liveIoPref().readLiveIoUpdatePref?.() ?? true;
+  }
+
+  function writeLiveIoUpdatePref(on) {
+    liveIoPref().writeLiveIoUpdatePref?.(on);
+  }
+
+  function isLiveIoUpdateEnabled() {
+    const cb = $('live-io-update');
+    if (cb) return cb.checked;
+    return readLiveIoUpdatePref();
+  }
+
+  function shouldRefreshLiveIo(runtime) {
+    return liveIoPref().shouldUpdateLiveIo?.(runtime, isLiveIoUpdateEnabled()) ?? true;
+  }
+
+  function bindLiveIoUpdateCheckbox() {
+    const cb = $('live-io-update');
+    if (!cb || cb.dataset.bound === '1') return;
+    cb.dataset.bound = '1';
+    cb.checked = readLiveIoUpdatePref();
+    cb.addEventListener('change', () => {
+      writeLiveIoUpdatePref(cb.checked);
+      if (cb.checked && isLiveIoPanelOpen()) {
+        updateProgramIoLive(d().getLastLive?.() || [], d().getLastRuntime?.() || {});
+      }
+    });
+  }
 
   function d() {
     return deps;
   }
 
+  function expIo() {
+    return window.MooreviewExpansionIo || {};
+  }
+
+  function programIoTags() {
+    return window.MooreviewProgramIoTags || {};
+  }
+
   function programIoTagList() {
     const tags = d().getTags();
-    const refSet = new Set(programTagRefs);
-    const list = refSet.size
-      ? tags.filter((t) => refSet.has(t.id))
-      : tags.filter((t) => t.type === 'BOOL' || t.type === 'INT' || t.type === 'REAL' || t.type === 'PID' || t.type === 'AVG');
-    return list.sort((a, b) => {
+    const list = programIoTags().programIoTagList?.(tags, programTagRefs)
+      || tags.filter((t) => t.role === 'input' || t.role === 'output');
+    return list.slice().sort((a, b) => {
+      const sa = expIo().expansionSlotFromId?.(a.id) || 0;
+      const sb = expIo().expansionSlotFromId?.(b.id) || 0;
+      if (sa !== sb) {
+        if (!sa) return -1;
+        if (!sb) return 1;
+        return sa - sb;
+      }
       const order = { BOOL: 0, INT: 1, REAL: 2 };
       const ta = order[a.type] ?? 9;
       const tb = order[b.type] ?? 9;
@@ -71,6 +184,13 @@ window.MooreviewProgram = (function () {
     return chrome && !chrome.classList.contains('view-hidden');
   }
 
+  function liveIoHintText(runtime) {
+    const opta = d().getLastOptaRuntime?.();
+    if (!runtime?.running && opta?.running) return '(Opta ST running — live from device)';
+    if (!runtime?.running) return '(stopped — last values shown)';
+    return runtime.paused ? '(paused — values frozen)' : '(runtime active)';
+  }
+
   function renderProgramIoPanel(live, runtime) {
     const host = $('program-io-panel');
     const hint = $('program-io-hint');
@@ -78,14 +198,8 @@ window.MooreviewProgram = (function () {
     if (!isLiveIoPanelOpen()) return;
     const scanActive = d().runtimeScanActive(runtime);
     host.classList.toggle('io-stopped', !scanActive);
-    if (hint) {
-      hint.textContent = !runtime?.running
-        ? '(stopped — last values shown)'
-        : (runtime.paused ? '(paused — values frozen)' : '(runtime active)');
-    }
+    if (hint) hint.textContent = liveIoHintText(runtime);
     const list = programIoTagList();
-    const digital = list.filter((t) => t.type === 'BOOL');
-    const analog = list.filter((t) => t.type === 'INT' || t.type === 'REAL' || t.type === 'PID' || t.type === 'AVG');
     if (!list.length) {
       host.innerHTML = '<p class="program-io-empty">No tags in program. Apply a valid ST file that references DI, Q, AI, etc.</p>';
       return;
@@ -95,28 +209,62 @@ window.MooreviewProgram = (function () {
       const on = d().isDigitalOn(entry);
       const highlight = scanActive && on;
       const forced = entry && (entry.forceInput || entry.forceOutput);
+      const stopped = !scanActive;
+      const ts = window.MooreviewIoTimestamp;
       return `<div class="io-point digital ${highlight ? 'on' : 'off'}${forced ? ' forced' : ''}" data-io="${esc(tag.id)}" data-io-type="BOOL">
         <span class="io-name">${esc(formatIoTagName(tag))}</span>
         ${formatIoTagSub(tag) ? `<span class="io-tag-id muted">${esc(formatIoTagSub(tag))}</span>` : ''}
         <span class="io-role">${esc(tag.role)}</span>
         <span class="io-val" data-io-val>${esc(d().formatIoValue(entry))}</span>
+        ${ts?.ioTsSpan?.(entry?.updatedAt, { stopped }) || ''}
         ${forced ? '<span class="io-force-badge">FORCED</span>' : ''}
       </div>`;
     };
     const mkAnalog = (tag) => {
       const entry = d().liveEntryFor(tag.id, live);
       const forced = entry && (entry.forceInput || entry.forceOutput);
+      const stopped = !scanActive;
+      const ts = window.MooreviewIoTimestamp;
       return `<div class="io-point analog${forced ? ' forced' : ''}" data-io="${esc(tag.id)}" data-io-type="${esc(tag.type)}">
         <span class="io-name">${esc(formatIoTagName(tag))}</span>
         ${formatIoTagSub(tag) ? `<span class="io-tag-id muted">${esc(formatIoTagSub(tag))}</span>` : ''}
         <span class="io-role">${esc(tag.type)} · ${esc(tag.role)}</span>
         <span class="io-val" data-io-val>${esc(d().formatIoValue(entry))}</span>
+        ${ts?.ioTsSpan?.(entry?.updatedAt, { stopped }) || ''}
         ${forced ? '<span class="io-force-badge">FORCED</span>' : ''}
       </div>`;
     };
-    host.innerHTML = `
-      ${digital.length ? `<div class="program-io-section"><h3>Digital</h3><div class="program-io-digital">${digital.map(mkDigital).join('')}</div></div>` : ''}
-      ${analog.length ? `<div class="program-io-section"><h3>Analog (INT / REAL)</h3><div class="program-io-digital">${analog.map(mkAnalog).join('')}</div></div>` : ''}`;
+    const renderGroup = (tags, opts = {}) => {
+      const { sectionTitle = '', flat = false } = opts;
+      const digital = tags.filter((t) => t.type === 'BOOL');
+      const analog = tags.filter((t) => t.type === 'INT' || t.type === 'REAL' || t.type === 'PID' || t.type === 'AVG');
+      if (!digital.length && !analog.length) return '';
+      const digBlock = digital.length ? `<div class="program-io-digital">${digital.map(mkDigital).join('')}</div>` : '';
+      const anaBlock = analog.length ? `<div class="program-io-digital">${analog.map(mkAnalog).join('')}</div>` : '';
+      if (flat) {
+        return `
+          ${digital.length ? `<div class="program-io-section"><h3>Digital</h3>${digBlock}</div>` : ''}
+          ${analog.length ? `<div class="program-io-section"><h3>Analog (INT / REAL)</h3>${anaBlock}</div>` : ''}`;
+      }
+      return `
+        <div class="program-io-section${sectionTitle.startsWith('Expansion') ? ' program-io-expansion' : ''}">
+          <h3>${esc(sectionTitle)}</h3>
+          ${digital.length ? `<div class="program-io-subsection"><h4>Digital</h4>${digBlock}</div>` : ''}
+          ${analog.length ? `<div class="program-io-subsection"><h4>Analog (INT / REAL)</h4>${anaBlock}</div>` : ''}
+        </div>`;
+    };
+    const { base, bySlot } = expIo().partitionIoTags?.(list) || { base: list, bySlot: new Map() };
+    const slots = [...bySlot.keys()].sort((a, b) => a - b);
+    const hasExpansion = slots.length > 0;
+    let html = renderGroup(base, hasExpansion && base.length
+      ? { sectionTitle: 'On-board I/O' }
+      : { flat: true });
+    for (const slot of slots) {
+      const slotTags = bySlot.get(slot) || [];
+      const title = expIo().expansionSectionTitle?.(slot, slotTags) || `Expansion ${slot}`;
+      html += renderGroup(slotTags, { sectionTitle: title });
+    }
+    host.innerHTML = html;
     renderProgramTagLegend();
   }
 
@@ -125,15 +273,80 @@ window.MooreviewProgram = (function () {
     return chrome && !chrome.classList.contains('view-hidden');
   }
 
-  function updateProgramTrace(trace, runtime) {
-    if (!isProgramPopupOpen() || !stEditor || stEditor.isDirty()) {
-      if (stEditor?.isDirty()) stEditor.clearTrace();
+  function updateTraceDebugButton() {
+    const btn = $('btn-prog-debug-trace');
+    if (!btn) return;
+    btn.classList.toggle('active', traceDebugOn);
+    btn.setAttribute('aria-pressed', traceDebugOn ? 'true' : 'false');
+  }
+
+  function clearDebugTrace() {
+    traceDebugOn = false;
+    lastDebugTrace = [];
+    updateTraceDebugButton();
+    stEditor?.clearTrace();
+  }
+
+  async function refreshDebugTrace(opts = {}) {
+    const src = $('program-src')?.value ?? '';
+    if (!src.trim()) {
+      showProgramError('Enter program source first');
       return;
     }
-    const hasTrace = Array.isArray(trace) && trace.length > 0;
-    const active = hasTrace && (d().runtimeScanActive(runtime) || !!runtime?.programOk);
+    const runtime = d().getLastRuntime?.() || {};
+    if (d().runtimeScanActive(runtime)) {
+      traceDebugOn = true;
+      updateTraceDebugButton();
+      updateProgramTrace(runtime.programTrace, runtime);
+      if (!opts.quiet) {
+        $('program-errors').textContent = 'Live trace (runtime running)';
+        $('program-errors').className = 'inline-msg ok';
+      }
+      return;
+    }
     try {
-      stEditor.setTrace(trace || [], active);
+      await api.putProgram(src).catch(() => {});
+      const r = await api.programTrace(src);
+      if (!r.ok) {
+        showProgramError((r.errors || []).join('; ') || 'Trace failed');
+        return;
+      }
+      lastDebugTrace = r.trace || [];
+      traceDebugOn = true;
+      updateTraceDebugButton();
+      stEditor?.setTrace(lastDebugTrace, true);
+      if (!opts.quiet) {
+        $('program-errors').textContent = lastDebugTrace.length
+          ? `Debug trace: ${lastDebugTrace.length} point(s) — green ✓ true, red ✗ false, outputs red when ON`
+          : 'Debug trace: no trace points (add IF / TurnON / assignments)';
+        $('program-errors').className = 'inline-msg ok';
+      }
+    } catch (e) {
+      showProgramError(e.message || 'Trace failed');
+    }
+  }
+
+  function updateProgramTrace(trace, runtime) {
+    if (!isProgramPopupOpen() || !stEditor) return;
+    if (stEditor.isDirty()) {
+      stEditor.clearTrace();
+      return;
+    }
+    const live = d().runtimeScanActive(runtime);
+    let rows = [];
+    if (live && Array.isArray(trace) && trace.length) {
+      rows = trace;
+    } else if (traceDebugOn && lastDebugTrace.length) {
+      rows = lastDebugTrace;
+    } else if (Array.isArray(trace) && trace.length && runtime?.programOk) {
+      rows = trace;
+    }
+    if (!rows.length) {
+      if (!traceDebugOn) stEditor.clearTrace();
+      return;
+    }
+    try {
+      stEditor.setTrace(rows, true);
     } catch (e) {
       console.error('program trace overlay', e);
       stEditor.clearTrace();
@@ -142,6 +355,7 @@ window.MooreviewProgram = (function () {
 
   function updateProgramIoLive(live, runtime) {
     if (!isLiveIoPanelOpen()) return;
+    if (!shouldRefreshLiveIo(runtime)) return;
     const host = $('program-io-panel');
     if (!host || !host.querySelector('[data-io]')) {
       renderProgramIoPanel(live, runtime);
@@ -165,6 +379,13 @@ window.MooreviewProgram = (function () {
       }
       const valEl = el.querySelector('[data-io-val]');
       if (valEl) valEl.textContent = d().formatIoValue(entry);
+      const tsApi = window.MooreviewIoTimestamp;
+      let tsEl = el.querySelector('.io-ts');
+      if (!tsEl && tsApi?.ioTsSpan) {
+        tsEl = document.createElement('span');
+        valEl?.insertAdjacentElement('afterend', tsEl);
+      }
+      tsApi?.updateIoTsEl?.(tsEl, entry.updatedAt, { stopped: !scanActive });
       let badge = el.querySelector('.io-force-badge');
       if (forced && !badge) {
         badge = document.createElement('span');
@@ -176,11 +397,7 @@ window.MooreviewProgram = (function () {
       }
     });
     const hint = $('program-io-hint');
-    if (hint) {
-      hint.textContent = !runtime?.running
-        ? '(stopped — last values shown)'
-        : (runtime.paused ? '(paused — values frozen)' : '(runtime active)');
-    }
+    if (hint) hint.textContent = liveIoHintText(runtime);
   }
 
   async function syncProgramTagRefs() {
@@ -228,14 +445,20 @@ window.MooreviewProgram = (function () {
       prog.dataset.dirty = '';
     }
     programEditLock = false;
-    programLoadGuardUntil = Date.now() + 2500;
+    programLoadGuardUntil = Math.max(programLoadGuardUntil, Date.now() + 4000);
     updateProgramFolderLabel(r.stDir || programStDir, r.active);
     if ($('program-active')) $('program-active').textContent = r.active ? `Active: ${r.active}` : '';
     if (r.active && $('program-library')) {
       const sel = $('program-library');
       sel.dataset.userPick = r.active;
-      const opt = [...sel.options].find((o) => o.value === r.active);
-      if (opt) sel.value = r.active;
+      let opt = [...sel.options].find((o) => o.value === r.active);
+      if (!opt) {
+        opt = document.createElement('option');
+        opt.value = r.active;
+        opt.textContent = r.active;
+        sel.appendChild(opt);
+      }
+      sel.value = r.active;
     }
     if (errEl) {
       if (r.errors?.length) {
@@ -259,8 +482,14 @@ window.MooreviewProgram = (function () {
       || norm.startsWith('logic/');
   }
 
+  /** Library pick, userPick, or last active path (matches Load fixtures resolution). */
+  function selectedProgramRel() {
+    const sel = $('program-library');
+    return (sel?.value || sel?.dataset?.userPick || programActivePath || '').trim();
+  }
+
   async function loadFixturesForSelected() {
-    const rel = ($('program-library')?.value || programActivePath || '').trim();
+    const rel = selectedProgramRel();
     if (!rel) {
       showProgramError('Select a program in Library first.');
       return null;
@@ -274,12 +503,20 @@ window.MooreviewProgram = (function () {
     )) {
       return null;
     }
+    programLoading = true;
+    programLoadGuardUntil = Date.now() + 4000;
     try {
       const r = await api.loadProgramFixtures(rel);
-      if (r.active) programActivePath = r.active;
+      applyProgramToEditor({
+        ...r,
+        active: r.active || rel,
+        source: r.source ?? '',
+        stDir: r.stDir || programStDir,
+        ok: r.programOk !== false,
+      });
       await syncProgramTagRefs();
       renderProgramIoPanel(d().getLastLive(), d().getLastRuntime());
-      await d().refreshAll();
+      await d().refreshAll({ force: true });
       const n = r.fixturesLoaded?.tagCount ?? 0;
       showProgramError(`Fixtures loaded (${n} tags).`);
       $('program-errors').className = 'inline-msg ok';
@@ -287,6 +524,8 @@ window.MooreviewProgram = (function () {
     } catch (e) {
       showProgramError(e.message);
       return null;
+    } finally {
+      programLoading = false;
     }
   }
 
@@ -375,7 +614,7 @@ window.MooreviewProgram = (function () {
   }
 
   async function loadProgramFromServer(path, { refresh = true } = {}) {
-    const rel = (path || '').trim();
+    const rel = (path || selectedProgramRel()).trim();
     if (!rel) {
       showProgramError('Select a program in Library, or use Open from st/.');
       return null;
@@ -391,7 +630,7 @@ window.MooreviewProgram = (function () {
       applyProgramToEditor({ ...r, stDir: r.stDir || programStDir });
       await syncProgramTagRefs();
       renderProgramIoPanel(d().getLastLive(), d().getLastRuntime());
-      if (refresh) await d().refreshAll();
+      if (refresh) await d().refreshAll({ force: true });
       return r;
     } catch (e) {
       showProgramError(e.message);
@@ -572,29 +811,6 @@ window.MooreviewProgram = (function () {
     );
   }
 
-  function parcDeviceForOpta(opta, data) {
-    if (!opta) return null;
-    const id = String(opta.deviceId || '').trim();
-    if (!id) return null;
-    const devices = data?.parc?.devices || [];
-    return devices.find((dev) => dev.deviceId === id) || null;
-  }
-
-  function setProgramRuntimeStatusBar({ badge, detail, badgeClass = 'prog-runtime-badge--stopped' }) {
-    const badgeEl = $('prog-runtime-badge');
-    const detailEl = $('prog-runtime-detail');
-    if (badgeEl) {
-      badgeEl.textContent = badge;
-      badgeEl.className = `prog-runtime-badge ${badgeClass}`;
-    }
-    if (detailEl) {
-      detailEl.textContent = detail || '';
-      detailEl.className = badgeClass.includes('error')
-        ? 'prog-runtime-detail err-text cell-mono'
-        : 'prog-runtime-detail muted cell-mono';
-    }
-  }
-
   function formatDeployKb(bytes) {
     if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${bytes} B`;
@@ -611,18 +827,22 @@ window.MooreviewProgram = (function () {
     }
     el.hidden = false;
     if (!est.ok) {
-      el.textContent = `Opta deploy: invalid — ${(est.errors || ['parse error']).join('; ')}`;
+      const lineHint = est.lineCount?.overLimit
+        ? ` · ${est.lineCount.lines}/${est.lineCount.limit} lines`
+        : '';
+      el.textContent = `Parc deploy: invalid — ${(est.errors || ['parse error']).join('; ')}${lineHint}`;
       el.className = 'prog-deploy-estimate err cell-mono';
       return;
     }
     const limitLabel = formatDeployKb(est.limit);
-    const bcLabel = formatDeployKb(est.bcTotalBytes || est.bcBytes || 0);
-    el.textContent = `Parc deploy: ${bcLabel} / ${limitLabel} bytecode · ${est.tagCount} tags · ${formatDeployKb(est.codeBytes || 0)} code + ${formatDeployKb(est.dataBytes || est.bcBytes || 0)} data (${est.pct}%)`;
+    const bytesLabel = formatDeployKb(est.bytes);
+    const linePart = est.lineCount
+      ? ` · ${est.lineCount.lines}/${est.lineCount.limit} lines`
+      : '';
+    el.textContent = `Parc deploy: ${bytesLabel} / ${limitLabel}${linePart} · ${est.tagCount} tags · ${formatDeployKb(est.codeBytes || 0)} code + ${formatDeployKb(est.dataBytes || est.bcBytes || 0)} data (${est.pct}%)`;
     el.title = est.overLimit
-      ? (est.bcOverLimit
-        ? 'Bytecode exceeds Opta limit — trim program or reduce tag count'
-        : 'Wire payload exceeds Opta MQTT/HTTP limit — trim program or reflash Opta firmware')
-      : `Bytecode ${bcLabel} · wire ${formatDeployKb(est.wireBytes || est.bytes)} · headroom ${formatDeployKb(Math.max(0, est.headroom))}.`;
+      ? 'Deploy exceeds Opta limit — trim program or reduce tag count'
+      : `Wire ${formatDeployKb(est.bytes)} · bytecode ${formatDeployKb(est.bcTotalBytes || est.bcBytes)} (code + tag table data). Headroom ${formatDeployKb(Math.max(0, est.headroom))}.`;
     el.className = est.overLimit
       ? 'prog-deploy-estimate err cell-mono'
       : (est.pct >= 80 ? 'prog-deploy-estimate warn cell-mono' : 'prog-deploy-estimate muted cell-mono');
@@ -630,6 +850,10 @@ window.MooreviewProgram = (function () {
 
   let deployEstimateTimer = null;
   async function syncDeployEstimate() {
+    if (!isRemoteExecutionOn()) {
+      renderDeployEstimate({ remoteApplicable: false });
+      return;
+    }
     const opta = findOptaRemoteDriver();
     if (!opta) {
       renderDeployEstimate({ remoteApplicable: false });
@@ -637,7 +861,7 @@ window.MooreviewProgram = (function () {
     }
     const src = $('program-src')?.value ?? '';
     if (!src.trim()) {
-      renderDeployEstimate({ remoteApplicable: true, ok: true, bytes: 0, astBytes: 0, tagCount: 0, limit: 16384, overLimit: false, headroom: 16384, pct: 0 });
+      renderDeployEstimate({ remoteApplicable: true, ok: true, bytes: 0, astBytes: 0, tagCount: 0, limit: 32768, overLimit: false, headroom: 32768, pct: 0 });
       return;
     }
     try {
@@ -661,14 +885,12 @@ window.MooreviewProgram = (function () {
     const remoteCb = $('prog-remote-exec');
     const connectBtn = $('btn-remote-connect');
     const disconnectBtn = $('btn-remote-disconnect');
-    const ioViewBtn = $('btn-prog-opta-io-view');
-    const ctCalBtn = $('btn-prog-opta-ct-cal');
-    const statusEl = $('prog-remote-status');
     if (!remoteCb) return;
 
     const settings = data?.settings || d().getLastSettings?.() || {};
     const runtime = data?.runtime || d().getLastRuntime?.() || {};
     const remoteOn = settings.remoteExecution === true;
+    const hubMqtt = data?.parc?.mqtt || {};
     if (document.activeElement !== remoteCb) remoteCb.checked = remoteOn;
 
     const opta = findOptaRemoteDriver();
@@ -678,9 +900,7 @@ window.MooreviewProgram = (function () {
     const health = opta ? healthMap[opta.id] : null;
     const connected = !!health?.connected;
     const running = !!runtime.running;
-    const parcDev = parcDeviceForOpta(opta, data);
-    const programError = String(parcDev?.runtime?.programError || '').trim();
-    const programName = parcDev?.runtime?.programName || parcDev?.name || '';
+    const paused = !!runtime.paused;
 
     // Connect/Disconnect always visible when an Opta remote driver exists (not only when Remote is on).
     const showOptaLink = !!opta;
@@ -692,71 +912,80 @@ window.MooreviewProgram = (function () {
       disconnectBtn.hidden = !showOptaLink;
       disconnectBtn.disabled = !showOptaLink || !connected || running;
     }
-    if (ioViewBtn) {
-      const host = opta ? d().optaHttpHostForDriver?.(opta) : '';
-      ioViewBtn.hidden = !showOptaLink;
-      ioViewBtn.disabled = !host;
-      ioViewBtn.title = host
-        ? `Open http://${host}/io-map`
-        : 'Wait for Opta telemetry (ethIp) or set host on driver';
-    }
-    if (ctCalBtn) {
-      const host = opta ? d().optaHttpHostForDriver?.(opta) : '';
-      ctCalBtn.hidden = !showOptaLink;
-      ctCalBtn.disabled = !host;
-      ctCalBtn.title = host
-        ? `Open http://${host}/ct-cal`
-        : 'Wait for Opta telemetry (ethIp) or set host on driver';
-    }
 
-    if (statusEl) {
+    const badgeEl = $('prog-runtime-badge');
+    const detailEl = $('prog-runtime-detail');
+    const statusBar = $('prog-remote-status');
+    if (badgeEl) {
+      let badgeText = 'Stopped';
+      let badgeMod = 'stopped';
+      if (running) {
+        badgeText = paused ? 'Paused' : 'Running';
+        badgeMod = paused ? 'paused' : 'running';
+      }
+      badgeEl.textContent = badgeText;
+      badgeEl.className = `prog-runtime-badge prog-runtime-badge--${badgeMod}`;
+    }
+    if (detailEl || statusBar) {
       const link = opta
         ? (opta.type === 'mqtt_parc' ? (opta.deviceId || 'MQTT') : (opta.host || '—'))
         : '';
-      if (programError) {
-        setProgramRuntimeStatusBar({
-          badge: 'Program failed',
-          detail: `Opta ${link}: ${programError}`,
-          badgeClass: 'prog-runtime-badge--error',
-        });
-      } else if (!opta) {
-        setProgramRuntimeStatusBar({
-          badge: running ? 'Running' : 'Stopped',
-          detail: remoteOn ? 'Add mqtt_parc driver in Drivers' : '',
-          badgeClass: running ? 'prog-runtime-badge--running' : 'prog-runtime-badge--stopped',
-        });
-      } else if (!remoteOn) {
-        setProgramRuntimeStatusBar({
-          badge: running ? 'Running' : 'Stopped',
-          detail: connected
-            ? `Linked ${link} · check Remote to run ST on device`
-            : `Not linked (${link}) · Connect, then Remote for ST on Opta`,
-          badgeClass: running ? 'prog-runtime-badge--running' : 'prog-runtime-badge--stopped',
-        });
-      } else if (connected) {
-        const runDetail = runtime.remoteScanOnDevice
-          ? `ST running on ${link}${programName ? ` · ${programName}` : ''}`
-          : `Linked ${link} · deploy with Download & Start`;
-        setProgramRuntimeStatusBar({
-          badge: runtime.remoteScanOnDevice ? 'Running on Opta' : (running ? 'Running' : 'Stopped'),
-          detail: runDetail,
-          badgeClass: runtime.remoteScanOnDevice || running
-            ? 'prog-runtime-badge--running'
-            : 'prog-runtime-badge--stopped',
-        });
-      } else {
-        const err = (health?.message || '').trim();
-        setProgramRuntimeStatusBar({
-          badge: 'Not linked',
-          detail: err
-            ? `Opta ${link}: ${err}`
-            : `Not linked (${link})`,
-          badgeClass: 'prog-runtime-badge--error',
-        });
+      const hubLine = remoteOn && opta?.type === 'mqtt_parc'
+        ? (hubMqtt.connected
+          ? `Hub OK (${hubMqtt.brokerUrl || settings.mqttParc?.brokerUrl || 'MQTT'})`
+          : `Hub offline${hubMqtt.brokerUrl ? ` → ${hubMqtt.brokerUrl}` : ''} — enable MQTT Parc in System setup`)
+        : '';
+      const detailParts = [];
+      if (running) {
+        const where = runtime.remoteScanOnDevice && opta
+          ? `ST on ${link}`
+          : 'ST on this PC';
+        detailParts.push(where);
+        if (paused) detailParts.push('scan paused');
+        if (runtime.remoteTracePending) {
+          detailParts.push('waiting for trace telemetry');
+        }
+      } else if (remoteOn && !opta) {
+        detailParts.push('Add mqtt_parc driver in Drivers');
+      } else if (opta) {
+        if (!remoteOn) {
+          detailParts.push(connected
+            ? `Linked ${link} · enable Remote to run ST on device`
+            : `Not linked (${link}) · Connect, then Remote for ST on Opta`);
+        } else if (connected) {
+          detailParts.push(`Linked ${link} · press Download & Start to deploy ST`);
+        } else {
+          const err = (health?.message || '').trim();
+          detailParts.push(err
+            ? `Not linked (${link}): ${err}`
+            : `Not linked (${link})`);
+        }
       }
+      if (hubLine) detailParts.push(hubLine);
+      const detailText = detailParts.join(' · ');
+      if (detailEl) {
+        detailEl.textContent = detailText;
+        detailEl.title = detailText;
+      }
+      if (statusBar) statusBar.title = detailText;
     }
     scheduleDeployEstimate();
-    d().updateRuntimeButtons?.(runtime);
+    renderProgramLineStatus();
+
+    const startBtn = $('btn-start');
+    if (startBtn) {
+      if (paused) {
+        startBtn.textContent = 'Resume';
+        startBtn.title = remoteOn
+          ? 'Resume ST scan on Opta'
+          : 'Resume ST scan on this PC';
+      } else {
+        startBtn.textContent = remoteOn ? 'Download & Start' : 'Start';
+        startBtn.title = remoteOn
+          ? 'Compile ST to bytecode, deploy to Opta via MQTT, then start scan on device'
+          : 'Validate and run ST on this PC';
+      }
+    }
   }
 
   function bindProgramRemoteControls() {
@@ -781,7 +1010,6 @@ window.MooreviewProgram = (function () {
         try {
           await api.putSettings({ remoteExecution: next });
           d().patchLastSettings?.({ remoteExecution: next });
-          if ($('proj-remote-execution')) $('proj-remote-execution').checked = next;
           if (next && !findOptaRemoteDriver()) {
             alert(
               'Remote is on but no mqtt_parc driver.\n\n'
@@ -826,20 +1054,6 @@ window.MooreviewProgram = (function () {
     if ($('btn-remote-disconnect') && !$('btn-remote-disconnect')._bound) {
       $('btn-remote-disconnect')._bound = true;
       $('btn-remote-disconnect').onclick = disconnect;
-    }
-    if ($('btn-prog-opta-io-view') && !$('btn-prog-opta-io-view')._bound) {
-      $('btn-prog-opta-io-view')._bound = true;
-      $('btn-prog-opta-io-view').onclick = () => {
-        const opta = findOptaRemoteDriver();
-        if (opta) d().openOptaIoViewForDriver?.(opta);
-      };
-    }
-    if ($('btn-prog-opta-ct-cal') && !$('btn-prog-opta-ct-cal')._bound) {
-      $('btn-prog-opta-ct-cal')._bound = true;
-      $('btn-prog-opta-ct-cal').onclick = () => {
-        const opta = findOptaRemoteDriver();
-        if (opta) d().openOptaCtCalForDriver?.(opta);
-      };
     }
   }
 
@@ -904,7 +1118,32 @@ window.MooreviewProgram = (function () {
     $('btn-start').onclick = async () => {
       const src = $('program-src')?.value ?? '';
       const activePath = programActivePath || $('program-library')?.value || '';
+      const remoteOn = isRemoteExecutionOn();
       try {
+        if (remoteOn) {
+          const opta = findOptaRemoteDriver();
+          if (opta) {
+            const parcLines = assessLinesClient(src, true);
+            if (parcLines.overLimit) {
+              alert(`Cannot download to Opta: ST program is ${parcLines.lines} lines (Parc limit ${parcLines.limit}). Trim the program or uncheck Remote to run on PC only.`);
+              return;
+            }
+            try {
+              const est = await api.deployEstimate(src, opta.id);
+              if (est.overLimit) {
+                alert(`Cannot download to Opta: deploy payload is ${formatDeployKb(est.bytes)} (Opta limit ${formatDeployKb(est.limit)}). Trim the program or uncheck Remote to run on PC only.`);
+                return;
+              }
+              if (est.ok === false && est.errors?.length) {
+                alert(`Cannot download to Opta: ${est.errors.join('; ')}`);
+                return;
+              }
+            } catch (e) {
+              alert(e.message || 'Deploy estimate failed');
+              return;
+            }
+          }
+        }
         const put = await api.putProgram(src);
         $('program-src').dataset.dirty = '';
         if (put.errors?.length) {
@@ -920,14 +1159,6 @@ window.MooreviewProgram = (function () {
           alert(`Cannot start: ${msg}`);
           return;
         }
-        const settings = d().getLastSettings?.() || {};
-        if (settings.remoteExecution && !findOptaRemoteDriver()) {
-          alert(
-            'Remote is on but no mqtt_parc driver.\n\n'
-            + 'Drivers → Apply template → Arduino Opta — MQTT Parc ST runtime, then Connect.'
-          );
-          return;
-        }
         await api.runtimeStart();
         await d().refreshAll();
       } catch (e) {
@@ -940,14 +1171,6 @@ window.MooreviewProgram = (function () {
         } catch (e2) {
           msg = e2.message || msg;
         }
-        const opta = findOptaRemoteDriver();
-        if (opta && (d().getLastSettings?.()?.remoteExecution || $('prog-remote-exec')?.checked)) {
-          setProgramRuntimeStatusBar({
-            badge: 'Program failed',
-            detail: `Opta ${opta.deviceId || opta.id}: ${msg}`,
-            badgeClass: 'prog-runtime-badge--error',
-          });
-        }
         alert(msg);
         showProgramError(msg);
         d().refreshAll().catch(console.error);
@@ -958,6 +1181,7 @@ window.MooreviewProgram = (function () {
   }
 
   function bindProgramToolbar() {
+    bindLiveIoUpdateCheckbox();
     bindRuntimeControls();
 
     on('btn-prog-new', () => newProgramInEditor());
@@ -1024,7 +1248,9 @@ window.MooreviewProgram = (function () {
       }).catch((e) => showProgramError(e.message));
     });
 
-    on('btn-prog-load', () => loadProgramFromServer($('program-library')?.value));
+    on('btn-prog-load', () => {
+      loadProgramFromServer(selectedProgramRel()).catch((e) => showProgramError(e.message));
+    });
 
     onChange('program-library', (ev) => {
       const path = (ev.target?.value || '').trim();
@@ -1052,11 +1278,13 @@ window.MooreviewProgram = (function () {
       stEditor = StEditor.create(progEl, { statusEl: 'program-edit-status' });
       stEditor.updateGutter();
       progEl.addEventListener('st-edit', () => {
+        if (traceDebugOn) clearDebugTrace();
         programEditLock = true;
         clearTimeout(window._progTagRefTimer);
         window._progTagRefTimer = setTimeout(() => {
           syncProgramTagRefs().then(() => renderProgramIoPanel(d().getLastLive(), d().getLastRuntime()));
           scheduleDeployEstimate();
+          renderProgramLineStatus();
         }, 400);
       });
       progEl.addEventListener('st-save', () => $('btn-prog-save')?.click());
@@ -1084,6 +1312,16 @@ window.MooreviewProgram = (function () {
       $('program-errors').className = r.ok ? 'inline-msg ok' : 'inline-msg err';
       await syncDeployEstimate();
     };
+
+    on('btn-prog-debug-trace', async () => {
+      if (traceDebugOn) {
+        clearDebugTrace();
+        $('program-errors').textContent = 'Debug trace off';
+        $('program-errors').className = 'inline-msg muted';
+        return;
+      }
+      await refreshDebugTrace();
+    });
 
     on('btn-prog-apply', () => api.putProgram($('program-src').value).then((r) => {
       if (stEditor) {
@@ -1115,6 +1353,7 @@ window.MooreviewProgram = (function () {
     programCatalog = data?.programs || [];
     if (data?.stDir) programStDir = data.stDir;
     if (data?.activeProgram) programActivePath = data.activeProgram;
+    lastProgramMetaKey = programMetaKey(data?.programMeta, data?.activeProgram);
     updateProgramFolderLabel(programStDir, programActivePath);
     fillProgramLibrary(programCatalog, programActivePath);
     const prog = $('program-src');
@@ -1130,28 +1369,49 @@ window.MooreviewProgram = (function () {
       }
       prog.dataset.dirty = '';
     }
+    syncProgramLineStatusFromDashboard(data);
   }
 
   function handleDashboardPoll(data) {
+    syncProgramLineStatusFromDashboard(data);
     if (data.programTagRefs?.length) programTagRefs = data.programTagRefs;
     if (data.stDir) programStDir = data.stDir;
     updateProgramFolderLabel(data.stDir, data.activeProgram);
     programCatalog = data.programs || [];
     fillProgramLibrary(programCatalog, data.activeProgram);
 
+    const runtime = data.runtime || d().getLastRuntime?.() || {};
+    if (traceDebugOn) {
+      const rows = Array.isArray(runtime.programTrace) && runtime.programTrace.length
+        ? runtime.programTrace
+        : lastDebugTrace;
+      if (rows.length) {
+        lastDebugTrace = rows;
+        updateProgramTrace(rows, runtime);
+      }
+    } else {
+      updateProgramTrace(runtime.programTrace, runtime);
+    }
+
     const prog = $('program-src');
     const guard = Date.now() < programLoadGuardUntil;
     const editorDirty = prog?.dataset.dirty === '1';
-    if (prog && !programLoading && !prog.matches(':focus') && !editorDirty && !programEditLock && !guard) {
+    const metaKey = programMetaKey(data.programMeta, data.activeProgram);
+    const pathChanged = !!(data.activeProgram && data.activeProgram !== programActivePath);
+    const bodyChanged = metaKey !== lastProgramMetaKey;
+    if (prog && !programLoading && !prog.matches(':focus') && !editorDirty && !programEditLock && !guard
+      && (pathChanged || bodyChanged)) {
       if (data.activeProgram) programActivePath = data.activeProgram;
       if (!programActivePath || data.activeProgram === programActivePath) {
+        const src = typeof data.program === 'string' ? data.program : '';
         if (stEditor) {
-          stEditor.setValue(data.program || '', { clean: true });
+          stEditor.setValue(src, { clean: true });
           stEditor.setActivePath(programActivePath);
-          stEditor.setBaseline(data.program || '');
+          stEditor.setBaseline(src);
         } else {
-          prog.value = data.program || '';
+          prog.value = src;
         }
+        lastProgramMetaKey = metaKey;
       }
     }
   }

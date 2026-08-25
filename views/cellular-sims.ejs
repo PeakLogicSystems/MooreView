@@ -18,7 +18,7 @@
 
   <script src="/js/pwa.js" defer></script>
 
-  <title>Connectivity — MooreVIEW</title>
+  <title>Connectivity — MooreView</title>
 
   <link rel="stylesheet" href="/css/pc.css?v=<%= assetV %>">
 
@@ -28,7 +28,7 @@
 
   <header class="topbar standalone-topbar">
 
-    <div class="topbar-brand"><a href="<%= homeUrl || '/' %>" class="standalone-home-link">moore<span>VIEW</span></a></div>
+    <div class="topbar-brand"><a href="<%= homeUrl || '/' %>" class="standalone-home-link">Moore<span>View</span></a></div>
 
     <h1 class="standalone-title">Connectivity</h1>
     <% if (typeof connectivityBuild !== 'undefined' && connectivityBuild) { %>
@@ -39,9 +39,7 @@
 
       <span id="cellular-sims-status" class="muted cell-mono" aria-live="polite">Loading…</span>
 
-      <span class="topbar-version muted cell-mono" title="MooreVIEW release">v<%= appVersion %></span>
-
-      <button type="button" class="btn" id="btn-standalone-sign-out" title="Sign out">Sign out</button>
+      <span class="topbar-version muted cell-mono" title="MooreView release">v<%= appVersion %></span>
 
       <a href="<%= homeUrl || '/' %>" class="btn popup-close page-close" title="Return to dashboard">Close</a>
 
@@ -55,47 +53,11 @@
 
     <p class="panel-hint cellular-sims-hint">
 
-      One place for alarm <strong>email</strong>, <strong>SMS</strong>, platform feature toggles, cellular vendor credentials, and SIM inventory.
+      One place for alarm <strong>email</strong>, <strong>SMS</strong>, cellular vendor credentials, and SIM inventory.
 
       Twilio account SID and auth token are shared between SMS and Twilio Super SIM vendor sync.
 
     </p>
-
-
-
-    <section class="cellular-sims-features panel" id="connectivity-features-section">
-
-      <h2>Platform features</h2>
-
-      <p class="panel-hint">Enable optional cloud tools. Settings are saved with the project (<code>settings.json</code>).</p>
-
-      <div class="form-grid compact">
-
-        <label class="historian-ctl span-all">
-
-          <input type="checkbox" id="conn-cloud-sims-enabled"> Enable Cloud Sim management
-
-        </label>
-
-        <label class="historian-ctl span-all">
-
-          <input type="checkbox" id="conn-cellular-sims-enabled"> Enable Cellular SIM management
-
-        </label>
-
-      </div>
-
-      <div class="toolbar wrap">
-
-        <button type="button" class="btn btn-primary" id="conn-features-save">Save feature settings</button>
-
-        <a href="/cloud/sims" class="btn view-hidden" id="conn-cloud-sims-open">Open Cloud Sims</a>
-
-      </div>
-
-      <p id="conn-features-msg" class="cellular-sims-msg muted" aria-live="polite"></p>
-
-    </section>
 
 
 
@@ -157,7 +119,7 @@
 
         <label>From name
 
-          <input type="text" id="messaging-mail-from-name" value="MooreVIEW">
+          <input type="text" id="messaging-mail-from-name" value="MooreView">
 
         </label>
 
@@ -243,7 +205,7 @@
 
 
 
-    <section class="cellular-sims-vendors panel" id="cellular-vendors-section">
+    <section class="cellular-sims-vendors panel">
 
       <div class="cellular-sims-list-head">
 
@@ -277,7 +239,81 @@
 
 
 
-    <section class="cellular-sims-list panel" id="cellular-sims-inventory-section">
+    <section class="cellular-sims-billing panel" id="cellular-billing-section">
+
+      <div class="cellular-sims-list-head">
+
+        <h2>Simetry billing</h2>
+
+        <div class="cellular-sims-actions">
+
+          <button type="button" class="btn btn-primary" id="cellular-billing-sync">Sync billing</button>
+
+          <button type="button" class="btn" id="cellular-billing-refresh">Refresh report</button>
+
+          <button type="button" class="btn" id="cellular-billing-export">Export CSV</button>
+
+        </div>
+
+      </div>
+
+      <p class="panel-hint">Pull per-eSIM billing previews from Simetry (Teal API) for the selected period. Link SIMs to tenants for customer allocation.</p>
+
+      <form id="cellular-billing-form" class="cellular-sims-form">
+
+        <label>Period start (UTC)
+
+          <input type="text" id="billing-period-start" placeholder="2026-08-01 00:00:00" autocomplete="off">
+
+        </label>
+
+        <label>Period end (UTC)
+
+          <input type="text" id="billing-period-end" placeholder="2026-08-11 23:59:59" autocomplete="off">
+
+        </label>
+
+        <label>Simetry vendor
+
+          <select id="billing-vendor-config"></select>
+
+        </label>
+
+        <label>Tenant filter (optional)
+
+          <input type="text" id="billing-tenant-id" placeholder="tenant slug" autocomplete="off">
+
+        </label>
+
+      </form>
+
+      <p id="cellular-billing-summary" class="cellular-sims-msg muted" aria-live="polite"></p>
+
+      <div id="cellular-billing-table-wrap"><p class="muted">Run <strong>Sync billing</strong> or <strong>Refresh report</strong> to load Simetry billing lines.</p></div>
+
+    </section>
+
+
+
+    <section class="cellular-sims-gateway panel" id="cellular-gateway-section">
+
+      <div class="cellular-sims-list-head">
+
+        <h2>Gateway SIM identity</h2>
+
+        <button type="button" class="btn" id="cellular-gateway-refresh">Refresh</button>
+
+      </div>
+
+      <p class="panel-hint">NanoPi gateways publish <code>mooreview/v1/gateway/{gatewayId}/cellular</code> with ICCID from the LTE modem. Cloud auto-links when the ICCID matches a synced Simetry SIM.</p>
+
+      <div id="cellular-gateway-table-wrap"><p class="muted">Loading gateway reports…</p></div>
+
+    </section>
+
+
+
+    <section class="cellular-sims-list panel">
 
       <div class="cellular-sims-list-head">
 
@@ -305,17 +341,13 @@
 
 
 
-  <script>window.MOOREVIEW_API_BASE = '<%= typeof mooreviewApiBase !== "undefined" ? mooreviewApiBase : "/api" %>';</script>
+  <script>window.MOOREVIEW_API_BASE = '<%= mooreviewApiBase || "/api" %>';</script>
 
   <script>window.MOOREVIEW_DEPLOYMENT = '<%= deployment %>';</script>
 
-  <script src="/js/api.js?v=<%= assetV %>-conn"></script>
+  <script src="/js/api.js?v=<%= assetV %>"></script>
 
-  <script src="/js/signOut.js?v=<%= assetV %>"></script>
-
-  <script src="/js/cellularSimsPage.js?v=<%= assetV %>-conn"></script>
-
-  <script>MooreviewSignOut.bind('btn-standalone-sign-out');</script>
+  <script src="/js/cellularSimsPage.js?v=<%= assetV %>"></script>
 
 </body>
 

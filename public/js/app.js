@@ -101,6 +101,7 @@
   let devicePresets = [];
   let wizardTransportGroups = [];
   let lastRuntime = { running: false };
+  let lastOptaRuntime = null;
   let lastLive = [];
   let lastSettings = {};
   let tagsDirty = false;
@@ -110,6 +111,14 @@
   const TAG_VIEW_FILTER_IDS = ['io', 'i', 'r', 'b', 'fb'];
   let tagViewFilters = readTagViewFilters();
   let projects = [];
+  let projectImportItems = [];
+  let projectHubItems = [];
+  const projectListSort = {
+    picker: { key: 'date', dir: 'desc' },
+    import: { key: 'date', dir: 'desc' },
+    hub: { key: 'date', dir: 'desc' },
+    setup: { key: 'date', dir: 'desc' },
+  };
   let setupActiveTab = 'general';
   let setupDirty = false;
   let driversActiveTab = 'list';
@@ -133,18 +142,57 @@
   }
 
   function authUserHasFeature(featureKey) {
-    if (!currentAuthUser) return false;
-    const role = currentAuthUser.role;
-    if (role === 'admin' || role === 'platform_admin' || role === 'tenant_admin') return true;
-    if (!isApplianceDeployment() && !isCloudDeployment()) return true;
-    return !!currentAuthUser.features?.[featureKey];
+    if (!currentAuthUser) return !isCloudDeployment() && !isApplianceDeployment();
+    if (currentAuthUser.role === 'platform_admin' || currentAuthUser.role === 'tenant_admin' || currentAuthUser.role === 'partner_admin') {
+      return true;
+    }
+    if (isApplianceDeployment()) {
+      if (currentAuthUser.role === 'admin') return true;
+      return !!currentAuthUser.features?.[featureKey];
+    }
+    if (isCloudDeployment()) {
+      return !!currentAuthUser.features?.[featureKey];
+    }
+    return true;
   }
 
-  function syncAuthGlobals() {
-    window.MOOREVIEW_AUTH = {
-      hmiControl: authUserHasFeature('hmiControl'),
-      role: currentAuthUser?.role || null,
+  function applyCloudFeatureVisibility() {
+    const navFeat = {
+      studio: 'hmiView',
+      sites: 'sites',
+      devices: 'devices',
+      fleet: 'fleet',
+      people: 'people',
+      cmms: 'cmms',
     };
+    document.querySelectorAll('.cloud-studio-nav-link[data-cloud-nav]').forEach((a) => {
+      if (a.dataset.cloudNav === 'admin') return;
+      const key = navFeat[a.dataset.cloudNav] || 'hmiView';
+      a.classList.toggle('view-hidden', !authUserHasFeature(key));
+    });
+    const operatorHmi = isCloudDeployment()
+      && currentAuthUser?.role === 'operator'
+      && authUserHasFeature('hmiView')
+      && !authUserHasFeature('studioEdit');
+    document.body.classList.toggle('mv-cloud-operator-hmi', operatorHmi);
+    $('hmi-operator-hand-banner')?.classList.toggle('view-hidden', !operatorHmi);
+    const cloudMap = [
+      { feature: 'studioEdit', sel: '[data-popup-open="program"], [data-popup-open="tags"], [data-popup-open="drivers"], #btn-hmi-setup, #btn-project-setup' },
+      { feature: 'runtime', sel: '#btn-runtime-start, #btn-runtime-stop' },
+      { feature: 'project', sel: '#btn-open-est, #btn-import-est, #btn-export-est, #btn-save-est, #btn-save-est-as, #btn-deploy-project, #btn-share-project' },
+      { feature: 'historian', sel: '#historian-menu-details, [data-popup-open="historian"], [data-historian-logger-open]' },
+      { feature: 'reports', sel: '[data-popup-open="report"]' },
+      { feature: 'alarms', sel: '#btn-topbar-alarms' },
+      { feature: 'cmms', sel: '#btn-topbar-cmms' },
+      { feature: 'mvDraw', sel: '#btn-topbar-mv-draw' },
+    ];
+    cloudMap.forEach(({ feature, sel }) => {
+      const allowed = authUserHasFeature(feature);
+      document.querySelectorAll(sel).forEach((el) => {
+        el.classList.toggle('view-hidden', !allowed);
+      });
+    });
+    window.__mvCloudUser = currentAuthUser;
   }
 
   function applyAuthChrome() {
@@ -167,34 +215,98 @@
       logoutBtn?.classList.add('view-hidden');
       helpSignOut?.classList.add('view-hidden');
     }
-    if (currentAuthUser?.role === 'platform_admin' && cloudNavAdmin) {
-      cloudNavAdmin.classList.remove('view-hidden');
+    if (cloudNavAdmin) {
+      cloudNavAdmin.classList.toggle('view-hidden', currentAuthUser?.role !== 'platform_admin');
     }
   }
 
+  async function initStudioOrgSwitcher(me) {
+    const wrap = $('studio-org-wrap');
+    const sel = $('studio-org-select');
+    if (!wrap || !sel || !me) return;
+    const user = me.user || {};
+    const isPlatformAdmin = user.role === 'platform_admin';
+    const isPartner = !!me.isPartner;
+    let tenants = me.accessibleTenants || [];
+    if ((isPartner || isPlatformAdmin) && tenants.length === 0) {
+      try {
+        const extra = isPlatformAdmin
+          ? (await api.listAdminTenants()).tenants
+          : (await api.listAccessibleTenants()).tenants;
+        if (Array.isArray(extra) && extra.length) tenants = extra;
+      } catch { /* ignore */ }
+    }
+    const byId = new Map(tenants.map((t) => [t.tenantId, t]));
+    tenants = [...byId.values()];
+    if (!isPartner && !isPlatformAdmin) {
+      wrap.classList.add('view-hidden');
+      return;
+    }
+    if (!tenants.length) {
+      wrap.classList.remove('view-hidden');
+      sel.innerHTML = '<option value="">(no organizations)</option>';
+      return;
+    }
+    wrap.classList.remove('view-hidden');
+    const activeId = me.tenant?.tenantId || user.tenantId || '';
+    sel.innerHTML = tenants.map((t) => {
+      const home = isPartner && t.tenantId === user.tenantId;
+      const suffix = home ? ' (partner)' : '';
+      return `<option value="${esc(t.tenantId)}"${t.tenantId === activeId ? ' selected' : ''}>${esc(t.name)} (${esc(t.tenantSlug)})${suffix}</option>`;
+    }).join('');
+    if (!activeId && isPartner && user.tenantId) {
+      try {
+        await api.switchPartnerTenant({ tenantId: user.tenantId });
+        location.reload();
+        return;
+      } catch { /* ignore */ }
+    }
+    if (!activeId && isPlatformAdmin) {
+      sel.insertAdjacentHTML('afterbegin', '<option value="" disabled selected>Select organization…</option>');
+    }
+    if (sel.dataset.bound !== '1') {
+      sel.dataset.bound = '1';
+      sel.addEventListener('change', async () => {
+        if (!sel.value) return;
+        try {
+          await api.switchPartnerTenant({ tenantId: sel.value });
+          location.reload();
+        } catch (e) {
+          alert(e.message || 'Could not switch organization');
+        }
+      });
+    }
+  }
+
+  function cloudProjectAccessHint(err) {
+    const msg = String(err?.message || err || '');
+    if (!/select an organization|no tenant context/i.test(msg)) return msg;
+    return `${msg}\n\nChoose an organization from the Org dropdown in the top bar (e.g. ACE), then try again.`;
+  }
+
   function applyFeatureVisibility() {
-    if (!isApplianceDeployment() && !isCloudDeployment()) {
+    if (isCloudDeployment()) {
+      applyCloudFeatureVisibility();
       applyAuthChrome();
       return;
     }
-    const isHomeowner = currentAuthUser?.role === 'homeowner';
-    document.body.classList.toggle('homeowner-mode', isHomeowner);
-    document.body.classList.toggle('hmi-readonly', !authUserHasFeature('hmiControl'));
-    syncAuthGlobals();
-
+    if (!isApplianceDeployment()) {
+      applyAuthChrome();
+      return;
+    }
     const map = [
-      { feature: 'alarms', sel: '#btn-topbar-alarms, #hmi-alarm-status' },
+      { feature: 'alarms', sel: '#btn-topbar-alarms' },
       { feature: 'mvDraw', sel: '#btn-topbar-mv-draw' },
       { feature: 'cameras', sel: '#camera-menu-details' },
       { feature: 'historian', sel: '#historian-menu-details, #btn-topbar-pdm, [data-popup-open="historian"], [data-historian-logger-open], [data-popup-open="historian-logger"], #btn-historian-logger' },
-      { feature: 'reports', sel: '#reporting-menu-details, [data-popup-open="report"]' },
+      { feature: 'reports', sel: '[data-popup-open="report"]' },
       { feature: 'cmms', sel: '#btn-topbar-cmms, a[href="/cmms"]' },
       { feature: 'program', sel: '[data-popup-open="program"]' },
       { feature: 'tags', sel: '[data-popup-open="tags"]' },
       { feature: 'drivers', sel: '[data-popup-open="drivers"]' },
       { feature: 'connectivity', sel: 'a[href="/cellular/sims"]' },
-      { feature: 'setup', sel: '#btn-project-setup, #btn-hmi-setup' },
-      { feature: 'project', sel: '#project-menu-details, .topbar-project-bar, #btn-open-est, #btn-import-est, #btn-export-est, #btn-save-est, #btn-save-est-as, #btn-save-ws, #btn-delete-est, #btn-proj-new-menu, #btn-deploy-project, #btn-share-project' },
+      { feature: 'setup', sel: '#btn-project-setup' },
+      { feature: 'project', sel: '#btn-open-est, #btn-import-est, #btn-export-est, #btn-save-est, #btn-save-est-as, #btn-save-ws, #btn-delete-est, #btn-proj-new-menu, #btn-deploy-project, #btn-share-project' },
       { feature: 'users', sel: '[data-setup-tab-btn="features"]' },
     ];
     map.forEach(({ feature, sel }) => {
@@ -206,18 +318,6 @@
         }
       });
     });
-
-    const showTools = authUserHasFeature('program') || authUserHasFeature('tags')
-      || authUserHasFeature('drivers') || authUserHasFeature('connectivity');
-    document.getElementById('tools-menu-details')?.classList.toggle('view-hidden', !showTools);
-
-    document.querySelector('.cloud-studio-nav')?.classList.toggle('view-hidden', isHomeowner);
-    document.querySelector('.topbar-brand')?.classList.toggle('view-hidden', isHomeowner);
-    document.getElementById('btn-topbar-about')?.classList.toggle('view-hidden', isHomeowner);
-    document.querySelector('.topbar-version')?.classList.toggle('view-hidden', isHomeowner);
-    document.getElementById('btn-hmi-reload')?.classList.toggle('view-hidden', isHomeowner);
-    document.getElementById('btn-hmi-open-3d')?.classList.toggle('view-hidden', isHomeowner || !authUserHasFeature('mvDraw'));
-
     applyAuthChrome();
     const canEditUsers = authUserHasFeature('users') || currentAuthUser?.role === 'admin';
     $('setup-features-admin-only')?.classList.toggle('view-hidden', !canEditUsers);
@@ -228,10 +328,13 @@
     try {
       const data = await api.authMe();
       currentAuthUser = data.user || null;
-      if (isApplianceDeployment() || isCloudDeployment()) {
+      if (isApplianceDeployment()) {
         authFeatureCatalog = data.featureCatalog || [];
       }
       applyFeatureVisibility();
+      if (isCloudDeployment()) {
+        await initStudioOrgSwitcher(data);
+      }
       return currentAuthUser;
     } catch (e) {
       if ((e.message || '').toLowerCase().includes('authentication')) {
@@ -243,45 +346,13 @@
     }
   }
 
-    let authRoleDefaults = {};
-
-    function renderAuthRoleDefaultsMatrix() {
-      const host = $('setup-role-defaults-matrix-host');
-      if (!host) return;
-      const roles = [
-        { id: 'operator', label: 'operator' },
-        { id: 'technician', label: 'technician' },
-        { id: 'viewer', label: 'viewer' },
-        { id: 'homeowner', label: 'homeowner' },
-      ];
-      const features = authFeatureCatalog.length
-        ? authFeatureCatalog
-        : Object.keys(authRoleDefaults.operator || {}).map((k) => ({ key: k, label: k }));
-      if (!features.length) {
-        host.innerHTML = '';
-        return;
-      }
-      const head = features.map((f) => `<th title="${esc(f.label)}">${esc(f.label)}</th>`).join('');
-      const rows = roles.map((r) => {
-        const defaults = authRoleDefaults[r.id] || {};
-        const cells = features.map((f) => {
-          const on = !!defaults[f.key];
-          return `<td class="${on ? 'feat-on' : 'feat-off'}">${on ? '✓' : '—'}</td>`;
-        }).join('');
-        return `<tr class="is-role-default"><td class="feature-user-col"><strong>${esc(r.label)}</strong></td>${cells}</tr>`;
-      }).join('');
-      host.innerHTML = `<table class="setup-features-matrix"><thead><tr><th class="feature-user-col">Role</th>${head}</tr></thead><tbody>${rows}</tbody></table>`;
-    }
-
-    async function refreshAuthUsersMatrix() {
-    if ((!isApplianceDeployment() && !isCloudDeployment()) || !authUserHasFeature('users')) return;
+  async function refreshAuthUsersMatrix() {
+    if (!isApplianceDeployment() || !authUserHasFeature('users')) return;
     const msg = $('setup-features-msg');
     try {
       const data = await api.listAuthUsers();
       authUsersForMatrix = data.users || [];
       authFeatureCatalog = data.features || authFeatureCatalog;
-      authRoleDefaults = data.roleDefaults || authRoleDefaults;
-      renderAuthRoleDefaultsMatrix();
       renderAuthFeaturesMatrix();
       if (msg) msg.textContent = `${authUsersForMatrix.length} account(s)`;
     } catch (e) {
@@ -864,7 +935,9 @@
     }
     const trs = rows.map(({ tag: t, live, level, acked, ackedBy, since }) => {
       const rowCls = acked ? 'alarm-row-acked' : `alarm-row-active alarm-row-${level}`;
-      const sinceStr = since ? new Date(since).toLocaleString() : '—';
+      const sinceStr = since
+        ? (window.MooreviewTime?.formatFriendly?.(since) || new Date(since).toLocaleString(undefined, window.MooreviewTime?.localeOpts?.() || {}))
+        : '—';
       const ackHtml = acked
         ? (alarmAckCellHtml(true, ackedBy) || '<span class="muted">Acked</span>')
         : `<button type="button" class="btn btn-sm btn-alarm-ack" data-alarm-ack="${esc(t.id)}">Ack</button>`;
@@ -1572,8 +1645,6 @@
         return 'Use <strong>Drivers → NextCentury API</strong> for credentials, or set email/password here. Tags auto-sync on poll when enabled.';
       case 'mqtt':
         return 'Set broker URL and client ID, then <strong>Apply &amp; save</strong>.';
-      case 'mqtt_sim':
-        return 'Built-in Nexcomm lift simulator — feeds all <code>mqtt</code> lift drivers on the same broker. Leave serial numbers blank to auto-discover from lift driver subscriptions.';
       case 'mqtt_parc':
         return 'Set <strong>device ID</strong> (must match Opta MQTT id — firmware sets <code>opta_&lt;ATECC608 serial&gt;</code> automatically), then <strong>Apply &amp; save</strong>. Use <strong>Sync tags from device</strong> on the driver card after telemetry arrives.';
       case 'https':
@@ -1638,20 +1709,6 @@
       delete d.writePriority;
       delete d.discoverTimeoutMs;
     }
-    if (t !== 'mqtt' && t !== 'mqtt_sim') {
-      delete d.brokerUrl;
-      delete d.broker;
-    }
-    if (t !== 'mqtt') {
-      delete d.clientId;
-      delete d.subscriptions;
-    }
-    if (t !== 'mqtt_sim') {
-      delete d.intervalMs;
-      delete d.samplePath;
-      delete d.stations;
-      delete d.publishToBroker;
-    }
     return d;
   }
 
@@ -1669,8 +1726,6 @@
         detail = detail && detail !== 'OK' ? detail : 'API';
       } else if (type === 'mqtt' || type === 'mqtt_parc') {
         detail = detail && detail !== 'OK' ? detail : 'MQTT';
-      } else if (type === 'mqtt_sim') {
-        detail = detail && detail !== 'OK' ? detail : 'Sim';
       } else if (type === 'bacnet') {
         detail = detail && detail !== 'OK' ? detail : `UDP ${drv?.port || 47808}`;
       } else if (type === 'https') {
@@ -1910,11 +1965,17 @@
   let historianConfigFloater = null;
   let historianLoggerFloater = null;
   let alarmsFloater = null;
+  let reportFloater = null;
   const ALARMS_LAYOUT_KEY = 'mooreview-alarms-layout';
   const ALARMS_MIN_W = 480;
   const ALARMS_MIN_H = 280;
   const ALARMS_DEFAULT_W = 720;
   const ALARMS_DEFAULT_H = 420;
+  const REPORT_LAYOUT_KEY = 'mooreview-report-layout';
+  const REPORT_MIN_W = 560;
+  const REPORT_MIN_H = 360;
+  const REPORT_DEFAULT_W = 1150;
+  const REPORT_DEFAULT_H = 720;
   const HISTORIAN_LAYOUT_KEY = 'mooreview-historian-layout';
   const HISTORIAN_CONFIG_LAYOUT_KEY = 'mooreview-historian-config-layout';
   const HISTORIAN_CONFIG_MIN_W = 640;
@@ -2078,6 +2139,37 @@
         setTabActive('alarms', false);
       },
     });
+    if (!reportFloater) reportFloater = MvFloater.create({
+      chromeId: 'report-chrome',
+      popupName: 'report',
+      layoutKey: REPORT_LAYOUT_KEY,
+      minW: REPORT_MIN_W,
+      minH: REPORT_MIN_H,
+      defaultW: REPORT_DEFAULT_W,
+      defaultH: REPORT_DEFAULT_H,
+      defaultLeft: 32,
+      defaultTop: 56,
+      shellStubClass: 'report-shell-stub',
+      sizedClass: 'report-sized',
+      onOpen() {
+        setTabActive('report', true);
+        refreshAll()
+          .then(() => refreshPdmAssetLists())
+          .catch(console.error);
+        fillReportConfigForm(reportConfig);
+        fillHistorianReportPanel();
+        loadMongoReportBuilder().catch(console.error);
+        refreshReportMongoLogs().catch(console.error);
+        fillRoiSettingsFields(lastSettings?.roi);
+        refreshRoiCalculatorDisplay();
+        bindRoiCalculatorInputs();
+        restartDashboardPoll();
+      },
+      onClose() {
+        setTabActive('report', false);
+        restartDashboardPoll();
+      },
+    });
   }
 
   function initWindowStack() {
@@ -2089,6 +2181,7 @@
       'historian-config-chrome',
       'historian-logger-chrome',
       'alarms-chrome',
+      'report-chrome',
       'live-io-chrome',
       'hmi-setup-chrome',
     ].forEach((id) => {
@@ -2102,6 +2195,7 @@
         || pop.classList.contains('historian-config-shell-stub')
         || pop.classList.contains('historian-logger-shell-stub')
         || pop.classList.contains('alarms-shell-stub')
+        || pop.classList.contains('report-shell-stub')
         || pop.classList.contains('live-io-shell-stub')
         || pop.classList.contains('hmi-setup-shell-stub')) return;
       MvWindowStack.register(pop);
@@ -2516,6 +2610,9 @@
     if (name === 'historian-logger') {
       return !!historianLoggerFloater?.isOpen();
     }
+    if (name === 'report') {
+      return !!reportFloater?.isOpen();
+    }
     const el = document.querySelector(`[data-popup="${name}"]`);
     return el && !el.classList.contains('view-hidden');
   }
@@ -2876,6 +2973,10 @@
     const next = {
       project: { ...(prev.project || {}), name },
       scanMs,
+      timezone: $('proj-timezone')?.value
+        || prev.timezone
+        || window.MooreviewTime?.DEFAULT_TIMEZONE
+        || 'America/New_York',
       hmi: hmiCfg?.screens?.length ? hmiCfg : (prev.hmi || {}),
       activeProgram: activeProgram || null,
       startup: readStartupFields(),
@@ -2906,6 +3007,7 @@
     return JSON.stringify({
       project: st.project || {},
       scanMs: st.scanMs ?? 100,
+      timezone: st.timezone || window.MooreviewTime?.DEFAULT_TIMEZONE || 'America/New_York',
       mongoLogger: st.mongoLogger || {},
       startup: st.startup || {},
       autoStartRuntime: st.autoStartRuntime === true,
@@ -2999,12 +3101,7 @@
     list: 'drivers',
     modbus: 'modbus',
     nextcentury: 'nextcentury',
-    'bacnet-builder': 'bacnet',
   };
-
-  let bacnetBuilderProfiles = [];
-  let bacnetBuilderSamplePoints = [];
-  let bacnetBuilderEditingProfile = null;
 
   function syncContextHelpButton(btn, sectionId) {
     if (!btn) return;
@@ -3110,6 +3207,103 @@
 
   let userProfiles = [];
   let selectedUserId = null;
+  let userScopeCatalog = { sites: [], devices: [], assets: [] };
+
+  function syncUserScopeModeUi() {
+    const allMode = !!$('user-alarm-scope-all')?.checked;
+    ['user-alarm-scope-sites', 'user-alarm-scope-devices', 'user-alarm-scope-assets'].forEach((id) => {
+      const el = $(id);
+      if (el) el.disabled = allMode;
+    });
+    const hint = $('user-alarm-scope-hint');
+    if (hint) {
+      hint.textContent = allMode
+        ? 'Checked = all alarms. Uncheck to pick specific sites, devices, and/or assets below.'
+        : 'Pick sites, devices, and/or assets below (Ctrl/Cmd+click). Notify when an alarm matches any selection.';
+    }
+  }
+
+  function populateUserScopeSelects(catalog) {
+    const sitesEl = $('user-alarm-scope-sites');
+    const devicesEl = $('user-alarm-scope-devices');
+    const assetsEl = $('user-alarm-scope-assets');
+    if (!sitesEl || !devicesEl || !assetsEl) return;
+    const sites = catalog?.sites || [];
+    const devices = catalog?.devices || [];
+    const assets = catalog?.assets || [];
+    sitesEl.innerHTML = sites.length
+      ? sites.map((s) => `<option value="${esc(s.siteId)}">${esc(s.name || s.siteId)}</option>`).join('')
+      : '<option disabled>(no sites — set CMMS or Cloud site ID)</option>';
+    devicesEl.innerHTML = devices.length
+      ? devices.map((d) => `<option value="${esc(d.deviceId)}">${esc(d.name || d.deviceId)}${d.siteId ? ` · ${esc(d.siteId)}` : ''}</option>`).join('')
+      : '<option disabled>(no drivers/devices)</option>';
+    assetsEl.innerHTML = assets.length
+      ? assets.map((a) => `<option value="${esc(a.assetId)}">${esc(a.name || a.assetId)}${a.siteId ? ` · ${esc(a.siteId)}` : ''}</option>`).join('')
+      : '<option disabled>(no PdM assets)</option>';
+    bindMultiSelectListbox(sitesEl);
+    bindMultiSelectListbox(devicesEl);
+    bindMultiSelectListbox(assetsEl);
+    syncUserScopeModeUi();
+  }
+
+  function setUserMultiSelectValues(el, values) {
+    if (!el) return;
+    const set = new Set((values || []).map(String));
+    [...el.options].forEach((opt) => {
+      opt.selected = set.has(opt.value);
+    });
+  }
+
+  function readUserMultiSelectValues(el) {
+    if (!el) return [];
+    return [...el.selectedOptions].map((o) => o.value).filter(Boolean);
+  }
+
+  function fillUserScopeFields(scope) {
+    const s = scope || {};
+    if ($('user-alarm-scope-all')) $('user-alarm-scope-all').checked = s.mode !== 'scoped';
+    setUserMultiSelectValues($('user-alarm-scope-sites'), s.siteIds);
+    setUserMultiSelectValues($('user-alarm-scope-devices'), s.deviceIds);
+    setUserMultiSelectValues($('user-alarm-scope-assets'), s.assetIds);
+    syncUserScopeModeUi();
+  }
+
+  function readUserScopeFields() {
+    const allMode = !!$('user-alarm-scope-all')?.checked;
+    if (allMode) {
+      return { mode: 'all', siteIds: [], deviceIds: [], assetIds: [] };
+    }
+    return {
+      mode: 'scoped',
+      siteIds: readUserMultiSelectValues($('user-alarm-scope-sites')),
+      deviceIds: readUserMultiSelectValues($('user-alarm-scope-devices')),
+      assetIds: readUserMultiSelectValues($('user-alarm-scope-assets')),
+    };
+  }
+
+  async function loadUserScopeCatalog() {
+    try {
+      const data = await api.notificationScopeCatalog();
+      userScopeCatalog = {
+        sites: data.sites || [],
+        devices: data.devices || [],
+        assets: data.assets || [],
+      };
+    } catch {
+      userScopeCatalog = { sites: [], devices: [], assets: [] };
+    }
+    populateUserScopeSelects(userScopeCatalog);
+  }
+
+  function userScopeSummary(n) {
+    const scope = n?.notificationScope || {};
+    if (scope.mode !== 'scoped') return 'all';
+    const parts = [];
+    if (scope.siteIds?.length) parts.push(`${scope.siteIds.length} site(s)`);
+    if (scope.deviceIds?.length) parts.push(`${scope.deviceIds.length} device(s)`);
+    if (scope.assetIds?.length) parts.push(`${scope.assetIds.length} asset(s)`);
+    return parts.length ? parts.join(', ') : 'none';
+  }
 
   function readUserEditor() {
     const p = {
@@ -3135,6 +3329,7 @@
           end: ($('user-quiet-end')?.value || '07:00').slice(0, 5),
           timezone: $('user-timezone')?.value || 'America/New_York',
         },
+        notificationScope: readUserScopeFields(),
       },
     };
     return {
@@ -3168,6 +3363,7 @@
     if ($('user-quiet-enabled')) $('user-quiet-enabled').checked = !!q.enabled;
     if ($('user-quiet-start')) $('user-quiet-start').value = q.start || '22:00';
     if ($('user-quiet-end')) $('user-quiet-end').value = q.end || '07:00';
+    fillUserScopeFields(n.notificationScope);
   }
 
   function renderUserProfilesTable() {
@@ -3185,10 +3381,11 @@
         <td>${esc(u.role)}</td>
         <td>${esc(n.minLevel || 'inner')}</td>
         <td>${esc(ch)}</td>
+        <td>${esc(userScopeSummary(n))}</td>
         <td><button type="button" class="btn btn-sm" data-user-edit="${esc(u.id)}">Edit</button></td>
       </tr>`;
     }).join('');
-    host.innerHTML = `<table class="data-table compact"><thead><tr><th>User</th><th>Role</th><th>Min level</th><th>Channels</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+    host.innerHTML = `<table class="data-table compact"><thead><tr><th>User</th><th>Role</th><th>Min level</th><th>Channels</th><th>Scope</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
     host.querySelectorAll('[data-user-edit]').forEach((btn) => {
       btn.onclick = () => {
         selectedUserId = btn.dataset.userEdit;
@@ -3199,6 +3396,7 @@
   }
 
   async function refreshUserProfiles() {
+    await loadUserScopeCatalog();
     const data = await api.listUsers();
     userProfiles = data.users || [];
     if (!selectedUserId && userProfiles.length) selectedUserId = userProfiles[0].id;
@@ -3255,7 +3453,6 @@
     });
     if (driversActiveTab === 'modbus') fillModbusPortSelect();
     if (driversActiveTab === 'nextcentury') fillNextcenturySetupForm();
-    if (driversActiveTab === 'bacnet-builder') fillBacnetBuilderPanel().catch(console.error);
     syncContextHelpButton($('btn-drivers-context-help'), DRIVERS_HELP_SECTIONS[driversActiveTab] || 'drivers');
   }
 
@@ -3319,6 +3516,12 @@
       historianLoggerOpenSection = null;
       return;
     }
+    if (name === 'report') {
+      initFloaters();
+      reportFloater.bind();
+      reportFloater.open();
+      return;
+    }
     el.classList.remove('view-hidden');
     window.MvWindowStack?.onOpen(el);
     setTabActive(name, true);
@@ -3335,19 +3538,6 @@
     }
     if (name === 'training' && window.MooreviewTraining) {
       MooreviewTraining.ensureRendered();
-    }
-    if (name === 'report') {
-      refreshAll()
-        .then(() => refreshPdmAssetLists())
-        .catch(console.error);
-      fillReportConfigForm(reportConfig);
-      fillHistorianReportPanel();
-      loadMongoReportBuilder().catch(console.error);
-      refreshReportMongoLogs().catch(console.error);
-      fillRoiSettingsFields(lastSettings?.roi);
-      refreshRoiCalculatorDisplay();
-      bindRoiCalculatorInputs();
-      restartDashboardPoll();
     }
     if (name === 'historian') {
       historianHoverState = null;
@@ -3430,6 +3620,10 @@
       historianLoggerFloater?.close();
       return;
     }
+    if (name === 'report') {
+      reportFloater?.close();
+      return;
+    }
     if (name === 'nextcentury-portal') {
       resetNcPortalIframe();
       setNcPortalStatus('');
@@ -3450,7 +3644,6 @@
     }
     el.classList.add('view-hidden');
     setTabActive(name, false);
-    if (name === 'report') restartDashboardPoll();
   }
 
   function togglePopup(name) {
@@ -3863,7 +4056,6 @@
       <label class="tag-mb-lbl">Device inst <input type="number" data-drv-bac-dev="${i}" min="0" placeholder="1001"></label>
       <button type="button" class="btn btn-sm primary" data-drv-bac-browse="${i}">Browse &amp; import tags</button>
       <button type="button" class="btn btn-sm" data-drv-bac-example="${i}">Load example tags</button>
-      <button type="button" class="btn btn-sm" data-drv-bac-builder="${i}">Device builder…</button>
     </div>
     <p class="driver-bacnet-status muted cell-mono" data-drv-bac-status="${i}">Who-Is discovery finds BACnet/IP devices on the LAN. Browse reads object-list and imports present-value points.</p>`;
   }
@@ -3969,208 +4161,6 @@
     } catch (e) {
       setBacnetDriverStatus(index, e.message || 'Browse/import failed', false);
     }
-  }
-
-  function openBacnetBuilderForDriver(driverId) {
-    openPopup('drivers');
-    showDriversTab('bacnet-builder');
-    fillBacnetBuilderPanel(driverId).catch(console.error);
-  }
-
-  function readBacnetBuilderProfileForm() {
-    const slots = bacnetBuilderEditingProfile?.slots || [];
-    return {
-      id: $('bac-builder-profile-id')?.value?.trim() || 'profile',
-      label: $('bac-builder-profile-label')?.value?.trim() || 'BACnet profile',
-      description: bacnetBuilderEditingProfile?.description || '',
-      tagPrefixPattern: $('bac-builder-prefix')?.value?.trim() || '{profileId}_{deviceInstance}',
-      deviceNamePattern: $('bac-builder-device-filter')?.value?.trim() || '',
-      vendorId: bacnetBuilderEditingProfile?.vendorId ?? null,
-      slots,
-    };
-  }
-
-  function renderBacnetBuilderSlots(profile) {
-    const host = $('bac-builder-slots');
-    const countEl = $('bac-builder-slot-count');
-    if (!host) return;
-    const slots = profile?.slots || [];
-    if (countEl) countEl.textContent = String(slots.length);
-    if (!slots.length) {
-      host.innerHTML = '<p class="muted">No slots — browse a sample device and capture, or load the example profile.</p>';
-      return;
-    }
-    host.innerHTML = `<table class="help-table"><tr><th>Slot</th><th>Tag id</th><th>Object</th><th>Match</th></tr>${
-      slots.map((s) => {
-        const ot = s.objectTypeLabel || s.objectType || '';
-        const match = s.match?.type === 'name'
-          ? `name /${s.match.pattern}/`
-          : `fixed inst ${s.match?.objectInstance ?? '?'}`;
-        return `<tr><td>${esc(s.label || s.slotId)}</td><td><code>${esc(s.tagId)}</code></td><td>${esc(ot)}</td><td class="cell-mono">${esc(match)}</td></tr>`;
-      }).join('')
-    }</table>`;
-  }
-
-  function selectBacnetBuilderProfile(profile) {
-    bacnetBuilderEditingProfile = profile;
-    if ($('bac-builder-profile-id')) $('bac-builder-profile-id').value = profile?.id || '';
-    if ($('bac-builder-profile-label')) $('bac-builder-profile-label').value = profile?.label || '';
-    if ($('bac-builder-prefix')) $('bac-builder-prefix').value = profile?.tagPrefixPattern || '{profileId}_{deviceInstance}';
-    if ($('bac-builder-device-filter')) $('bac-builder-device-filter').value = profile?.deviceNamePattern || '';
-    renderBacnetBuilderSlots(profile);
-  }
-
-  async function fillBacnetBuilderPanel(preferredDriverId) {
-    const drvSel = $('bac-builder-driver');
-    if (drvSel) {
-      const bacDrivers = drivers.filter((d) => d.type === 'bacnet');
-      drvSel.innerHTML = bacDrivers.length
-        ? bacDrivers.map((d) => `<option value="${esc(d.id)}">${esc(d.id)}</option>`).join('')
-        : '<option value="">(add a bacnet driver first)</option>';
-      const pick = preferredDriverId && bacDrivers.some((d) => d.id === preferredDriverId)
-        ? preferredDriverId
-        : (bacDrivers[0]?.id || '');
-      drvSel.value = pick;
-    }
-    const r = await api.bacnetListProfiles();
-    bacnetBuilderProfiles = r.profiles || [];
-    const profSel = $('bac-builder-profile');
-    if (profSel) {
-      profSel.innerHTML = bacnetBuilderProfiles.length
-        ? bacnetBuilderProfiles.map((p) => `<option value="${esc(p.id)}">${esc(p.label || p.id)}</option>`).join('')
-        : '<option value="">(no saved profiles)</option>';
-      profSel.onchange = () => {
-        const p = bacnetBuilderProfiles.find((x) => x.id === profSel.value);
-        if (p) selectBacnetBuilderProfile(p);
-      };
-    }
-    if (bacnetBuilderProfiles.length) {
-      selectBacnetBuilderProfile(bacnetBuilderProfiles[0]);
-    } else {
-      bacnetBuilderEditingProfile = null;
-      renderBacnetBuilderSlots(null);
-    }
-  }
-
-  function setBacnetBuilderStatus(msg) {
-    const el = $('bac-builder-sample-status');
-    if (el) el.textContent = msg || '';
-  }
-
-  function setBacnetBuilderResult(obj) {
-    const el = $('bac-builder-result');
-    if (el) el.textContent = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
-  }
-
-  async function bacnetBuilderLoadExample() {
-    const r = await api.bacnetProfilesExample();
-    const profiles = r.profiles || [];
-    if (!profiles.length) throw new Error('No example profiles in fixture');
-    await api.bacnetSaveProfiles([...bacnetBuilderProfiles, ...profiles.filter(
-      (p) => !bacnetBuilderProfiles.some((x) => x.id === p.id),
-    )]);
-    await fillBacnetBuilderPanel($('bac-builder-driver')?.value);
-    setBacnetBuilderResult({ ok: true, loaded: profiles.map((p) => p.id) });
-  }
-
-  async function bacnetBuilderSaveProfile() {
-    const profile = readBacnetBuilderProfileForm();
-    const r = await api.bacnetSaveProfile(profile);
-    await fillBacnetBuilderPanel($('bac-builder-driver')?.value);
-    if ($('bac-builder-profile')) $('bac-builder-profile').value = r.profile?.id || profile.id;
-    selectBacnetBuilderProfile(r.profile || profile);
-    setBacnetBuilderResult({ ok: true, saved: r.profile?.id || profile.id });
-  }
-
-  async function bacnetBuilderDeleteProfile() {
-    const id = $('bac-builder-profile')?.value || $('bac-builder-profile-id')?.value?.trim();
-    if (!id) return;
-    if (!window.confirm(`Delete BACnet profile "${id}"?`)) return;
-    await api.bacnetDeleteProfile(id);
-    await fillBacnetBuilderPanel($('bac-builder-driver')?.value);
-    setBacnetBuilderResult({ ok: true, deleted: id });
-  }
-
-  async function bacnetBuilderBrowseSample() {
-    const driverId = $('bac-builder-driver')?.value;
-    const host = $('bac-builder-sample-host')?.value?.trim();
-    const deviceInstance = parseInt($('bac-builder-sample-dev')?.value, 10);
-    if (!driverId) throw new Error('Select a bacnet driver');
-    if (!host || !Number.isFinite(deviceInstance)) throw new Error('Sample host and device instance required');
-    setBacnetBuilderStatus('Browsing sample device…');
-    const d = drivers.find((x) => x.id === driverId);
-    const r = await api.bacnetBrowse({
-      driverId,
-      ...d,
-      host,
-      deviceInstance,
-      includePresentValue: true,
-      maxObjects: 300,
-    });
-    bacnetBuilderSamplePoints = (r.points || []).filter((p) => {
-      const ot = String(p.objectTypeLabel || '').toLowerCase();
-      return ot.includes('analog') || ot.includes('binary') || ot.includes('multistate');
-    });
-    setBacnetBuilderStatus(`Sample browse: ${bacnetBuilderSamplePoints.length} point(s) on dev ${deviceInstance}.`);
-    setBacnetBuilderResult({ samplePoints: bacnetBuilderSamplePoints.length, truncated: r.truncated });
-  }
-
-  async function bacnetBuilderCaptureProfile() {
-    if (!bacnetBuilderSamplePoints.length) throw new Error('Browse a sample device first');
-    const form = readBacnetBuilderProfileForm();
-    const r = await api.bacnetProfileFromBrowse({
-      id: form.id,
-      label: form.label,
-      description: `Captured from ${$('bac-builder-sample-host')?.value} dev ${$('bac-builder-sample-dev')?.value}`,
-      tagPrefixPattern: form.tagPrefixPattern,
-      deviceNamePattern: form.deviceNamePattern,
-      points: bacnetBuilderSamplePoints,
-      save: true,
-    });
-    await fillBacnetBuilderPanel($('bac-builder-driver')?.value);
-    if ($('bac-builder-profile')) $('bac-builder-profile').value = r.profile?.id || form.id;
-    selectBacnetBuilderProfile(r.profile);
-    setBacnetBuilderResult({ ok: true, captured: r.profile?.id, slots: r.profile?.slots?.length });
-  }
-
-  async function bacnetBuilderPreview() {
-    const driverId = $('bac-builder-driver')?.value;
-    const profileId = $('bac-builder-profile')?.value || $('bac-builder-profile-id')?.value?.trim();
-    if (!driverId || !profileId) throw new Error('Driver and profile required');
-    const d = drivers.find((x) => x.id === driverId);
-    setBacnetBuilderResult('Previewing…');
-    const r = await api.bacnetProfilePreview({
-      driverId,
-      profileId,
-      ...d,
-      mode: 'discover',
-      discover: $('bac-builder-discover')?.checked !== false,
-      maxObjects: 300,
-    });
-    setBacnetBuilderResult(r);
-  }
-
-  async function bacnetBuilderApplyFleet() {
-    const driverId = $('bac-builder-driver')?.value;
-    const profileId = $('bac-builder-profile')?.value || $('bac-builder-profile-id')?.value?.trim();
-    if (!driverId || !profileId) throw new Error('Driver and profile required');
-    const d = drivers.find((x) => x.id === driverId);
-    const msg = `Apply profile "${profileId}" to discovered BACnet devices and import tags?`;
-    if (!window.confirm(msg)) return;
-    setBacnetBuilderResult('Discovering and applying…');
-    const r = await api.bacnetProfileApply({
-      driverId,
-      profileId,
-      ...d,
-      mode: 'discover',
-      discover: $('bac-builder-discover')?.checked !== false,
-      allowPartial: $('bac-builder-allow-partial')?.checked !== false,
-      maxObjects: 300,
-      importTags: true,
-      reassign: true,
-    });
-    await refreshAll();
-    setBacnetBuilderResult(r);
   }
 
   function setDriverTestStatus(msg, ok) {
@@ -4519,6 +4509,7 @@
     historianConfigFloater?.bind();
     historianLoggerFloater?.bind();
     alarmsFloater?.bind();
+    reportFloater?.bind();
     bindHistorianCanvasResize();
     bindTagsForceDelegation();
     bindLiveIoPanel();
@@ -4640,6 +4631,8 @@
     $('btn-report-mongo-refresh')?.addEventListener('click', () => refreshReportMongoLogs().catch(console.error));
     $('report-mongo-syslog-level')?.addEventListener('change', () => refreshReportMongoLogs().catch(console.error));
     $('report-mongo-syslog-category')?.addEventListener('change', () => refreshReportMongoLogs().catch(console.error));
+    $('report-mongo-mqtt-level')?.addEventListener('change', () => refreshReportMongoLogs().catch(console.error));
+    $('report-mongo-mqtt-event')?.addEventListener('change', () => refreshReportMongoLogs().catch(console.error));
     $('btn-report-mongo-open-historian')?.addEventListener('click', () => openPopup('historian'));
     $('historian-source')?.addEventListener('change', (e) => {
       historianSource = e.target.value;
@@ -4752,6 +4745,7 @@
       historianConfigFloater?.clampOnResize();
       historianLoggerFloater?.clampOnResize();
       alarmsFloater?.clampOnResize();
+      reportFloater?.clampOnResize();
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'F1') {
@@ -5131,7 +5125,8 @@
   }
 
   function runtimeScanActive(rt) {
-    return !!rt?.running && !rt?.paused;
+    if (rt?.running && !rt?.paused) return true;
+    return !!(lastOptaRuntime && lastOptaRuntime.running);
   }
 
   function runtimeStatusLabel(rt) {
@@ -5206,7 +5201,15 @@
     refreshPdmAssetLists().catch(console.error);
     const urlParams = new URLSearchParams(location.search);
     const hmiParam = urlParams.get('hmi');
-    if (hmiParam) MooreviewHmi?.openFromUrlParam?.(hmiParam);
+    const projectParam = urlParams.get('project');
+    const openParam = urlParams.get('open');
+    const runHmi = () => {
+      if (hmiParam) MooreviewHmi?.openFromUrlParam?.(hmiParam, { force: true });
+    };
+    const deepLink = projectParam && openParam === '1'
+      ? openProjectById(projectParam, { silent: true }).then(runHmi)
+      : (hmiParam ? Promise.resolve().then(runHmi) : Promise.resolve());
+    return deepLink.then(() => {
     const composerOpen = urlParams.get('composerOpen');
     if (composerOpen) {
       MooreviewHmi?.openComposerEditing?.(composerOpen);
@@ -5220,6 +5223,7 @@
       openPopup('project');
       showSetupTab(setupTab);
     }
+    }).catch(console.error);
   }
 
   function startDashboardRuntime() {
@@ -5992,19 +5996,6 @@
         <label>Client ID <input data-df="clientId" value="${esc(d.clientId || 'mooreview')}"></label>
       </div>`;
     }
-    if (t === 'mqtt_sim') {
-      const stations = Array.isArray(d.stations)
-        ? d.stations.map((s) => (typeof s === 'string' ? s : s.serialNum)).filter(Boolean).join(', ')
-        : '';
-      return `<div class="driver-fields form-grid compact">
-        <label>Broker <input data-df="brokerUrl" value="${esc(d.brokerUrl || d.broker || 'mqtt://127.0.0.1:1883')}"></label>
-        <label>Interval ms <input data-df="intervalMs" type="number" min="500" step="500" value="${Number(d.intervalMs) || 5000}"></label>
-        <label>Sample JSON <input data-df="samplePath" value="${esc(d.samplePath || 'st/fixtures/edgepoint-lift-station-sample.json')}"></label>
-        <label>Serial numbers <input data-df="stations" value="${esc(stations)}" placeholder="blank = auto from mqtt lift drivers"></label>
-        <label>Publish to broker <input type="checkbox" data-df="publishToBroker" ${d.publishToBroker !== false ? 'checked' : ''} title="Also publish to Mosquitto when available"></label>
-        <p class="muted panel-hint">In-process Nexcomm lift simulator — feeds all <code>mqtt</code> lift drivers on the same broker without <code>npm run simulate:putnam-mqtt-lifts</code>.</p>
-      </div>`;
-    }
     if (t === 'https') {
       return `<div class="driver-fields form-grid compact">
         <label>Base URL <input data-df="baseUrl" value="${esc(d.baseUrl || d.url || 'https://127.0.0.1')}"></label>
@@ -6118,15 +6109,6 @@
     window.open(`http://${host}/io-map`, '_blank', 'noopener,noreferrer');
   }
 
-  function openOptaCtCalForDriver(d) {
-    const host = optaHttpHostForDriver(d);
-    if (!host) {
-      alert('Opta IP unknown — wait for MQTT telemetry (ethIp) or set host on the driver.');
-      return;
-    }
-    window.open(`http://${host}/ct-cal`, '_blank', 'noopener,noreferrer');
-  }
-
   function parcStatusText(d) {
     const dev = parcDeviceForDriver(d);
     if (!dev) return 'Waiting for MQTT telemetry from this device…';
@@ -6134,11 +6116,6 @@
     const mods = (dev.expansionModules || []).map((m) => `slot ${(m.slot ?? 0) + 1}: ${m.label || m.type}`).join(' · ');
     const parts = [`${dev.tagCount || 0} tag(s) reported`];
     if (sn) parts.push(sn);
-    if (dev.ctCal?.zeroedCount != null) {
-      parts.push(`CT ${dev.ctCal.zeroedCount}/${dev.ctCal.channels || 6} zeroed`);
-    } else if (dev.runtime?.ctCalibrated) {
-      parts.push('CT calibrated');
-    }
     if (mods) parts.push(mods);
     if (dev.stale) parts.push('STALE');
     return parts.join(' · ');
@@ -6155,11 +6132,16 @@
     return map[t] || t || '—';
   }
 
+  function formatTs(value) {
+    return window.MooreviewTime?.formatDateTime?.(value)
+      || String(value || '').slice(0, 19).replace('T', ' ');
+  }
+
   function formatHardwareHistoryHtml(rows) {
     if (!rows?.length) return '<p class="muted">No hardware history recorded yet.</p>';
     const body = rows.map((r) => {
-      const range = `${esc((r.installedAt || '').slice(0, 19).replace('T', ' '))}`
-        + `${r.removedAt ? ` → ${esc(r.removedAt.slice(0, 19).replace('T', ' '))}` : ' → <em>current</em>'}`;
+      const range = `${esc(formatTs(r.installedAt))}`
+        + `${r.removedAt ? ` → ${esc(formatTs(r.removedAt))}` : ' → <em>current</em>'}`;
       const identity = [r.vendor, r.model].filter(Boolean).join(' ') || r.platform || '—';
       return `<tr>
         <td>${esc(swapTypeLabel(r.swapType))}</td>
@@ -6178,8 +6160,8 @@
     if (!rows?.length) return '<p class="muted">No hardware change-outs recorded yet.</p>';
     const body = rows.map((r) => {
       const pos = r.positionName ? `${r.positionName} (${r.positionId})` : (r.positionId || '—');
-      const range = `${esc((r.installedAt || '').slice(0, 19).replace('T', ' '))}`
-        + `${r.removedAt ? ` → ${esc(r.removedAt.slice(0, 19).replace('T', ' '))}` : ' → <em>current</em>'}`;
+      const range = `${esc(formatTs(r.installedAt))}`
+        + `${r.removedAt ? ` → ${esc(formatTs(r.removedAt))}` : ' → <em>current</em>'}`;
       return `<tr>
         <td class="cell-mono">${esc(pos)}</td>
         <td class="cell-mono">${esc(r.serialNumber || '—')}</td>
@@ -6215,7 +6197,7 @@
     const msg = err?.message || String(err || 'Load failed');
     if (/Cellular SIM management requires|Cloud sim management requires/i.test(msg)) {
       const where = context ? ` (${context})` : '';
-      return `Server blocked a non-connectivity API${where}. Restart MooreVIEW (npm restart), then reopen Reports.`;
+      return `Server blocked a non-connectivity API${where}. Restart MooreView (npm restart), then reopen Reports.`;
     }
     if (/Authentication required/i.test(msg)) {
       return 'Session expired — sign in again, then reopen Reports.';
@@ -6225,6 +6207,48 @@
 
   async function reportMongoSysLogQuery(params = {}) {
     return mooreviewApiFetch('GET', '/sys-log', params);
+  }
+
+  async function reportMongoMqttBrokerLog(params = {}) {
+    return mooreviewApiFetch('GET', '/mqtt-broker-log', params);
+  }
+
+  function formatMqttBrokerEventLabel(entry) {
+    const ev = entry?.detail?.event || '';
+    const map = {
+      client_connect: 'Connect',
+      client_disconnect: 'Disconnect',
+      auth_fail: 'Auth fail',
+      connection: 'TCP',
+      error: 'Error',
+      hub_connect: 'Hub up',
+      hub_disconnect: 'Hub down',
+      hub_error: 'Hub error',
+    };
+    return map[ev] || ev || '—';
+  }
+
+  function formatReportMqttBrokerLogHtml(entries) {
+    const rows = entries || [];
+    if (!rows.length) return '<p class="muted">No MQTT broker log entries found.</p>';
+    const body = rows.map((e) => {
+      const at = esc(formatTs(e.at));
+      const lv = esc(e.level || 'info');
+      const ev = esc(formatMqttBrokerEventLabel(e));
+      const client = esc(e.detail?.clientId || '—');
+      const ip = esc(e.detail?.ip || '—');
+      return `<tr>
+        <td class="cell-mono">${at}</td>
+        <td class="${sysLogLevelClass(e.level)}">${lv}</td>
+        <td class="cell-mono">${ev}</td>
+        <td class="cell-mono">${client}</td>
+        <td class="cell-mono">${ip}</td>
+        <td>${esc(e.message || '—')}</td>
+      </tr>`;
+    }).join('');
+    return `<table class="data-table"><thead>
+      <tr><th>Time</th><th>Level</th><th>Event</th><th>Client</th><th>IP</th><th>Message</th></tr>
+    </thead><tbody>${body}</tbody></table>`;
   }
 
   async function reportMongoHardwareHistory(params = {}) {
@@ -6238,7 +6262,7 @@
     const rows = (entries || []).filter((e) => !isNoisySysLogEntry(e));
     if (!rows.length) return '<p class="muted">No system log entries found.</p>';
     const body = rows.map((e) => {
-      const at = esc((e.at || '').slice(0, 19).replace('T', ' '));
+      const at = esc(formatTs(e.at));
       const lv = esc(e.level || 'info');
       return `<tr>
         <td class="cell-mono">${at}</td>
@@ -6550,6 +6574,9 @@
     document.querySelectorAll('.report-mongo-syslog-only').forEach((el) => {
       el.classList.toggle('view-hidden', tab !== 'syslog');
     });
+    document.querySelectorAll('.report-mongo-mqtt-only').forEach((el) => {
+      el.classList.toggle('view-hidden', tab !== 'mqtt');
+    });
     document.querySelectorAll('.report-mongo-historian-only').forEach((el) => {
       el.classList.toggle('view-hidden', tab !== 'historian');
     });
@@ -6575,16 +6602,20 @@
       msg.className = 'muted';
     }
     try {
-      const [sysRes, hwRes, tagRes] = await Promise.allSettled([
+      const [sysRes, hwRes, tagRes, mqttRes] = await Promise.allSettled([
         mooreviewApiFetch('GET', '/sys-log/status'),
         mooreviewApiFetch('GET', '/hardware-history/status'),
         mooreviewApiFetch('GET', '/logger/mongo/status'),
+        mooreviewApiFetch('GET', '/mqtt-broker-log/status'),
       ]);
       const sysSt = sysRes.status === 'fulfilled' ? sysRes.value : { enabled: false, fallback: true };
       const hwSt = hwRes.status === 'fulfilled' ? hwRes.value : { enabled: false, fallback: true };
       const tagSt = tagRes.status === 'fulfilled' ? tagRes.value : { enabled: false, connected: false };
+      const mqttSt = mqttRes.status === 'fulfilled' ? mqttRes.value : {};
+      const tail = mqttSt?.tailer;
       const statusParts = [
         `Sys log: ${mongoStoreStatusLabel(sysSt)}`,
+        `MQTT broker: ${tail?.running ? `tail ${tail.path}` : (mqttSt.ingestTokenConfigured ? 'remote ingest' : 'hub events only')}`,
         `Hardware: ${mongoStoreStatusLabel(hwSt)}`,
         `Tag historian: ${tagSt.enabled ? (tagSt.connected ? 'connected' : 'not connected') : 'not configured'}`,
       ];
@@ -6603,6 +6634,20 @@
         if (msg) {
           const shown = (r.entries || []).filter((e) => !isNoisySysLogEntry(e));
           msg.textContent = `${shown.length} entr${shown.length === 1 ? 'y' : 'ies'}`;
+          msg.className = 'muted ok-text';
+        }
+      } else if (tab === 'mqtt') {
+        const level = $('report-mongo-mqtt-level')?.value?.trim() || '';
+        const event = $('report-mongo-mqtt-event')?.value?.trim() || '';
+        const params = { limit };
+        if (level) params.level = level;
+        if (event) params.event = event;
+        const r = await reportMongoMqttBrokerLog(params);
+        const host = $('report-mongo-mqtt');
+        if (host) host.innerHTML = formatReportMqttBrokerLogHtml(r.entries || []);
+        if (msg) {
+          const n = (r.entries || []).length;
+          msg.textContent = `${n} MQTT broker event${n === 1 ? '' : 's'}`;
           msg.className = 'muted ok-text';
         }
       } else if (tab === 'hardware') {
@@ -6642,6 +6687,8 @@
         const host = document.querySelector(`[data-report-mongo-pane="${tab}"]`);
         if (host && tab === 'syslog') {
           host.innerHTML = `<p class="muted err-text">${esc(friendly)}</p>`;
+        } else if (host && tab === 'mqtt') {
+          host.innerHTML = `<p class="muted err-text">${esc(friendly)}</p>`;
         } else if (host && tab === 'hardware') {
           host.innerHTML = `<p class="muted err-text">${esc(friendly)}</p>`;
         }
@@ -6677,7 +6724,6 @@
       <button type="button" class="btn btn-sm primary" data-drv-parc-sync="${i}">Sync tags from device</button>
       <button type="button" class="btn btn-sm" data-drv-parc-scan="${i}">Scan expansions</button>
       <button type="button" class="btn btn-sm" data-drv-parc-io-view="${i}" title="Open Opta /io-map in browser">Opta I/O view</button>
-      <button type="button" class="btn btn-sm" data-drv-parc-ct-cal="${i}" title="Open Opta CT calibration (http://&lt;opta-ip&gt;/ct-cal)">Calibrate CT</button>
       <button type="button" class="btn btn-sm" data-drv-parc-replace="${i}">Replace hardware</button>
       ${snPosition ? `<button type="button" class="btn btn-sm" data-drv-parc-rename="${i}">Set position name</button>` : ''}
     </div>
@@ -6761,16 +6807,6 @@
       d.password = resolveNextcenturyPassword(d.id, pwIn?.value);
       d.pollIntervalMs = Number(d.pollIntervalMs) || 900000;
       d.devicesPerSite = Number(d.devicesPerSite) || 1500;
-    }
-    if (d.type === 'mqtt_sim') {
-      if (typeof d.stations === 'string') {
-        const s = d.stations.trim();
-        d.stations = s
-          ? s.split(/[,\s]+/).filter(Boolean).map((serialNum) => ({ serialNum }))
-          : [];
-      }
-      d.intervalMs = Number(d.intervalMs) || 5000;
-      if (!d.stations?.length) delete d.stations;
     }
     stripDriverFieldsForType(d);
     drivers[i] = d;
@@ -6863,7 +6899,7 @@
       if (!noDrivers && !fewTags) return;
       sessionStorage.setItem('mooreview-hw-wizard-dismissed', '1');
       if (window.confirm(
-        'Welcome to MooreVIEW.\n\nOpen the Hardware wizard to connect your first device template?'
+        'Welcome to MooreView.\n\nOpen the Hardware wizard to connect your first device template?'
       )) {
         openHwWizard();
       }
@@ -6930,25 +6966,6 @@
       .filter((id) => includeNoise || !isParcRegistryNoiseId(id));
   }
 
-  function parcDeviceHasLocalDriver(deviceId) {
-    const id = String(deviceId || '').trim();
-    if (!id) return false;
-    return (drivers || []).some((d) => {
-      if (d.type !== 'mqtt_parc' && d.type !== 'opta_remote') return false;
-      return d.id === id || String(d.deviceId || '').trim() === id;
-    });
-  }
-
-  function parcLocalPositionId(deviceId) {
-    const id = String(deviceId || '').trim();
-    if (!id) return '';
-    const drv = (drivers || []).find(
-      (d) => (d.type === 'mqtt_parc' || d.type === 'opta_remote')
-        && (d.id === id || String(d.deviceId || '').trim() === id),
-    );
-    return drv?.id || '';
-  }
-
   function renderParcRegistryList() {
     const el = $('parc-registry-device-list');
     if (!el) return;
@@ -6961,16 +6978,44 @@
       '<p class="muted">Parc registry (MQTT):</p>',
       '<ul class="parc-registry-rows">',
       ...fieldDevs.map((d) => {
-        const linked = d.hasDriver === true || parcDeviceHasLocalDriver(d.deviceId);
-        const positionId = d.positionId || (linked ? parcLocalPositionId(d.deviceId) : '');
-        const badge = linked
+        const badge = d.hasDriver
           ? ''
           : ' <span class="parc-no-driver-badge">No driver</span>';
         const sn = d.ateccSerial ? ` <span class="muted cell-mono">(${esc(d.ateccSerial)})</span>` : '';
-        return `<li><code class="cell-mono">${esc(d.deviceId)}</code>${sn}${positionId ? ` → <strong>${esc(positionId)}</strong>` : ''}${badge}</li>`;
+        const addBtn = d.hasDriver
+          ? ''
+          : ` <button type="button" class="btn btn-sm parc-registry-add" data-device-id="${esc(d.deviceId)}">Add driver</button>`;
+        return `<li><code class="cell-mono">${esc(d.deviceId)}</code>${sn}${d.positionId ? ` → <strong>${esc(d.positionId)}</strong>` : ''}${badge}${addBtn}</li>`;
       }),
       '</ul>',
     ].join('');
+  }
+
+  async function addParcDriverForRegistryDevice(deviceId, opts = {}) {
+    const msgEl = $('parc-opta-bulk-msg');
+    const positionId = String(opts.positionId || $('parc-opta-position-id')?.value?.trim() || '').trim();
+    const syncTags = opts.syncTags !== false;
+    const body = { deviceIds: [deviceId], syncTags, usePositionIds: true };
+    if (positionId) body.positionId = positionId;
+    if (msgEl) msgEl.textContent = 'Adding…';
+    try {
+      const r = await api.bulkAddParcOpta(body);
+      const synced = (r.syncResults || []).filter((s) => s.ok).length;
+      const syncNote = syncTags && synced ? ` · synced tags on ${synced}` : '';
+      const skipNote = r.skipped?.length ? ` · skipped ${r.skipped.length}` : '';
+      if (msgEl) {
+        msgEl.textContent = `Added ${r.added?.length || 0} driver(s)${skipNote}${syncNote}`;
+      }
+      if (!r.added?.length) {
+        alert(r.skipped?.length
+          ? `Driver not added (already exists?): ${r.skipped.join(', ')}`
+          : 'Driver not added — check MQTT hub and Parc registry telemetry.');
+      }
+      await refreshAll();
+    } catch (e) {
+      if (msgEl) msgEl.textContent = e.message || 'Add failed';
+      alert(e.message || 'Add failed');
+    }
   }
 
   async function runParcScanExpansions(driverIndex) {
@@ -7226,7 +7271,7 @@
     const hasSerialDrivers = drivers.some((d) => driverUsesSerial(d.type));
     const refreshBtn = $('btn-drv-refresh-ports');
     if (refreshBtn) refreshBtn.hidden = !hasSerialDrivers;
-    const types = ['mock', 'hal', 'modbus_rtu', 'vgreen_epc', 'pentair_rs485', 'modbus_tcp', 'modbus_bridge', 'bacnet', 'mqtt', 'mqtt_sim', 'https', 'nextcentury', 'opta_remote', 'mqtt_parc', 'serial', 'native_so'];
+    const types = ['mock', 'hal', 'modbus_rtu', 'vgreen_epc', 'pentair_rs485', 'modbus_tcp', 'modbus_bridge', 'bacnet', 'mqtt', 'https', 'nextcentury', 'opta_remote', 'mqtt_parc', 'serial', 'native_so'];
     const blocks = drivers.map((d, i) => {
       if (driverEditRow === i) {
         return `<div class="driver-card driver-editing" data-i="${i}">
@@ -7399,13 +7444,6 @@
         setBacnetDriverStatus(+b.dataset.drvBacExample, e.message || 'Load example failed', false);
       });
     });
-    host.querySelectorAll('[data-drv-bac-builder]').forEach((b) => {
-      b.onclick = () => {
-        const i = +b.dataset.drvBacBuilder;
-        const d = drivers[i];
-        if (d?.id) openBacnetBuilderForDriver(d.id);
-      };
-    });
     host.querySelectorAll('[data-drv-parc-sync]').forEach((b) => {
       b.onclick = () => {
         const i = +b.dataset.drvParcSync;
@@ -7427,13 +7465,6 @@
         const i = +b.dataset.drvParcIoView;
         const d = drivers[i];
         if (d?.type === 'mqtt_parc') openOptaIoViewForDriver(d);
-      };
-    });
-    host.querySelectorAll('[data-drv-parc-ct-cal]').forEach((b) => {
-      b.onclick = () => {
-        const i = +b.dataset.drvParcCtCal;
-        const d = drivers[i];
-        if (d?.type === 'mqtt_parc') openOptaCtCalForDriver(d);
       };
     });
     host.querySelectorAll('[data-drv-parc-replace]').forEach((b) => {
@@ -7517,18 +7548,107 @@
     return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
   }
 
-  /** Saved-project timestamp in the user's local timezone (Mongo stores UTC ISO). */
+  /** Saved-project timestamp in workspace timezone (Mongo stores UTC ISO). */
   function formatProjectSavedAt(iso) {
     if (!iso) return '';
+    if (window.MooreviewTime?.formatFriendly) return window.MooreviewTime.formatFriendly(iso);
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return String(iso).slice(0, 19);
     return d.toLocaleString(undefined, {
+      timeZone: window.MooreviewTime?.getTimezone?.() || 'America/New_York',
       month: 'short',
       day: 'numeric',
       year: 'numeric',
       hour: 'numeric',
       minute: '2-digit',
     });
+  }
+
+  function projectFormatLabel(p) {
+    return window.MooreviewProjectListSort?.typeLabel(p)
+      || (() => {
+        const f = String(p?.format || '').toLowerCase();
+        if (f === 'zip' || f === 'archive') return 'est.zip';
+        if (f === 'json') return 'legacy json';
+        return f || 'project';
+      })();
+  }
+
+  function projectSortValue(p, key) {
+    if (window.MooreviewProjectListSort) return window.MooreviewProjectListSort.sortValue(p, key);
+    if (key === 'date') return String(p?.savedAt || p?.updatedAt || '');
+    if (key === 'type') return projectFormatLabel(p).toLowerCase() || 'project';
+    return String(p?.name || p?.file || p?.id || '').toLowerCase();
+  }
+
+  function sortProjectItems(items, scope) {
+    const state = projectListSort[scope] || { key: 'date', dir: 'desc' };
+    if (window.MooreviewProjectListSort) {
+      return window.MooreviewProjectListSort.sortItems(items, state);
+    }
+    const mul = state.dir === 'asc' ? 1 : -1;
+    return [...(Array.isArray(items) ? items : [])].sort((a, b) => {
+      const va = projectSortValue(a, state.key);
+      const vb = projectSortValue(b, state.key);
+      if (va < vb) return -1 * mul;
+      if (va > vb) return 1 * mul;
+      return 0;
+    });
+  }
+
+  function syncProjectSortButtons(scope) {
+    const state = projectListSort[scope];
+    if (!state) return;
+    window.MooreviewProjectListSort?.syncButtons(scope, state);
+  }
+
+  function cycleProjectSort(scope, key) {
+    const state = projectListSort[scope];
+    if (!state || !key) return;
+    window.MooreviewProjectListSort?.cycleSort(state, key);
+  }
+
+  function normalizeProjectRecord(p, defaults) {
+    if (window.MooreviewProjectListSort) {
+      return window.MooreviewProjectListSort.normalizeRecord(p, defaults);
+    }
+    return p;
+  }
+
+  function projectOptionLabel(p) {
+    if (window.MooreviewProjectListSort) {
+      return window.MooreviewProjectListSort.optionLabel(p);
+    }
+    const name = p.name || p.file || p.id || '';
+    const type = projectFormatLabel(p);
+    const when = p.savedAt || p.updatedAt;
+    const datePart = when ? formatProjectSavedAt(when) : '';
+    return `${name}${type ? ` · ${type}` : ''}${datePart ? ` · ${datePart}` : ''}`;
+  }
+
+  function bindProjectListSortControls() {
+    document.querySelectorAll('[data-project-sort-scope]').forEach((bar) => {
+      if (bar.dataset.sortBound === '1') return;
+      bar.dataset.sortBound = '1';
+      bar.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('[data-project-sort]');
+        if (!btn || !bar.contains(btn)) return;
+        ev.preventDefault();
+        const scope = bar.getAttribute('data-project-sort-scope');
+        const key = btn.getAttribute('data-project-sort');
+        cycleProjectSort(scope, key);
+        syncProjectSortButtons(scope);
+        if (scope === 'hub' && isCloudDeployment() && window.MooreviewProjectHubUi?.refreshHubList) {
+          window.MooreviewProjectHubUi.refreshHubList().catch(console.error);
+          return;
+        }
+        if (scope === 'picker') fillProjectPickerList(projects, $('project-picker-list')?.value);
+        else if (scope === 'import') fillProjectImportList();
+        else if (scope === 'hub') renderProjectHubList();
+        else if (scope === 'setup') fillProjectListsInSetup();
+      });
+    });
+    ['picker', 'import', 'hub', 'setup'].forEach(syncProjectSortButtons);
   }
 
   function graphableTagsList() {
@@ -7718,7 +7838,13 @@
         sampleIntervalMs: ml.sampleIntervalMs ?? DEFAULT_MONGO_LOGGER.sampleIntervalMs,
       };
     }
-    return { ...DEFAULT_MONGO_LOGGER };
+    return {
+      uri: '',
+      db: DEFAULT_MONGO_LOGGER.db,
+      collection: DEFAULT_MONGO_LOGGER.collection,
+      edgeCollection: DEFAULT_MONGO_LOGGER.edgeCollection,
+      sampleIntervalMs: DEFAULT_MONGO_LOGGER.sampleIntervalMs,
+    };
   }
 
   function mongoFormValue(suffix) {
@@ -7743,7 +7869,7 @@
   }
 
   function collectMongoLoggerFromForm() {
-    const uri = (mongoFormValue('uri')?.trim() || DEFAULT_MONGO_LOGGER.uri);
+    const uri = mongoFormValue('uri')?.trim() || '';
     if (!uri) return {};
     return {
       uri,
@@ -7764,8 +7890,32 @@
     return `0x${key.toString(16).padStart(4, '0')}`;
   }
 
+  function fillMqttParcHubStatus() {
+    const el = $('proj-mqtt-hub-status');
+    if (!el) return;
+    const mqtt = lastDashboardData?.parc?.mqtt;
+    const cloud = window.MOOREVIEW_BUILD?.deployment === 'cloud'
+      || window.MOOREVIEW_DEPLOYMENT === 'cloud';
+    if (!mqtt) {
+      el.textContent = cloud
+        ? 'Platform MQTT hub status unknown — refresh after SaaS restart.'
+        : '';
+      return;
+    }
+    if (mqtt.connected) {
+      el.textContent = `MQTT hub ready at ${mqtt.brokerUrl || 'broker'} — Optas can check in when powered.`;
+    } else if (mqtt.enabled) {
+      el.textContent = `MQTT hub not connected${mqtt.brokerUrl ? ` (${mqtt.brokerUrl})` : ''}. Restart SaaS or check the broker.`;
+    } else {
+      el.textContent = cloud
+        ? 'Platform MQTT hub is off — check MOOREVIEW_MQTT_BROKER on the SaaS host.'
+        : 'MQTT Parc hub is disabled.';
+    }
+  }
+
   function fillMqttParcFields(st = lastSettings) {
     const mp = st?.mqttParc || {};
+    fillMqttParcHubStatus();
     if ($('proj-mqtt-parc-enabled')) {
       $('proj-mqtt-parc-enabled').checked = mp.enabled === true;
     }
@@ -7792,29 +7942,16 @@
     if ($('proj-mqtt-parc-auto-discover')) {
       $('proj-mqtt-parc-auto-discover').checked = mp.autoDiscoverDrivers === true;
     }
-    const ez = mp.ezMeter || {};
-    if ($('proj-mqtt-parc-ezmeter-nom-v')) {
-      $('proj-mqtt-parc-ezmeter-nom-v').value = ez.nominalVoltage != null ? ez.nominalVoltage : 120;
-    }
-    if ($('proj-mqtt-parc-ezmeter-uv-v')) {
-      $('proj-mqtt-parc-ezmeter-uv-v').value = ez.undervoltV != null ? ez.undervoltV : 108;
-    }
-    if ($('proj-mqtt-parc-ezmeter-ov-v')) {
-      $('proj-mqtt-parc-ezmeter-ov-v').value = ez.overvoltV != null ? ez.overvoltV : 132;
-    }
-    if ($('proj-mqtt-parc-ezmeter-thd-pct')) {
-      $('proj-mqtt-parc-ezmeter-thd-pct').value = ez.thdAlarmPct != null ? ez.thdAlarmPct : 8;
+    const cloud = window.MOOREVIEW_BUILD?.deployment === 'cloud'
+      || window.MOOREVIEW_DEPLOYMENT === 'cloud';
+    for (const id of ['proj-mqtt-parc-broker', 'proj-mqtt-parc-user', 'proj-mqtt-parc-pass']) {
+      if ($(id)) $(id).readOnly = cloud;
     }
     updateOptaDeviceModeHint();
   }
 
   function readMqttParcFields() {
     const prev = lastSettings?.mqttParc || {};
-    const prevEz = prev.ezMeter || {};
-    const nomV = +($('proj-mqtt-parc-ezmeter-nom-v')?.value);
-    const uvV = +($('proj-mqtt-parc-ezmeter-uv-v')?.value);
-    const ovV = +($('proj-mqtt-parc-ezmeter-ov-v')?.value);
-    const thdPct = +($('proj-mqtt-parc-ezmeter-thd-pct')?.value);
     return {
       enabled: !!$('proj-mqtt-parc-enabled')?.checked,
       brokerUrl: $('proj-mqtt-parc-broker')?.value?.trim() || prev.brokerUrl || 'mqtt://127.0.0.1:1883',
@@ -7826,12 +7963,6 @@
         ? $('proj-mqtt-parc-pass').value
         : (prev.password || ''),
       autoDiscoverDrivers: !!$('proj-mqtt-parc-auto-discover')?.checked,
-      ezMeter: {
-        nominalVoltage: Number.isFinite(nomV) && nomV > 0 ? nomV : (prevEz.nominalVoltage ?? 120),
-        undervoltV: Number.isFinite(uvV) && uvV > 0 ? uvV : (prevEz.undervoltV ?? 108),
-        overvoltV: Number.isFinite(ovV) && ovV > 0 ? ovV : (prevEz.overvoltV ?? 132),
-        thdAlarmPct: Number.isFinite(thdPct) && thdPct >= 0 ? thdPct : (prevEz.thdAlarmPct ?? 8),
-      },
     };
   }
 
@@ -7911,13 +8042,17 @@
   }
 
   function fillProjectListsInSetup() {
-    const list = Array.isArray(projects) ? projects : [];
+    const list = sortProjectItems(
+      (Array.isArray(projects) ? projects : []).map((p) => normalizeProjectRecord(p)),
+      'setup',
+    );
     const lib = $('proj-list');
+    syncProjectSortButtons('setup');
     if (lib) {
       const prev = lib.value;
       lib.innerHTML = list.length
         ? list.map((p) =>
-          `<option value="${esc(p.id)}">${esc(p.name || p.id)}${p.savedAt ? ` · ${esc(formatProjectSavedAt(p.savedAt))}` : ''}</option>`
+          `<option value="${esc(p.id)}">${esc(projectOptionLabel(p))}</option>`
         ).join('')
         : '<option value="">(none)</option>';
       if (prev && list.some((p) => p.id === prev)) lib.value = prev;
@@ -7931,6 +8066,9 @@
       if (Array.isArray(r?.projects)) projects = r.projects;
     } catch (e) {
       console.error('listProjects', e);
+      if (isCloudDeployment() && /select an organization|no tenant context/i.test(String(e.message || ''))) {
+        projects = [];
+      }
     }
     fillProjectListsInSetup();
   }
@@ -8654,7 +8792,7 @@
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `MooreVIEW_PdM_${assetId.replace(/[^\w.-]+/g, '_')}_${stamp}.pdf`;
+    a.download = `MooreView_PdM_${assetId.replace(/[^\w.-]+/g, '_')}_${stamp}.pdf`;
     a.click();
     URL.revokeObjectURL(a.href);
     if (msgEl) { msgEl.textContent = `PdM PDF downloaded for ${assetId}`; msgEl.className = 'muted ok-text'; }
@@ -8988,7 +9126,7 @@
     const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `MooreVIEW_pdm_${pdmAssetId || 'asset'}_${Date.now()}.csv`;
+    a.download = `MooreView_pdm_${pdmAssetId || 'asset'}_${Date.now()}.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
   }
@@ -9037,6 +9175,29 @@
     }
   }
 
+  function applyDisplayTimezone(settings = lastSettings) {
+    const tz = settings?.timezone
+      || window.MooreviewTime?.DEFAULT_TIMEZONE
+      || 'America/New_York';
+    window.MooreviewTime?.setTimezone?.(tz);
+    return tz;
+  }
+
+  function fillTimezoneField(st = lastSettings) {
+    const sel = $('proj-timezone');
+    if (!sel) return;
+    const tz = st?.timezone
+      || window.MooreviewTime?.getTimezone?.()
+      || 'America/New_York';
+    if (window.MooreviewTime?.isValidTimeZone?.(tz) && ![...sel.options].some((o) => o.value === tz)) {
+      const opt = document.createElement('option');
+      opt.value = tz;
+      opt.textContent = tz;
+      sel.insertBefore(opt, sel.firstChild);
+    }
+    sel.value = window.MooreviewTime?.isValidTimeZone?.(tz) ? tz : 'America/New_York';
+  }
+
   function applySettingsResponse(res) {
     if (res?.settings) {
       lastSettings = {
@@ -9055,6 +9216,7 @@
           ...(res.settings.cellularSims || {}),
         },
       };
+      applyDisplayTimezone(lastSettings);
       syncProjectNameFromSettings(lastSettings);
     }
     mongoLoggerDirty = false;
@@ -9315,8 +9477,8 @@
         alert('Purge end time must be after start time');
         return;
       }
-      const a = new Date(from).toLocaleString();
-      const b = new Date(to).toLocaleString();
+      const a = window.MooreviewTime?.formatFriendly?.(from) || new Date(from).toLocaleString();
+      const b = window.MooreviewTime?.formatFriendly?.(to) || new Date(to).toLocaleString();
       if (!confirm(`Delete MongoDB historian documents from ${a} to ${b}?`)) return;
       if (msgEl) msgEl.textContent = 'Purging…';
       try {
@@ -9429,7 +9591,7 @@
       title: 'Historian Report',
       subtitle: '',
       company: '',
-      footer: 'MooreVIEW historian export',
+      footer: 'MooreView historian export',
       pageSize: 'A4',
       orientation: 'landscape',
       chartMaxHeight: 220,
@@ -9546,7 +9708,7 @@
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `MooreVIEW_${assetPart}${safe}_${stamp}.pdf`;
+      a.download = `MooreView_${assetPart}${safe}_${stamp}.pdf`;
       a.style.display = 'none';
       document.body.appendChild(a);
       a.click();
@@ -9670,6 +9832,7 @@
 
   function applyLivePollData(data) {
     lastRuntime = data.runtime || lastRuntime;
+    if (data.optaRuntime !== undefined) lastOptaRuntime = data.optaRuntime;
     lastLive = data.live || lastLive;
     if (data.driverHealth) {
       driverHealthMap = Object.fromEntries(data.driverHealth.map((h) => [h.id, h]));
@@ -9705,7 +9868,10 @@
     liveRefreshInFlight = true;
     try {
       const needGraph = isPopupOpen('historian') || isPopupOpen('report');
-      const data = await api.getLive(needGraph ? graphPenTagIds() : null);
+      const graphTags = needGraph ? graphPenTagIds() : null;
+      const data = typeof api.getLive === 'function'
+        ? await api.getLive(graphTags)
+        : await api.getDashboard(graphTags);
       applyLivePollData(data);
       return data;
     } finally {
@@ -9767,12 +9933,16 @@
     driverHealthMap = Object.fromEntries((data.driverHealth || []).map((h) => [h.id, h]));
     updateOptaDeviceModeHint();
     lastRuntime = data.runtime || lastRuntime;
+    if (data.optaRuntime !== undefined) lastOptaRuntime = data.optaRuntime;
     if (data.maxTags) tagMax = data.maxTags;
     lastLive = data.live || lastLive;
     if (Array.isArray(data.projects)) projects = data.projects;
     if (data.settings && !(isPopupOpen('project') && isSetupFormDirty())) {
       lastSettings = data.settings;
+      applyDisplayTimezone(lastSettings);
       restartDashboardPoll();
+    } else if (data.settings?.timezone) {
+      applyDisplayTimezone(data.settings);
     }
     syncActiveSavedProjectIdFromSettings(lastSettings);
     syncProjectNameFromSettings(lastSettings, data.activeProjectName);
@@ -10031,10 +10201,12 @@
     });
     const fileInput = $('project-hub-file');
     const list = $('project-hub-list');
+    const sortBar = document.querySelector('[data-project-sort-scope="hub"]');
     const primary = $('project-hub-primary');
     const secondary = $('project-hub-secondary');
     if (tab === 'file') {
       list?.classList.add('view-hidden');
+      sortBar?.classList.add('view-hidden');
       fileInput?.classList.remove('view-hidden');
       if (projectHubMode === 'share') {
         primary.textContent = 'Choose file…';
@@ -10045,6 +10217,7 @@
       }
     } else {
       list?.classList.remove('view-hidden');
+      sortBar?.classList.remove('view-hidden');
       fileInput?.classList.add('view-hidden');
       if (projectHubMode === 'share') {
         primary.textContent = 'Export file';
@@ -10058,24 +10231,39 @@
     loadProjectHubList().catch(console.error);
   }
 
+  function renderProjectHubList() {
+    const sel = $('project-hub-list');
+    if (!sel || projectHubTab === 'file') return;
+    const list = sortProjectItems(projectHubItems, 'hub');
+    syncProjectSortButtons('hub');
+    const prev = sel.value;
+    if (!list.length) {
+      sel.innerHTML = '<option value="">(no projects in repository)</option>';
+      return;
+    }
+    sel.innerHTML = list.map((p) =>
+      `<option value="${esc(p.id)}">${esc(projectOptionLabel(p))}</option>`,
+    ).join('');
+    if (prev && list.some((p) => p.id === prev)) sel.value = prev;
+  }
+
   async function loadProjectHubList() {
     const sel = $('project-hub-list');
     const msg = $('project-hub-msg');
     if (!sel || projectHubTab === 'file') return;
     sel.innerHTML = '';
+    projectHubItems = [];
     if (msg) msg.textContent = '';
     try {
       const r = projectHubTab === 'cloud'
         ? await api.listProjectHubCloud()
         : await api.listProjectHubLocal();
-      const list = r.projects || [];
-      if (!list.length) {
-        sel.innerHTML = '<option value="">(no projects in repository)</option>';
-        return;
-      }
-      sel.innerHTML = list.map((p) =>
-        `<option value="${esc(p.id)}">${esc(p.name)}${p.updatedAt ? ` — ${esc(String(p.updatedAt).slice(0, 10))}` : ''}</option>`,
-      ).join('');
+      projectHubItems = (r.projects || []).map((p) => normalizeProjectRecord({
+        ...p,
+        source: p.source || projectHubTab,
+        format: p.format || (projectHubTab === 'cloud' ? 'cloud' : 'json'),
+      }));
+      renderProjectHubList();
     } catch (e) {
       if (msg) msg.textContent = e.message;
       sel.innerHTML = '<option value="">(unavailable)</option>';
@@ -10083,20 +10271,30 @@
   }
 
   function openProjectHubDialog(mode) {
+    if (isCloudDeployment() && window.MooreviewProjectHubUi?.openHubDialog) {
+      closeProjectMenu();
+      window.MooreviewProjectHubUi.openHubDialog(mode).catch((e) => alert(e.message));
+      return;
+    }
     projectHubMode = mode;
     const dlg = $('project-hub-dialog');
     const title = $('project-hub-title');
     const hint = $('project-hub-hint');
     if (mode === 'share') {
       title.textContent = 'Share project';
-      hint.textContent = 'Publish a complete .est.zip (project + ST + HMI + site plan) to a repository or export a file.';
+      hint.textContent = isCloudDeployment()
+        ? 'Publish the current project to MV Cloud for the selected site.'
+        : 'Publish a complete .est.zip (project + ST + HMI + site plan) to a repository or export a file.';
     } else {
       title.textContent = 'Deploy project';
-      hint.textContent = 'Load a complete .est.zip or legacy .est.json in one step. Serial ports adapt to this host (IOT-LINK PORT A/B, Linux tty, COM ports).';
+      hint.textContent = isCloudDeployment()
+        ? 'Deploy a saved workspace project, one from MV Cloud, or upload a file.'
+        : 'Load a complete .est.zip or legacy .est.json in one step. Serial ports adapt to this host (IOT-LINK PORT A/B, Linux tty, COM ports).';
     }
-    setProjectHubTab('local');
+    setProjectHubTab(isCloudDeployment() ? 'local' : 'local');
     closeProjectMenu();
     dlg?.showModal();
+    syncProjectSortButtons('hub');
   }
 
   async function runProjectHubPublish() {
@@ -10151,7 +10349,8 @@
         const id = $('project-hub-list')?.value;
         if (id) {
           const blob = await api.downloadProjectHubFile(id);
-          const listed = ($('project-hub-list').selectedOptions[0]?.textContent || projectName).split(' — ')[0];
+          const listed = projectHubItems.find((p) => p.id === id)?.name
+            || ($('project-hub-list').selectedOptions[0]?.textContent || projectName).split(' · ')[0];
           downloadBlob(blob, safeEstFilename(listed.trim()));
           $('project-hub-msg').textContent = `Exported ${safeEstFilename(listed.trim())}`;
           return;
@@ -10168,7 +10367,9 @@
         alert('Select a project from the repository.');
         return;
       }
-      const listedLabel = $('project-hub-list').selectedOptions?.[0]?.textContent?.split(' — ')[0]?.trim() || id;
+      const listedLabel = projectHubItems.find((p) => p.id === id)?.name
+        || $('project-hub-list').selectedOptions?.[0]?.textContent?.split(' · ')[0]?.trim()
+        || id;
       if (!confirmProjectReplace('Deploy', listedLabel)) return;
       const source = projectHubTab === 'cloud' ? 'cloud' : 'local';
       let opened;
@@ -10236,10 +10437,14 @@
   function fillProjectPickerList(list, selectedId) {
     const sel = $('project-picker-list');
     if (!sel) return;
-    const items = Array.isArray(list) ? list : [];
+    const items = sortProjectItems(
+      (Array.isArray(list) ? list : []).map((p) => normalizeProjectRecord(p)),
+      'picker',
+    );
+    syncProjectSortButtons('picker');
     sel.innerHTML = items.length
       ? items.map((p) =>
-        `<option value="${esc(p.id)}">${esc(p.name || p.id)}${p.savedAt ? ` · ${esc(formatProjectSavedAt(p.savedAt))}` : ''}</option>`
+        `<option value="${esc(p.id)}">${esc(projectOptionLabel(p))}</option>`
       ).join('')
       : '<option value="">(no saved projects)</option>';
     const pick = selectedId && items.some((p) => p.id === selectedId)
@@ -10248,21 +10453,53 @@
     if (pick) sel.value = pick;
   }
 
+  function projectLibraryDirHint(r) {
+    const resp = r && typeof r === 'object' ? r : {};
+    if (resp.projectsBackend === 'disk' && resp.projectsDir) return String(resp.projectsDir);
+    if (resp.projectsDir) return String(resp.projectsDir);
+    const storage = String(resp.projectsStorage || '').trim();
+    if (storage && !/^MongoDB\b/i.test(storage)) return storage;
+    if (resp.projectsBackend === 'mongo' || /^MongoDB\b/i.test(storage)) {
+      return 'data/projects/ on the server (deploy latest cloud build, then copy .est.zip files via SFTP)';
+    }
+    return '';
+  }
+
+  async function showProjectLibraryFolderHint() {
+    try {
+      const r = await api.listProjects();
+      const dir = projectLibraryDirHint(r);
+      if (dir) {
+        alert(`Project library folder:\n\n${dir}\n\nCopy .est.zip files here (WinSCP/SFTP).`);
+        return;
+      }
+      alert('Projects live in data/projects/ on the cloud server. Copy .est.zip files via SFTP.');
+    } catch (e) {
+      alert(e.message || String(e));
+    }
+  }
+
   function fillProjectImportList(list, projectsDir) {
     const sel = $('project-import-list');
     const dirEl = $('project-import-dir');
-    if (dirEl) {
+    if (dirEl && projectsDir !== undefined) {
       dirEl.textContent = projectsDir
         ? `Projects in: ${projectsDir}`
         : 'Projects stored in data/projects/';
     }
     if (!sel) return;
-    const items = Array.isArray(list) ? list : [];
+    if (list !== undefined) {
+      projectImportItems = (Array.isArray(list) ? list : []).map((p) => normalizeProjectRecord(p));
+    }
+    const items = sortProjectItems(projectImportItems, 'import');
+    syncProjectSortButtons('import');
+    const prev = sel.value;
     sel.innerHTML = items.length
       ? items.map((p) =>
-        `<option value="${esc(p.file)}">${esc(p.name || p.file)}${p.format === 'json' ? ' · legacy json' : ''}${p.savedAt ? ` · ${esc(formatProjectSavedAt(p.savedAt))}` : ''}</option>`
+        `<option value="${esc(p.file)}">${esc(projectOptionLabel(p))}</option>`
       ).join('')
       : '<option value="">(no project files in data/projects/)</option>';
+    if (prev && items.some((p) => p.file === prev)) sel.value = prev;
   }
 
   async function applyImportResult(opened, fallbackName) {
@@ -10286,17 +10523,18 @@
   async function openProjectImportPicker() {
     closeProjectMenu();
     const dlg = $('project-import-dialog');
-    if (!dlg) {
+    if (!dlg || typeof api.listImportableProjects !== 'function') {
       $('file-open-est')?.click();
       return;
     }
     try {
       const r = await api.listImportableProjects();
-      fillProjectImportList(r.files || [], r.projectsDir);
+      fillProjectImportList(r.files || [], projectLibraryDirHint(r));
+      syncProjectSortButtons('import');
       if (typeof dlg.showModal === 'function') dlg.showModal();
       else dlg.setAttribute('open', '');
     } catch (e) {
-      alert(e.message || 'Could not list projects');
+      alert(cloudProjectAccessHint(e) || 'Could not list projects');
     }
   }
 
@@ -10345,7 +10583,15 @@
     projectOpenInFlight = true;
     $('project-name').textContent = `Importing ${fallbackName}…`;
     try {
-      const opened = await api.importProjectFile(file);
+      let opened;
+      if (typeof api.importProjectFile === 'function') {
+        opened = await api.importProjectFile(file);
+      } else if (/\.est\.zip$/i.test(file.name)) {
+        throw new Error('This server cannot import .est.zip yet. Deploy the latest MooreView build to the server, then try again.');
+      } else {
+        const doc = JSON.parse(await file.text());
+        opened = await api.openEst(doc);
+      }
       await applyImportResult(opened, fallbackName);
     } catch (e) {
       alert(e.message || 'Import failed');
@@ -10366,10 +10612,9 @@
     try {
       const r = await api.listProjects();
       projects = r.projects || projects;
-      if (r.projectsStorage) projectsDir = r.projectsStorage;
-      else if (r.projectsDir) projectsDir = r.projectsDir;
+      projectsDir = projectLibraryDirHint(r);
     } catch (e) {
-      alert(e.message);
+      alert(cloudProjectAccessHint(e));
       return;
     }
     const dirEl = $('project-picker-dir');
@@ -10379,15 +10624,16 @@
         : 'Projects stored in data/projects/';
     }
     fillProjectPickerList(projects);
+    syncProjectSortButtons('picker');
     if (typeof dlg.showModal === 'function') dlg.showModal();
     else dlg.setAttribute('open', '');
   }
 
-  async function openProjectById(id) {
+  async function openProjectById(id, opts = {}) {
     if (!id || projectOpenInFlight) return;
     const listed = projects.find((p) => p.id === id);
     const label = listed?.name || id;
-    if (!confirmProjectReplace('Open project', label)) return;
+    if (!opts.silent && !confirmProjectReplace('Open project', label)) return;
     projectOpenInFlight = true;
     const nameEl = $('project-name');
     if (nameEl) nameEl.textContent = `Opening ${label}…`;
@@ -10461,6 +10707,8 @@
     $('project-import-folder')?.addEventListener('click', () => {
       if (isApplianceDeployment()) {
         api.openProjectsFolder().catch((e) => alert(e.message));
+      } else if (isCloudDeployment()) {
+        showProjectLibraryFolderHint().catch((e) => alert(e.message));
       } else {
         alert('On cloud Studio, upload a .est.zip with Browse other location… or copy files to the server projects folder via SFTP.');
       }
@@ -10478,6 +10726,10 @@
       }
     });
     $('project-picker-folder')?.addEventListener('click', () => {
+      if (isCloudDeployment()) {
+        showProjectLibraryFolderHint().catch((e) => alert(e.message));
+        return;
+      }
       api.openProjectsFolder().catch((e) => alert(e.message));
     });
     $('project-picker-delete')?.addEventListener('click', async () => {
@@ -10512,6 +10764,8 @@
     });
     $('btn-share-project')?.addEventListener('click', () => openProjectHubDialog('share'));
     $('btn-deploy-project')?.addEventListener('click', () => openProjectHubDialog('deploy'));
+    bindProjectListSortControls();
+    if (!isCloudDeployment()) {
     $('project-hub-tabs')?.querySelectorAll('[data-hub-tab]').forEach((btn) => {
       btn.addEventListener('click', () => setProjectHubTab(btn.dataset.hubTab));
     });
@@ -10542,6 +10796,7 @@
         alert(e.message || 'Invalid project file');
       }
     });
+    }
     $('btn-save-est-as')?.addEventListener('click', () => {
       closeProjectMenu();
       saveEstFileAs().catch((e) => alert(e.message));
@@ -10589,6 +10844,7 @@
       const scanMs = s.scanMs ?? 100;
       if ($('proj-scan-ms')) $('proj-scan-ms').value = scanMs;
       if ($('set-scan')) $('set-scan').value = scanMs;
+      fillTimezoneField(s);
       fillSetupProgramSelect().catch(console.error);
       fillMongoLoggerFields(ml);
       fillPdmSettingsFields(lastSettings?.pdm);
@@ -10701,6 +10957,7 @@
             project: { ...(lastSettings.project || {}), name },
           };
         }
+        applyDisplayTimezone(lastSettings);
         lastLive = Array.isArray(data.live) ? data.live : [];
         graphPens = data.graphPens?.length ? data.graphPens : (data.settings?.graphPens || []);
         reportConfig = mergeReportConfig(data.reportConfig ?? data.settings?.reportConfig);
@@ -10989,6 +11246,13 @@
   }
   syncParcOptaRegistryUi();
   $('parc-opta-bulk-from-registry')?.addEventListener('change', syncParcOptaRegistryUi);
+  $('parc-registry-device-list')?.addEventListener('click', (ev) => {
+    const btn = ev.target?.closest?.('.parc-registry-add');
+    if (!btn) return;
+    const deviceId = btn.getAttribute('data-device-id') || '';
+    if (!deviceId) return;
+    void addParcDriverForRegistryDevice(deviceId);
+  });
 
   function syncParcOptaRangeFields() {
       const on = $('parc-opta-bulk-use-range')?.checked === true;
@@ -11015,7 +11279,14 @@
       const useRange = $('parc-opta-bulk-use-range')?.checked === true;
 
       if (fromRegistry) {
-        const ids = parcRegistryDeviceIds(includeRegistryNoise);
+        let ids = parcRegistryDeviceIds(includeRegistryNoise);
+        if (singleId) {
+          ids = ids.filter((id) => id === singleId);
+          if (!ids.length) {
+            alert(`Device ${singleId} is not in the Parc registry (or is filtered as test/debug). Wait for MQTT telemetry, or uncheck "Add from Parc registry" to add by ID anyway.`);
+            return;
+          }
+        }
         if (!ids.length) {
           alert('No Parc devices to add. Registry is empty or only has test/debug IDs — enter a device ID above, or check "Include test/debug IDs".');
           return;
@@ -11026,7 +11297,11 @@
         const skipNote = skippedNoise.length && !includeRegistryNoise
           ? `\n\nSkipping test/debug: ${skippedNoise.join(', ')}`
           : '';
-        if (!window.confirm(`Add ${ids.length} driver(s) from Parc registry?\n\n${ids.join('\n')}${skipNote}`)) return;
+        const posNote = positionId && ids.length === 1 ? `\n\nPosition ID: ${positionId}` : '';
+        if (!window.confirm(`Add ${ids.length} driver(s) from Parc registry?\n\n${ids.join('\n')}${posNote}${skipNote}`)) return;
+        if (ids.length === 1 && positionId) {
+          body.positions = { [ids[0]]: positionId };
+        }
       } else if (singleId) {
         body.deviceIds = lines.length ? [singleId, ...lines.filter((id) => id !== singleId)] : [singleId];
       } else if (lines.length) {
@@ -11159,27 +11434,6 @@
     $('nc-test')?.addEventListener('click', () => { testNextcenturySetup(); });
     $('nc-save')?.addEventListener('click', () => { saveNextcenturySetup(false); });
     $('nc-save-connect')?.addEventListener('click', () => { saveNextcenturySetup(true); });
-    $('bac-builder-load-example')?.addEventListener('click', () => {
-      bacnetBuilderLoadExample().catch((e) => setBacnetBuilderResult({ error: e.message }));
-    });
-    $('bac-builder-save-profile')?.addEventListener('click', () => {
-      bacnetBuilderSaveProfile().catch((e) => setBacnetBuilderResult({ error: e.message }));
-    });
-    $('bac-builder-delete-profile')?.addEventListener('click', () => {
-      bacnetBuilderDeleteProfile().catch((e) => setBacnetBuilderResult({ error: e.message }));
-    });
-    $('bac-builder-browse-sample')?.addEventListener('click', () => {
-      bacnetBuilderBrowseSample().catch((e) => setBacnetBuilderResult({ error: e.message }));
-    });
-    $('bac-builder-capture-profile')?.addEventListener('click', () => {
-      bacnetBuilderCaptureProfile().catch((e) => setBacnetBuilderResult({ error: e.message }));
-    });
-    $('bac-builder-preview')?.addEventListener('click', () => {
-      bacnetBuilderPreview().catch((e) => setBacnetBuilderResult({ error: e.message }));
-    });
-    $('bac-builder-apply')?.addEventListener('click', () => {
-      bacnetBuilderApplyFleet().catch((e) => setBacnetBuilderResult({ error: e.message }));
-    });
     ['nc-driver-id', 'nc-poll-ms', 'nc-property-ids', 'nc-devices-per-site', 'nc-site-count', 'nc-auto-sync-tags'].forEach((id) => {
       const el = $(id);
       if (!el) return;
@@ -11210,6 +11464,12 @@
     $('btn-alarms-notify-setup')?.addEventListener('click', () => {
       openPopup('alarm-notify');
     });
+    $('user-alarm-scope-all')?.addEventListener('change', syncUserScopeModeUi);
+    syncUserScopeModeUi();
+    $('proj-timezone')?.addEventListener('change', () => {
+      markSetupDirty();
+      window.MooreviewTime?.setTimezone?.($('proj-timezone').value);
+    });
     $('proj-startup-mode')?.addEventListener('change', () => {
       markSetupDirty();
       syncStartupProjectField();
@@ -11228,7 +11488,15 @@
       fillUserEditor({
         email: '',
         role: 'operator',
-        profile: { displayName: '', alarmNotifications: { enabled: true, email: true, minLevel: 'inner' } },
+        profile: {
+          displayName: '',
+          alarmNotifications: {
+            enabled: true,
+            email: true,
+            minLevel: 'inner',
+            notificationScope: { mode: 'all', siteIds: [], deviceIds: [], assetIds: [] },
+          },
+        },
       });
       if ($('users-msg')) $('users-msg').textContent = 'New user — enter email and save';
     });
@@ -11342,12 +11610,6 @@
     MooreviewHmi?.refreshAfterPageRestore?.();
   });
 
-  function handleMobileViewportChange() {
-    MooreviewHmi?.refreshAfterPageRestore?.();
-  }
-
-  window.addEventListener('mv-viewport-change', handleMobileViewportChange);
-
   document.addEventListener('DOMContentLoaded', () => {
     const appDeps = {
       getTags: () => tags,
@@ -11358,12 +11620,12 @@
       applyLiveFromServer,
       getGraphHistory: () => lastGraphHistory,
       getLastRuntime: () => lastRuntime,
+      getLastOptaRuntime: () => lastOptaRuntime,
       getLastSettings: () => lastSettings,
       getDrivers: () => drivers,
       getDriverHealthMap: () => driverHealthMap,
       getLastParcDevices: () => lastParcDevices,
       openOptaIoViewForDriver,
-      openOptaCtCalForDriver,
       optaHttpHostForDriver,
       setLastSettings: (s) => { lastSettings = s; },
       patchLastSettings: (patch) => { lastSettings = { ...lastSettings, ...patch }; },
@@ -11388,19 +11650,10 @@
     bindContextHelp();
     bindRoiCalculatorInputs();
     bindToolbar();
-    document.querySelector('.topbar-mobile-menu')?.addEventListener('toggle', () => {
-      window.MooreviewMobileViewport?.syncChromeTop?.();
-    });
-    document.querySelector('.cloud-studio-nav-menu')?.addEventListener('toggle', () => {
-      window.MooreviewMobileViewport?.syncChromeTop?.();
-    });
-    window.MooreviewMobileViewport?.run?.();
     if (window.MooreviewProgram) MooreviewProgram.bindProgramToolbar();
     loadAuthSession()
       .then(() => refreshAll())
-      .then((data) => {
-        finishDashboardBoot(data);
-      })
+      .then((data) => finishDashboardBoot(data))
       .catch((e) => {
         showBootError(e.message || String(e));
       })
@@ -11408,7 +11661,6 @@
         fillModbusPortSelect();
         MooreviewHmi?.initMainHmi();
         startDashboardRuntime();
-        window.MooreviewMobileViewport?.run?.();
       });
   });
 })();

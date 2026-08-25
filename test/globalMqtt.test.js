@@ -23,7 +23,7 @@ describe('globalTagMeta + bytecode', () => {
   it('emits META_GLOBAL in bytecode header flags', () => {
     const { ast } = parseProgram('IF IsON(PumpRun) THEN TurnON(PumpRun); END_IF;');
     const tags = [{ id: 'PumpRun', type: 'GLOBAL_BOOL' }];
-    const buf = compileProgramBytecode(ast, ['PumpRun'], tags);
+    const { bytecode: buf } = compileProgramBytecode(ast, ['PumpRun'], tags);
     let off = 10;
     const nlen = buf.readUInt8(off++);
     off += nlen;
@@ -69,15 +69,6 @@ describe('mqttProtocol global + tenant telemetry', () => {
     assert.deepEqual(
       telemetryTopicInfo('mooreview/v1/opta_st_01/telemetry', cfg),
       { tenantId: null, deviceId: 'opta_st_01' },
-    );
-  });
-
-  it('wildcardTenantTelemetry matches tenant device paths', () => {
-    const { wildcardTenantTelemetry, resolveTelemetryRoute } = require('../src/parc/mqttProtocol');
-    assert.equal(wildcardTenantTelemetry(cfg), 'mooreview/v1/+/+/telemetry');
-    assert.deepEqual(
-      resolveTelemetryRoute('mooreview/v1/acme-corp/dragino_01/telemetry', cfg),
-      { tenantId: 'acme-corp', deviceId: 'dragino_01' },
     );
   });
 });

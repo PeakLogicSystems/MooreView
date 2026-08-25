@@ -10,7 +10,7 @@
  */
 'use strict';
 
-const CACHE = 'mv-cache-v4';
+const CACHE = 'mv-cache-v1';
 const SHELL = ['/', '/manifest.webmanifest', '/icons/icon.svg'];
 
 self.addEventListener('install', (event) => {
@@ -61,17 +61,18 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Static assets: network-first so project opens and deploys pick up fresh JS/CSS (normal F5).
+  // Static assets: stale-while-revalidate.
   if (isStaticAsset(url)) {
     event.respondWith(
-      fetch(request)
-        .then((res) => {
-          if (res && res.ok) {
-            caches.open(CACHE).then((cache) => cache.put(request, res.clone())).catch(() => {});
-          }
-          return res;
-        })
-        .catch(() => caches.match(request)),
+      caches.open(CACHE).then((cache) => cache.match(request).then((cached) => {
+        const network = fetch(request)
+          .then((res) => {
+            if (res && res.ok) cache.put(request, res.clone());
+            return res;
+          })
+          .catch(() => cached);
+        return cached || network;
+      })),
     );
   }
 });

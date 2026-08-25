@@ -2,15 +2,17 @@
 
 const { spawn } = require('child_process');
 const programStore = require('../../programs/programStore');
+const persistence = require('../../persistence');
 const { loadFixtureBundle } = require('../../programs/programFixtures');
 const { ensureMotorTags, isMotorProgramPath } = require('../../programs/motorTags');
 const { parseProgram, collectProgramTagRefs } = require('../../engine/parser');
+const { createContext, collectExpressionTrace } = require('../../engine/executor');
 const { estimateOptaDeploy } = require('../../parc/mqttOptaProgram');
+const { OPTA_PROGRAM_MAX_BYTES, clientDeployMeta } = require('../../drivers/optaProtocol');
 const {
-  OPTA_PROGRAM_MAX_BYTES,
-  OPTA_PROGRAM_MAX_WIRE_BYTES,
-  optaDeployLimitsFromDeviceStatus,
-} = require('../../drivers/optaProtocol');
+  assessStProgramLines,
+  stProgramLimitsMeta,
+} = require('../../programs/stProgramLimits');
 
 function unknownTagsFromErrors(errors) {
   return [...new Set((errors || [])
@@ -26,13 +28,12 @@ function findRemoteOptaDriverId(driverManager) {
   return cfg?.id || null;
 }
 
-function optaProgramDeployLimits(driverManager, driverId) {
+function optaProgramLimitBytes(driverManager, driverId) {
   const id = driverId || findRemoteOptaDriverId(driverManager);
-  if (!id) {
-    return { bcLimit: OPTA_PROGRAM_MAX_BYTES, wireLimit: OPTA_PROGRAM_MAX_WIRE_BYTES };
-  }
+  if (!id) return OPTA_PROGRAM_MAX_BYTES;
   const inst = driverManager.instances.get(id);
-  return optaDeployLimitsFromDeviceStatus(inst?._deviceStatus);
+  const fromDevice = Number(inst?._deviceStatus?.programMaxBytes);
+  return fromDevice > 0 ? fromDevice : OPTA_PROGRAM_MAX_BYTES;
 }
 
 function createProgramRoutes(deps) {
@@ -43,20 +44,21 @@ function createProgramRoutes(deps) {
     res.json({
       programs: programStore.listPrograms(),
       active: programStore.activeRel(),
-      stDir: programStore.ST_DIR,
+      stDir: programStore.stDir(),
+      programLimits: stProgramLimitsMeta(),
     });
   });
 
   router.get('/programs/root', (req, res) => {
     res.json({
-      stDir: programStore.ST_DIR,
+      stDir: programStore.stDir(),
       active: programStore.activeRel(),
       programs: programStore.listPrograms(),
     });
   });
 
   router.post('/programs/open-folder', (req, res) => {
-    const dir = programStore.ST_DIR;
+    const dir = programStore.stDir();
     try {
       if (process.platform === 'win32') {
         spawn('explorer.exe', [dir], { detached: true, stdio: 'ignore' }).unref();
@@ -92,7 +94,7 @@ function createProgramRoutes(deps) {
         active: rel,
         errors: r.errors,
         source: programStore.readProgram(rel),
-        stDir: programStore.ST_DIR,
+        stDir: programStore.stDir(),
       });
     } catch (e) {
       res.status(500).json({ error: e.message || 'Reload failed' });
@@ -111,7 +113,7 @@ function createProgramRoutes(deps) {
         active: '',
         errors: [],
         source: '',
-        stDir: programStore.ST_DIR,
+        stDir: programStore.stDir(),
       });
     } catch (e) {
       res.status(500).json({ error: e.message || 'Clear failed' });
@@ -129,11 +131,6 @@ function createProgramRoutes(deps) {
         const bundle = loadFixtureBundle(rel, driverManager.list());
         if (bundle) {
           tagStore.replaceAll(bundle.tags);
-          try {
-            const { repairSensorTestTags } = require('../../programs/sensorTestTags');
-            repairSensorTestTags(tagStore);
-            tagStore.save();
-          } catch { /* ignore */ }
           driverManager.save(bundle.drivers);
           await driverManager.rebuild();
           fixturesLoaded = {
@@ -150,7 +147,7 @@ function createProgramRoutes(deps) {
         active: rel,
         errors: r.errors,
         source: programStore.readActive(),
-        stDir: programStore.ST_DIR,
+        stDir: programStore.stDir(),
         fixturesLoaded,
       });
     } catch (e) {
@@ -170,10 +167,13 @@ function createProgramRoutes(deps) {
       tagStore.replaceAll(bundle.tags);
       driverManager.save(bundle.drivers);
       await driverManager.rebuild();
+      programStore.setActive(rel);
       const r = scanEngine.loadProgram();
       res.json({
         ok: true,
         active: rel,
+        source: programStore.readProgram(rel),
+        stDir: programStore.stDir(),
         fixturesLoaded: {
           tagsFile: bundle.tagsFile,
           driversFile: bundle.driversFile,
@@ -188,23 +188,18 @@ function createProgramRoutes(deps) {
   });
 
   router.put('/program', (req, res) => {
-    try {
-      const raw = req.body?.source ?? req.body?.program ?? '';
-      programStore.writeActive(raw);
-      const r = scanEngine.loadProgram();
-      const active = programStore.activeRel();
-      const errors = r.errors || [];
-      res.json({
-        ok: true,
-        programOk: r.ok,
-        errors,
-        unknownTags: unknownTagsFromErrors(errors),
-        active,
-        source: programStore.readActive(),
-      });
-    } catch (e) {
-      res.status(e.status || 400).json({ error: e.message || String(e) });
-    }
+    programStore.writeActive(req.body.source || '');
+    const r = scanEngine.loadProgram();
+    const active = programStore.activeRel();
+    const errors = r.errors || [];
+    res.json({
+      ok: true,
+      programOk: r.ok,
+      errors,
+      unknownTags: unknownTagsFromErrors(errors),
+      active,
+      source: programStore.readActive(),
+    });
   });
 
   router.post('/programs/save', (req, res) => {
@@ -218,7 +213,7 @@ function createProgramRoutes(deps) {
       res.json({
         ok: true,
         active: rel,
-        stDir: programStore.ST_DIR,
+        stDir: programStore.stDir(),
         filePath: programStore.resolvePath(rel),
         programOk: r.ok,
         errors: r.errors,
@@ -240,7 +235,7 @@ function createProgramRoutes(deps) {
       res.json({
         ok: r.ok,
         active: rel,
-        stDir: programStore.ST_DIR,
+        stDir: programStore.stDir(),
         filePath: programStore.resolvePath(rel),
         errors: r.errors,
         source: programStore.readProgram(rel),
@@ -252,21 +247,50 @@ function createProgramRoutes(deps) {
 
   router.post('/program/validate', (req, res) => {
     const src = req.body.source ?? programStore.readActive();
+    const remoteOn = persistence.readJson('settings.json', {}).remoteExecution === true;
+    const localLines = assessStProgramLines(src, { forParc: false });
+    const parcLines = assessStProgramLines(src, { forParc: true });
     const r = scanEngine.validate(src);
     const { ast } = parseProgram(src);
-    const errors = r.errors || [];
+    const errors = [...(r.errors || [])];
+    if (remoteOn) {
+      for (const e of parcLines.errors || []) {
+        if (!errors.includes(e)) errors.push(e);
+      }
+    }
     res.json({
-      ...r,
+      ok: errors.length === 0,
       errors,
       unknownTags: unknownTagsFromErrors(errors),
       programTags: ast ? collectProgramTagRefs(ast) : [],
+      lineCount: {
+        lines: localLines.lines,
+        local: localLines,
+        parc: parcLines,
+      },
+      programLimits: stProgramLimitsMeta(),
     });
+  });
+
+  router.post('/program/trace', (req, res) => {
+    const src = req.body.source ?? programStore.readActive();
+    const r = scanEngine.validate(src);
+    if (!r.ok) {
+      return res.json({ ok: false, errors: r.errors || [], trace: [] });
+    }
+    const { ast } = parseProgram(src);
+    if (!ast) {
+      return res.json({ ok: false, errors: ['Program parse failed'], trace: [] });
+    }
+    const trace = collectExpressionTrace(ast, createContext(tagStore, new Set()));
+    res.json({ ok: true, errors: [], trace });
   });
 
   router.post('/program/deploy-estimate', (req, res) => {
     const src = req.body.source ?? programStore.readActive();
+    const settings = persistence.readJson('settings.json', {});
     const driverId = req.body.driverId || findRemoteOptaDriverId(driverManager);
-    const remoteApplicable = !!driverId;
+    const remoteApplicable = settings.remoteExecution === true && !!driverId;
     if (!remoteApplicable) {
       return res.json({
         ok: true,
@@ -275,17 +299,14 @@ function createProgramRoutes(deps) {
         astBytes: 0,
         tagCount: 0,
         limit: OPTA_PROGRAM_MAX_BYTES,
-        wireLimit: OPTA_PROGRAM_MAX_WIRE_BYTES,
         overLimit: false,
         headroom: OPTA_PROGRAM_MAX_BYTES,
-        wireHeadroom: OPTA_PROGRAM_MAX_WIRE_BYTES,
         pct: 0,
       });
     }
-    const { bcLimit, wireLimit } = optaProgramDeployLimits(driverManager, driverId);
+    const limit = optaProgramLimitBytes(driverManager, driverId);
     const est = estimateOptaDeploy(src, tagStore, driverId, {
-      bcLimitBytes: bcLimit,
-      wireLimitBytes: wireLimit,
+      limitBytes: limit,
       programName: programStore.activeRel() || '',
     });
     if (!est.ok) {
@@ -295,11 +316,18 @@ function createProgramRoutes(deps) {
         remoteApplicable: true,
         errors,
         error: errors.join('; '),
-        limit: bcLimit,
-        wireLimit,
+        limit,
+        lineCount: assessStProgramLines(src, { forParc: true }),
+        programLimits: stProgramLimitsMeta(),
       });
     }
-    res.json({ ...est, remoteApplicable: true, driverId });
+    res.json({
+      ...est,
+      remoteApplicable: true,
+      driverId,
+      lineCount: assessStProgramLines(src, { forParc: true }),
+      programLimits: stProgramLimitsMeta(),
+    });
   });
 
   return router;

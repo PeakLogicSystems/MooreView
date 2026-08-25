@@ -2,21 +2,46 @@
 
 const fs = require('fs');
 const path = require('path');
-const { ST_DIR, DEFAULT_PROGRAM } = require('../config');
+const { ST_DIR: GLOBAL_ST_DIR, DEFAULT_PROGRAM, DATA_DIR } = require('../config');
+const { resolveStDir } = require('../tenants/tenantPaths');
 const persistence = require('../persistence');
 
+function stDir() {
+  return resolveStDir();
+}
+
 function ensureStDir() {
-  if (!fs.existsSync(ST_DIR)) fs.mkdirSync(ST_DIR, { recursive: true });
+  const dir = stDir();
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return dir;
 }
 
 function sanitizeRel(rel) {
-  const norm = path.normalize(rel || '').replace(/^(\.\.(\/|\\|$))+/, '');
-  return norm.replace(/\\/g, '/');
+  const raw = String(rel ?? '').trim();
+  if (!raw || raw === '.' || raw === './') return '';
+  const norm = path.normalize(raw).replace(/^(\.\.(\/|\\|$))+/, '');
+  const cleaned = norm.replace(/\\/g, '/');
+  if (!cleaned || cleaned === '.' || cleaned === './') return '';
+  return cleaned;
+}
+
+function isValidProgramRel(rel) {
+  const safe = sanitizeRel(rel);
+  return !!safe && /\.st$/i.test(safe);
 }
 
 function resolvePath(rel) {
-  ensureStDir();
-  return path.join(ST_DIR, sanitizeRel(rel));
+  const dir = ensureStDir();
+  return path.join(dir, sanitizeRel(rel));
+}
+
+function activeRelFromWorkspace() {
+  const ws = persistence.readJson('workspace.est.json', null);
+  const fromWs = (typeof ws?.activeProgram === 'string' && ws.activeProgram)
+    ? ws.activeProgram
+    : ws?.settings?.activeProgram;
+  if (typeof fromWs === 'string' && fromWs) return sanitizeRel(fromWs);
+  return '';
 }
 
 function activeRel() {
@@ -24,6 +49,27 @@ function activeRel() {
   if (s.activeProgram === null || s.activeProgram === '') return '';
   if (s.activeProgram) return sanitizeRel(s.activeProgram);
   return sanitizeRel(DEFAULT_PROGRAM);
+}
+
+/** Resolve and persist activeProgram from settings or workspace before boot deploy. */
+function ensureActiveProgram() {
+  let rel = activeRel();
+  if (rel && programExists(rel)) {
+    const s = persistence.readJson('settings.json', {});
+    if (s.activeProgram !== rel) setActive(rel);
+    return rel;
+  }
+  const s = persistence.readJson('settings.json', {});
+  if (typeof s.activeProgram === 'string' && s.activeProgram) {
+    rel = setActive(s.activeProgram);
+    if (programExists(rel)) return rel;
+  }
+  const fromWs = activeRelFromWorkspace();
+  if (fromWs) {
+    rel = setActive(fromWs);
+    return rel;
+  }
+  return rel || '';
 }
 
 function setActive(rel) {
@@ -47,7 +93,9 @@ function readActive() {
 }
 
 function writeActive(source) {
-  writeProgram(activeRel(), source);
+  const rel = activeRel();
+  if (!rel) return;
+  writeProgram(rel, source);
 }
 
 function programExists(rel) {
@@ -55,31 +103,36 @@ function programExists(rel) {
 }
 
 function readProgram(rel) {
-  const fp = resolvePath(rel);
+  const safe = sanitizeRel(rel);
+  if (!safe) return '';
+  const fp = resolvePath(safe);
   if (!fs.existsSync(fp)) return '';
+  const st = fs.statSync(fp);
+  if (!st.isFile()) return '';
   return fs.readFileSync(fp, 'utf8');
 }
 
-/** Coerce API/import input to ST source text — rejects deploy AST objects with a clear error. */
-function normalizeProgramSource(source) {
-  if (source == null) return '';
-  if (typeof source === 'string') return source;
-  if (Buffer.isBuffer(source)) return source.toString('utf8');
-  if (typeof source === 'object') {
-    const nested = source.source ?? source.text ?? source.content ?? source.program;
-    if (typeof nested === 'string') return nested;
-  }
-  throw Object.assign(
-    new Error('Program source must be ST text (string), not a JSON object'),
-    { status: 400 },
-  );
+/** Lightweight change token for dashboard polls — avoids re-sending/parsing huge ST every tick. */
+function activeProgramMeta() {
+  const rel = activeRel();
+  if (!rel) return { path: '', mtimeMs: 0, size: 0 };
+  const fp = resolvePath(rel);
+  if (!fs.existsSync(fp)) return { path: rel, mtimeMs: 0, size: 0 };
+  const st = fs.statSync(fp);
+  if (!st.isFile()) return { path: rel, mtimeMs: 0, size: 0 };
+  return { path: rel, mtimeMs: st.mtimeMs, size: st.size };
 }
 
 function writeProgram(rel, source) {
-  const text = normalizeProgramSource(source);
-  const fp = resolvePath(rel);
+  if (!isValidProgramRel(rel)) return;
+  const safe = sanitizeRel(rel);
+  const fp = resolvePath(safe);
+  if (fs.existsSync(fp)) {
+    const st = fs.statSync(fp);
+    if (!st.isFile()) return;
+  }
   fs.mkdirSync(path.dirname(fp), { recursive: true });
-  fs.writeFileSync(fp, text, 'utf8');
+  fs.writeFileSync(fp, source, 'utf8');
 }
 
 /** Map a picked filename to a path under st/ (e.g. logic/my_prog.st). */
@@ -129,8 +182,8 @@ function listProgramsInRoot(rootDir) {
 }
 
 function listPrograms() {
-  ensureStDir();
-  return listProgramsInRoot(ST_DIR);
+  const root = ensureStDir();
+  return listProgramsInRoot(root);
 }
 
 /** Shipped sample paths under st/ — kept when pruning user programs on new project. */
@@ -164,7 +217,7 @@ function removeEmptyDirs(rootDir) {
 function pruneProgramsExcept(keepRel, opts = {}) {
   const keep = sanitizeRel(keepRel);
   const protectShipped = opts.protectShipped !== false;
-  const root = path.resolve(opts.stRoot || ST_DIR);
+  const root = path.resolve(opts.stRoot || stDir());
   for (const { path: rel } of listProgramsInRoot(root)) {
     if (rel === keep) continue;
     if (protectShipped && isShippedSamplePath(rel)) continue;
@@ -176,11 +229,11 @@ function pruneProgramsExcept(keepRel, opts = {}) {
 
 function warnLegacyDataSt() {
   const legacy = path.join(require('../config').DATA_DIR, 'st');
-  if (path.resolve(legacy) === path.resolve(ST_DIR)) return;
+  if (path.resolve(legacy) === path.resolve(stDir())) return;
   try {
     if (fs.existsSync(legacy) && fs.readdirSync(legacy).some((n) => n.endsWith('.st'))) {
       console.warn(
-        `[programs] Legacy ${legacy} is ignored. Use ${ST_DIR} (set MOOREVIEW_ST to override).`
+        `[programs] Legacy ${legacy} is ignored. Use ${stDir()} (set MOOREVIEW_ST to override).`
       );
     }
   } catch {
@@ -202,12 +255,16 @@ function migrateLegacyProgram() {
 }
 
 module.exports = {
-  ST_DIR,
+  ST_DIR: GLOBAL_ST_DIR,
+  stDir,
   DEFAULT_PROGRAM,
   ensureStDir,
   sanitizeRel,
+  isValidProgramRel,
   resolvePath,
   activeRel,
+  activeRelFromWorkspace,
+  ensureActiveProgram,
   setActive,
   clearActive,
   readActive,
@@ -216,7 +273,7 @@ module.exports = {
   suggestRelFromFilename,
   saveToPath,
   readProgram,
-  normalizeProgramSource,
+  activeProgramMeta,
   writeProgram,
   listPrograms,
   listProgramsInRoot,

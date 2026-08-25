@@ -30,6 +30,7 @@
 #include "mv_mqtt.h"
 #include "mv_watchdog.h"
 #include "mv_mcsa_mon.h"
+#include "mv_rbe.h"
 #if MV_FIELDBUS
 #include "mv_fieldbus.h"
 #endif
@@ -233,6 +234,7 @@ void setup() {
   mvExpBegin();
   mvExpApplyConfig(&g_cfg);
   mvExpEnsureTags();
+  mvRbeBegin();
   MV_LOG2("expansion modules=", mvExpDetectedCount());
 
   if (mvWifiApActive()) {
@@ -314,6 +316,7 @@ void loop() {
     }
   }
 
+  mvRbeTick();
   mvMqttMaybePublishTelemetry(g_runtimeRunning, g_scanMs, g_cycles, g_lastCycleUs);
 
 #if (defined(ARDUINO_PORTENTA_H7_M7) || defined(ARDUINO_OPTA)) && MV_HAS_WEBSERVER

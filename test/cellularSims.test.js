@@ -24,8 +24,10 @@ const { SimetryAdapter, mapSimetryStatus } = require('../src/cellular/vendors/si
 const { listVendorDefinitions, isVendorImplemented } = require('../src/cellular/vendors');
 const simStore = require('../src/cellular/simStore');
 const simManager = require('../src/cellular/simManager');
+const { registry } = require('../src/parc/deviceRegistry');
 const { writeCellularSimsSettings } = require('../src/cellular/cellularSettings');
 const { createCellularSimRoutes } = require('../src/api/routes/cellularSims');
+const { buildBillingReport, billingReportToCsv } = require('../src/cellular/simBilling');
 
 describe('simRecordSchema', () => {
   it('normalizes sim record with stable id', () => {
@@ -109,6 +111,18 @@ function mockSimetryFetch(handlers = {}) {
     }
     if (u.includes('/data-consumption/data')) {
       return { ok: true, status: 200, text: async () => JSON.stringify({ success: true, requestId: 'req-usage' }) };
+    }
+    if (u.includes('/data-consumption/generate-esim-billing-preview')) {
+      assert.equal(init.method, 'POST');
+      return { ok: true, status: 200, text: async () => JSON.stringify({ success: true, requestId: 'req-billing' }) };
+    }
+    if (u.includes('/data-consumption/generate-billing-invoice-preview')
+      || u.includes('/data-consumption/generate-invoice-preview')) {
+      assert.equal(init.method, 'POST');
+      return { ok: true, status: 200, text: async () => JSON.stringify({ success: true, requestId: 'req-invoice' }) };
+    }
+    if (u.includes('/plans')) {
+      return { ok: true, status: 200, text: async () => JSON.stringify({ success: true, requestId: 'req-plans' }) };
     }
     if (u.includes('/esims')) {
       return { ok: true, status: 200, text: async () => JSON.stringify({ success: true, requestId: 'req-list' }) };
@@ -203,6 +217,74 @@ describe('SimetryAdapter', () => {
     const adapter = new SimetryAdapter(creds, { fetchImpl, pollDelayMs: 1 });
     const usage = await adapter.getUsage('89019900000003070001');
     assert.equal(usage.dataUsageMb, 2);
+  });
+
+  it('fetches esim billing preview and invoice preview', async () => {
+    const eid = '89034011014200000000000000871001';
+    let opCalls = 0;
+    const fetchImpl = mock.fn(async (url, init) => {
+      const u = String(url);
+      if (u.includes('/operation-result')) {
+        opCalls += 1;
+        if (opCalls === 1) {
+          return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({
+              success: true,
+              entries: [{
+                success: true,
+                eid,
+                esimServiceFee: 1.5,
+                total: 12.5,
+                totalEsimUsage: 5242880,
+                entries: [{
+                  planUuid: 'plan-1',
+                  planName: 'USA 1GB Plan',
+                  planRate: 11,
+                  usage: 5242880,
+                  total: 11,
+                }],
+              }],
+            }),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({
+            success: true,
+            entries: [{ totalPrice: 99.5, entries: [{ title: 'Plans', totalPrice: 99.5 }] }],
+          }),
+        };
+      }
+      if (u.includes('/data-consumption/generate-esim-billing-preview')) {
+        assert.equal(init.method, 'POST');
+      }
+      if (u.includes('/data-consumption/generate-billing-invoice-preview')) {
+        assert.equal(init.method, 'POST');
+      }
+      return { ok: true, status: 200, text: async () => JSON.stringify({ success: true, requestId: 'req-x' }) };
+    });
+
+    const adapter = new SimetryAdapter({
+      ...creds,
+      clientUuid: 'client-uuid-1',
+    }, { fetchImpl, pollDelayMs: 1 });
+
+    const previews = await adapter.getEsimBillingPreview({
+      periodStart: '2026-08-01 00:00:00',
+      periodEnd: '2026-08-11 00:00:00',
+      eids: [eid],
+    });
+    assert.equal(previews.length, 1);
+    assert.equal(previews[0].eid, eid);
+    assert.equal(previews[0].usageMb, 5);
+    assert.equal(previews[0].amount, 12.5);
+    assert.equal(previews[0].serviceFee, 1.5);
+
+    const invoice = await adapter.getInvoicePreview({ period: '2026-08-11 00:00:00' });
+    assert.equal(invoice.totalPrice, 99.5);
   });
 });
 
@@ -488,6 +570,39 @@ async function withApi(fn) {
   }
 }
 
+describe('sim billing report', () => {
+  it('builds tenant billing summary and csv export', () => {
+    const period = { periodStart: '2026-08-01 00:00:00', periodEnd: '2026-08-11 00:00:00' };
+    const sims = [{
+      id: 'csim_1',
+      iccid: '89019900000003070001',
+      eid: '89034011014200000000000000871001',
+      vendor: 'simetry',
+      status: 'active',
+      tenantId: 'acme',
+      metadata: {
+        billing: {
+          periodStart: period.periodStart,
+          periodEnd: period.periodEnd,
+          usageMb: 5,
+          serviceFee: 1.5,
+          amount: 11,
+          currency: 'USD',
+          planName: 'USA 1GB Plan',
+          syncedAt: '2026-08-11T12:00:00.000Z',
+        },
+      },
+    }];
+    const report = buildBillingReport(sims, period);
+    assert.equal(report.lines.length, 1);
+    assert.equal(report.summary.totalAmount, 12.5);
+    assert.equal(report.summary.totalUsageMb, 5);
+    const csv = billingReportToCsv(report);
+    assert.match(csv, /89019900000003070001/);
+    assert.match(csv, /acme/);
+  });
+});
+
 describe('cellular sim API', () => {
   before(() => {
     simStore.resetFallbackForTests([]);
@@ -581,26 +696,8 @@ describe('cellular sim API', () => {
     const server = app.listen(0);
     const port = server.address().port;
     try {
-      const statusRes = await fetch(`http://127.0.0.1:${port}/api/cellular/sims/status`);
-      const statusBody = await statusRes.json();
-      assert.equal(statusRes.status, 200);
-      assert.equal(statusBody.enabled, false);
-
       const res = await fetch(`http://127.0.0.1:${port}/api/cellular/sims`);
-      assert.equal(res.status, 200);
-      const body = await res.json();
-      assert.equal(body.enabled, false);
-      assert.deepEqual(body.sims, []);
-      assert.equal(body.count, 0);
-
-      const vendorsRes = await fetch(`http://127.0.0.1:${port}/api/cellular/vendors`);
-      assert.equal(vendorsRes.status, 200);
-      const vendorsBody = await vendorsRes.json();
-      assert.equal(vendorsBody.enabled, false);
-      assert.deepEqual(vendorsBody.vendors, []);
-
-      const syncRes = await fetch(`http://127.0.0.1:${port}/api/cellular/sync`, { method: 'POST' });
-      assert.equal(syncRes.status, 403);
+      assert.equal(res.status, 403);
     } finally {
       await new Promise((r) => server.close(r));
       process.env.MOOREVIEW_CELLULAR_SIMS = '1';
@@ -623,6 +720,114 @@ describe('cellular sim API', () => {
   });
 });
 
+describe('gateway cellular ingest', () => {
+  before(() => {
+    simStore.resetFallbackForTests([]);
+    writeCellularSimsSettings({ enabled: true, vendors: [] });
+    persistence.writeJson('gateway_cellular.json', { reports: {} });
+  });
+
+  after(async () => {
+    await simStore.close();
+  });
+
+  it('auto-links SIM when gateway publishes matching ICCID', async () => {
+    const iccid = '89019900000003079999';
+    await simStore.upsertFromVendor(normalizeSimRecord({
+      iccid,
+      vendor: 'simetry',
+      vendorSimId: '89034011014200000000000000879999',
+      status: 'active',
+    }));
+
+    const { ingestGatewayCellularMessage } = require('../src/cellular/gatewayCellularIngest');
+    const result = await ingestGatewayCellularMessage(
+      'mooreview/v1/gateway/gw_nanopi_ab12cd/cellular',
+      JSON.stringify({
+        gatewayId: 'gw_nanopi_ab12cd',
+        platform: 'nanopi-neo-cat1',
+        iccid,
+        imsi: '234500024513999',
+      }),
+      { topicPrefix: 'mooreview/v1' },
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal(result.autoLink.linked, true);
+    assert.equal(result.autoLink.gatewayId, 'gw_nanopi_ab12cd');
+    const sim = await simStore.findByIccidAny(iccid);
+    assert.equal(sim.gatewayId, 'gw_nanopi_ab12cd');
+  });
+
+  it('stores report and suggests sync when ICCID is unknown', async () => {
+    const { ingestGatewayCellularMessage } = require('../src/cellular/gatewayCellularIngest');
+    const result = await ingestGatewayCellularMessage(
+      'mooreview/v1/gateway/gw_nanopi_new01/cellular',
+      JSON.stringify({
+        gatewayId: 'gw_nanopi_new01',
+        iccid: '89019900000003111111',
+      }),
+      { topicPrefix: 'mooreview/v1' },
+    );
+    assert.equal(result.ok, true);
+    assert.equal(result.autoLink.suggestSync, true);
+    assert.equal(result.report.gatewayId, 'gw_nanopi_new01');
+  });
+});
+
+describe('device cellular sync', () => {
+  before(() => {
+    simStore.resetFallbackForTests([]);
+    writeCellularSimsSettings({ enabled: true, vendors: [] });
+    persistence.writeJson('gateway_cellular.json', {
+      reports: {
+        gw_nanopi_ab12cd: {
+          gatewayId: 'gw_nanopi_ab12cd',
+          platform: 'nanopi-neo-cat1',
+          iccid: '89019900000003078888',
+          imsi: '234500024513888',
+          receivedAt: new Date().toISOString(),
+        },
+      },
+    });
+    registry.reloadFromPersistence();
+    registry.ingestReport({
+      deviceId: 'opta_012355b52d66a109ee',
+      platform: 'arduino-opta-mqtt-st',
+      mqttBroker: '192.168.1.1',
+      ethIp: '192.168.1.55',
+    });
+    return simStore.upsertFromVendor(normalizeSimRecord({
+      iccid: '89019900000003078888',
+      vendor: 'simetry',
+      vendorSimId: '89034011014200000000000000878888',
+      eid: '89034011014200000000000000878888',
+      status: 'active',
+    }));
+  });
+
+  after(async () => {
+    await simStore.close();
+  });
+
+  it('links Opta device registration to gateway ICCID and Simetry eID', async () => {
+    const { syncDeviceCellularRegistration } = require('../src/cellular/deviceCellularSync');
+    const result = await syncDeviceCellularRegistration({
+      deviceId: 'opta_012355b52d66a109ee',
+      tenantId: 'acme',
+      report: registry.getDevice('opta_012355b52d66a109ee'),
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.cellular.iccid, '89019900000003078888');
+    assert.equal(result.cellular.eid, '89034011014200000000000000878888');
+    assert.equal(result.cellular.gatewayId, 'gw_nanopi_ab12cd');
+    assert.equal(result.autoLink.linked, true);
+    const dev = registry.getDevice('opta_012355b52d66a109ee');
+    assert.equal(dev.meta.cellular.iccid, '89019900000003078888');
+    assert.match(result.registration.cellular.eid, /^890340/);
+  });
+});
+
 describe('cellular sims frontend client', () => {
   it('exposes getCellularVendorCatalog in public/js/api.js', () => {
     const apiJs = fs.readFileSync(path.join(__dirname, '../public/js/api.js'), 'utf8');
@@ -632,7 +837,16 @@ describe('cellular sims frontend client', () => {
 
   it('loads versioned api.js on cellular-sims page (avoids stale browser cache)', () => {
     const page = fs.readFileSync(path.join(__dirname, '../views/cellular-sims.ejs'), 'utf8');
-    assert.match(page, /<script src="\/js\/api\.js\?v=<%= assetV %>-conn"><\/script>/);
-    assert.match(page, /<script src="\/js\/cellularSimsPage\.js\?v=<%= assetV %>-conn"><\/script>/);
+    assert.match(page, /<script src="\/js\/api\.js\?v=<%= assetV %>"><\/script>/);
+    assert.match(page, /<script src="\/js\/cellularSimsPage\.js\?v=<%= assetV %>"><\/script>/);
+    assert.match(page, /cellular-billing-section/);
+  });
+
+  it('exposes cellular billing API helpers in public/js/api.js', () => {
+    const apiJs = fs.readFileSync(path.join(__dirname, '../public/js/api.js'), 'utf8');
+    assert.match(apiJs, /syncCellularBilling:/);
+    assert.match(apiJs, /getCellularBillingReport:/);
+    assert.match(apiJs, /exportCellularBillingCsv:/);
+    assert.match(apiJs, /getCellularGatewayReports:/);
   });
 });

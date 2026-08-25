@@ -8,18 +8,17 @@
   <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/icons/icon-512.png">
   <script src="/js/pwa.js" defer></script>
-  <title>I/O Map — MooreVIEW</title>
+  <title>I/O Map — MooreView</title>
   <link rel="stylesheet" href="/css/pc.css?v=<%= assetV %>">
 </head>
 <body class="io-map-body">
   <header class="topbar standalone-topbar">
-    <div class="topbar-brand"><a href="/" class="standalone-home-link">moore<span>VIEW</span></a></div>
+    <div class="topbar-brand"><a href="/" class="standalone-home-link">Moore<span>View</span></a></div>
     <h1 class="standalone-title">I/O Map</h1>
     <div class="standalone-meta popup-header-actions">
       <label class="checkbox-inline"><input type="checkbox" id="io-map-live-update"> Enable I/O update</label>
       <span id="io-map-status" class="muted cell-mono" aria-live="polite">Loading…</span>
-      <span class="topbar-version muted cell-mono" title="MooreVIEW release">v<%= appVersion %></span>
-      <button type="button" class="btn" id="btn-standalone-sign-out" title="Sign out">Sign out</button>
+      <span class="topbar-version muted cell-mono" title="MooreView release">v<%= appVersion %></span>
       <a href="/" class="btn popup-close page-close" title="Return to dashboard">Close</a>
     </div>
   </header>
@@ -43,15 +42,14 @@
     </div>
   </main>
 
-  <script src="/js/api.js?v=<%= assetV %>"></script>
-  <script src="/js/signOut.js?v=<%= assetV %>"></script>
+  <script src="/js/api.js"></script>
   <script src="/js/mooreviewCore.js"></script>
   <script src="/js/tagDisplay.js?v=<%= assetV %>"></script>
   <script src="/js/expansionIo.js?v=<%= assetV %>"></script>
   <script src="/js/liveIoUpdate.js?v=<%= assetV %>"></script>
+  <script src="/js/timeFormat.js?v=<%= assetV %>"></script>
   <script src="/js/ioTimestamp.js?v=<%= assetV %>"></script>
   <script src="/js/ioMapPage.js?v=<%= assetV %>"></script>
   <script src="/js/ioMapBindings.js?v=<%= assetV %>"></script>
-  <script>MooreviewSignOut.bind('btn-standalone-sign-out');</script>
 </body>
 </html>

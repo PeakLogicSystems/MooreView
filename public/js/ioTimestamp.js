@@ -4,6 +4,7 @@
 window.MooreviewIoTimestamp = (function () {
   function formatAbsolute(ms) {
     if (ms == null || !Number.isFinite(ms)) return '—';
+    if (window.MooreviewTime?.formatClockMs) return window.MooreviewTime.formatClockMs(ms);
     const d = new Date(ms);
     const hh = String(d.getHours()).padStart(2, '0');
     const mm = String(d.getMinutes()).padStart(2, '0');

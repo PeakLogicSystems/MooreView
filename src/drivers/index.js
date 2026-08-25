@@ -3,24 +3,71 @@
 const { MockDriver } = require('./mockDriver');
 const { ModbusDriver } = require('./modbusDriver');
 const { MqttDriver } = require('./mqttDriver');
-const { MqttSimDriver } = require('./mqttSimDriver');
 const { HttpsDriver } = require('./httpsDriver');
 const { MqttParcOptaDriver } = require('./mqttParcOptaDriver');
 const { SerialDriver } = require('./serialDriver');
 const { NativeSoDriver } = require('./nativeSoDriver');
 const { HalDriver } = require('./halDriver');
-const { BacnetDriver } = require('./bacnetDriver');
 const { ModbusBridgeDriver } = require('./modbusBridge');
 const { VgreenDriver } = require('./vgreenDriver');
+const { PentairDriver } = require('./pentairDriver');
+const { JandyDriver } = require('./jandyDriver');
+const { HaywardDriver } = require('./haywardDriver');
 const { NextcenturyDriver } = require('./nextcenturyDriver');
 const { sanitizeDriverConfig } = require('./driverConfig');
 const persistence = require('../persistence');
 const { resolveSerialPort } = require('../system/serialPortResolve');
+const { registry } = require('../parc/deviceRegistry');
+const { getMqttCentralHub } = require('../parc/mqttCentralHub');
 
 const WIN32_COM_RELEASE_MS = 300;
 
+const DEFERRED_CONNECT_TYPES = new Set(['nextcentury', 'https', 'mqtt']);
+
+/** Local field I/O polled on PC even when ST runs on Opta (remote execution). */
+const FIELDBUS_DRIVER_TYPES = new Set([
+  'modbus_rtu', 'modbus_tcp', 'vgreen_epc', 'pentair_rs485', 'jandy_rs485', 'hayward_rs485',
+  'serial', 'hal', 'native_so',
+]);
+
+/**
+ * Cloud/API drivers hosted on the PC (not the Opta). These must be polled on the
+ * PC even when ST executes remotely on the Opta, otherwise their data (e.g.
+ * NextCentury meters/leaks) only refreshes once at startup and then goes stale.
+ * Each of these driver's readBatch self-throttles, so ticking it every scan is cheap.
+ */
+const HOST_API_DRIVER_TYPES = new Set(['nextcentury', 'https', 'mqtt']);
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function withTimeout(promise, ms, message) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
+function testConnectionTimeoutMs(type) {
+  if (type === 'mqtt_parc') return 25000;
+  // NextCentury test-execute runs the full report (per-property delay + network),
+  // so it needs a larger budget than a simple connect.
+  if (type === 'nextcentury') return 60000;
+  if (type === 'modbus_rtu' || type === 'vgreen_epc' || type === 'pentair_rs485'
+      || type === 'jandy_rs485' || type === 'hayward_rs485' || type === 'modbus_bridge' || type === 'serial') {
+    return 12000;
+  }
+  return 20000;
 }
 
 /** Fix drivers saved as modbus when tags use NextCentury deviceId/field addressing. */
@@ -66,8 +113,10 @@ const FACTORIES = {
   modbus_tcp: (cfg) => new ModbusDriver(cfg),
   modbus_bridge: (cfg) => new ModbusBridgeDriver(cfg),
   vgreen_epc: (cfg) => new VgreenDriver(cfg),
+  pentair_rs485: (cfg) => new PentairDriver(cfg),
+  jandy_rs485: (cfg) => new JandyDriver(cfg),
+  hayward_rs485: (cfg) => new HaywardDriver(cfg),
   mqtt: (cfg) => new MqttDriver(cfg),
-  mqtt_sim: (cfg) => new MqttSimDriver(cfg),
   https: (cfg) => new HttpsDriver(cfg),
   nextcentury: (cfg) => new NextcenturyDriver(cfg),
   opta_remote: (cfg) => new MqttParcOptaDriver(normalizeRemoteDriverCfg(cfg)),
@@ -75,13 +124,11 @@ const FACTORIES = {
   serial: (cfg) => new SerialDriver(cfg),
   native_so: (cfg) => new NativeSoDriver(cfg),
   hal: (cfg) => new HalDriver(cfg),
-  bacnet: (cfg) => new BacnetDriver(cfg),
 };
 
 class DriverManager {
   constructor(tagStore) {
     this.tagStore = tagStore;
-    this._rebuildPromise = null;
     const raw = persistence.readJson('drivers.json', []) || [];
     const migrated = migrateDriverConfigs(raw, tagStore);
     const changed = migrated.some((c, i) => JSON.stringify(c) !== JSON.stringify(raw[i]));
@@ -101,6 +148,14 @@ class DriverManager {
     persistence.writeJson('drivers.json', this.configs);
   }
 
+  reloadFromPersistence() {
+    const raw = persistence.readJson('drivers.json', []) || [];
+    const migrated = migrateDriverConfigs(raw, this.tagStore);
+    this.configs = migrated
+      .map(normalizeRemoteDriverCfg)
+      .map(sanitizeDriverConfig);
+  }
+
   _rtuConfiguredPorts(skipDriverId) {
     const reserved = [];
     for (const c of this.configs) {
@@ -108,6 +163,8 @@ class DriverManager {
       if (c.type === 'modbus_rtu' && c.serialPort) {
         reserved.push(c.serialPort);
       } else if (c.type === 'vgreen_epc' && c.serialPort) {
+        reserved.push(c.serialPort);
+      } else if (c.type === 'pentair_rs485' && c.serialPort) {
         reserved.push(c.serialPort);
       } else if (c.type === 'modbus_bridge' && c.rtu?.serialPort) {
         reserved.push(c.rtu.serialPort);
@@ -153,13 +210,6 @@ class DriverManager {
         subscriptions: [...topics],
       };
     }
-    if (cfg.type === 'mqtt_sim') {
-      return {
-        ...cfg,
-        brokerUrl: cfg.brokerUrl || cfg.broker,
-        peerDrivers: this.configs.filter((c) => c.id !== cfg.id),
-      };
-    }
     if (cfg.type === 'https') {
       return {
         ...cfg,
@@ -184,7 +234,6 @@ class DriverManager {
   }
 
   async connectDriver(id) {
-    await this._whenRebuildIdle();
     const cfg = this.configs.find((c) => c.id === id);
     if (!cfg || cfg.enabled === false) {
       throw new Error(`Driver "${id}" not found or disabled`);
@@ -200,7 +249,7 @@ class DriverManager {
     const inst = factory(cfg);
     this.instances.set(id, inst);
     let connectCfg = this._connectCfg(cfg);
-    if (cfg.type === 'modbus_rtu' || cfg.type === 'vgreen_epc') {
+    if (cfg.type === 'modbus_rtu' || cfg.type === 'vgreen_epc' || cfg.type === 'pentair_rs485') {
       const { connectCfg: cc, resolved } = await this._prepareRtuConnect(cfg, new Map());
       connectCfg = cc;
       inst._serialPortResolved = resolved;
@@ -225,21 +274,10 @@ class DriverManager {
     this.instances.delete(id);
   }
 
-  async _whenRebuildIdle() {
-    if (this._rebuildPromise) await this._rebuildPromise;
-  }
-
-  async rebuild() {
-    if (this._rebuildPromise) return this._rebuildPromise;
-    this._rebuildPromise = this._rebuildCore().finally(() => {
-      this._rebuildPromise = null;
-    });
-    return this._rebuildPromise;
-  }
-
-  async _rebuildCore() {
+  async rebuild(opts = {}) {
+    const deferApi = opts.connectDeferred === true;
     const hadRtu = this.configs.some(
-      (c) => (c.type === 'modbus_rtu' || c.type === 'vgreen_epc' || c.type === 'modbus_bridge') && this.instances.has(c.id)
+      (c) => (c.type === 'modbus_rtu' || c.type === 'vgreen_epc' || c.type === 'pentair_rs485' || c.type === 'modbus_bridge') && this.instances.has(c.id)
     );
     for (const d of this.instances.values()) {
       try { await d.disconnect(); } catch { /* ignore */ }
@@ -250,13 +288,7 @@ class DriverManager {
     }
     const rtuPortsInUse = new Map();
 
-    const orderedConfigs = [...this.configs].sort((a, b) => {
-      if (a.type === 'mqtt_sim' && b.type !== 'mqtt_sim') return -1;
-      if (b.type === 'mqtt_sim' && a.type !== 'mqtt_sim') return 1;
-      return 0;
-    });
-
-    for (const cfg of orderedConfigs) {
+    for (const cfg of this.configs) {
       if (!cfg.enabled) continue;
       const factory = FACTORIES[cfg.type];
       if (!factory) continue;
@@ -264,7 +296,7 @@ class DriverManager {
       this.instances.set(cfg.id, inst);
       let connectCfg = this._connectCfg(cfg);
 
-      if (cfg.type === 'modbus_rtu' || cfg.type === 'vgreen_epc') {
+      if (cfg.type === 'modbus_rtu' || cfg.type === 'vgreen_epc' || cfg.type === 'pentair_rs485') {
         const { connectCfg: cc, resolved } = await this._prepareRtuConnect(cfg, rtuPortsInUse);
         connectCfg = cc;
         inst._serialPortResolved = resolved;
@@ -292,8 +324,20 @@ class DriverManager {
         if (resolved.path !== cfg.rtu.serialPort) {
           connectCfg = { ...cfg, rtu: { ...cfg.rtu, serialPort: resolved.path } };
         }
-      } else if (cfg.type === 'opta_remote' || cfg.type === 'mqtt_parc') {
-        // Link on demand (Connect / Test) — do not block app boot on device HTTP/MQTT.
+      } else if (cfg.type === 'opta_remote') {
+        // Manual connect-on-demand — do not block app boot on device HTTP/MQTT.
+        inst.connected = false;
+        inst._lastError = '';
+        continue;
+      } else if (cfg.type === 'mqtt_parc') {
+        // Project open / boot: do not block on runtime_status for every fleet driver.
+        // Telemetry still flows via the central hub; link on scan start or manual Connect.
+        if (deferApi || !getMqttCentralHub(registry).isLive()) {
+          inst.connected = false;
+          inst._lastError = '';
+          continue;
+        }
+      } else if (deferApi && DEFERRED_CONNECT_TYPES.has(cfg.type)) {
         inst.connected = false;
         inst._lastError = '';
         continue;
@@ -313,14 +357,50 @@ class DriverManager {
         inst.connected = false;
       }
     }
-    // Do not block HTTP handlers or boot on a full NextCentury property poll (can take minutes).
-    void this._bootstrapApiDrivers().catch((e) => {
-      console.warn('[drivers] bootstrap API drivers:', e.message || e);
-    });
+    await this._bootstrapApiDrivers(deferApi);
+  }
+
+  /** Connect enabled mqtt_parc drivers when the central MQTT hub is live. */
+  async linkMqttParcDriversIfHubLive() {
+    if (!getMqttCentralHub(registry).isLive()) return [];
+    const results = [];
+    for (const cfg of this.configs) {
+      if (!cfg.enabled || cfg.type !== 'mqtt_parc') continue;
+      const inst = this.instances.get(cfg.id);
+      if (!inst) continue;
+      if (inst.connected) {
+        results.push({ id: cfg.id, ok: true, skipped: true });
+        continue;
+      }
+      const connectCfg = this._connectCfg(cfg);
+      try {
+        const ok = await inst.connect(connectCfg);
+        if (ok === false && !inst._lastError) {
+          inst._lastError = 'Connection failed';
+        }
+        if (inst.connected) {
+          const note = inst._lastError ? ` (${inst._lastError})` : '';
+          console.log(`[mqtt-parc] linked driver "${cfg.id}"${note}`);
+          results.push({ id: cfg.id, ok: true });
+        } else {
+          const msg = inst._lastError || 'Connection failed';
+          console.warn(`[mqtt-parc] driver "${cfg.id}" not linked: ${msg}`);
+          results.push({ id: cfg.id, ok: false, error: msg });
+        }
+      } catch (e) {
+        const msg = e.message || String(e);
+        inst._lastError = msg;
+        inst.connected = false;
+        console.warn(`[mqtt-parc] driver "${cfg.id}" not linked: ${msg}`);
+        results.push({ id: cfg.id, ok: false, error: msg });
+      }
+    }
+    return results;
   }
 
   /** Initial API poll + tag sync for cloud drivers (NextCentury, etc.) after connect. */
-  async _bootstrapApiDrivers() {
+  async _bootstrapApiDrivers(skipWhenDeferred = false) {
+    if (skipWhenDeferred) return;
     for (const cfg of this.configs) {
       if (!cfg.enabled) continue;
       const inst = this.instances.get(cfg.id);
@@ -356,6 +436,9 @@ class DriverManager {
       if (!connected) {
         message = inst?._lastError || (typeof inst?.health === 'function' ? inst.health() : '') || '';
         if (message === 'OK') message = '';
+      } else if (c.type === 'mqtt_parc' || c.type === 'opta_remote') {
+        const h = typeof inst?.health === 'function' ? inst.health() : '';
+        if (h && h !== 'OK') message = h;
       }
       const row = {
         id: c.id,
@@ -394,19 +477,34 @@ class DriverManager {
   hasConnectedRtu() {
     for (const [id, inst] of this.instances) {
       const cfg = this.configs.find((c) => c.id === id);
-      if ((cfg?.type === 'modbus_rtu' || cfg?.type === 'vgreen_epc') && cfg.enabled && inst?.connected) return true;
+      if ((cfg?.type === 'modbus_rtu' || cfg?.type === 'vgreen_epc' || cfg?.type === 'pentair_rs485') && cfg.enabled && inst?.connected) return true;
     }
     return false;
+  }
+
+  hasEnabledFieldbus() {
+    return this.configs.some((c) => c.enabled && FIELDBUS_DRIVER_TYPES.has(c.type));
   }
 
   mappingsFor(driverId) {
     return this.tagStore.list().filter((t) => t.driverId === driverId && t.driverAddress);
   }
 
-  async readAll() {
+  _isFieldbusDriver(id) {
+    const cfg = this.configs.find((c) => c.id === id);
+    return !!(cfg?.enabled && FIELDBUS_DRIVER_TYPES.has(cfg.type));
+  }
+
+  _isHostApiDriver(id) {
+    const cfg = this.configs.find((c) => c.id === id);
+    return !!(cfg?.enabled && HOST_API_DRIVER_TYPES.has(cfg.type));
+  }
+
+  async _readDrivers(filterFn) {
     for (const [id, driver] of this.instances) {
+      if (!filterFn(id)) continue;
       const maps = this.mappingsFor(id).filter(
-        (t) => (t.role === 'input' || t.role === 'memory') && !this.tagStore.isDriverReadSkipped(t)
+        (t) => (t.role === 'input' || t.role === 'memory') && !this.tagStore.isDriverReadSkipped(t),
       );
       try {
         await driver.readBatch(maps, this.tagStore);
@@ -416,63 +514,9 @@ class DriverManager {
     }
   }
 
-  /** Mirror Parc MQTT telemetry into tag store (remote Opta — no HTTP poll required). */
-  async syncParcTelemetry() {
-    for (const cfg of this.configs) {
-      if (!cfg.enabled) continue;
-      if (cfg.type !== 'mqtt_parc' && cfg.type !== 'opta_remote') continue;
-      const inst = this.instances.get(cfg.id);
-      if (!inst) continue;
-      try {
-        if (typeof inst.syncFromParcTelemetry === 'function') {
-          inst.syncFromParcTelemetry(this.tagStore);
-        } else if (typeof inst.runScanCycle === 'function') {
-          await inst.runScanCycle(this.tagStore);
-        }
-      } catch (e) {
-        inst._lastError = e.message || String(e);
-      }
-    }
-  }
-
-  /** Poll fieldbus drivers for Live I/O when scan engine is stopped or paused. */
-  async readFieldbus() {
+  async _writeDrivers(filterFn) {
     for (const [id, driver] of this.instances) {
-      const cfg = this.configs.find((c) => c.id === id);
-      if (!cfg?.enabled) continue;
-      if (cfg.type === 'mqtt_parc' || cfg.type === 'opta_remote') continue;
-      const maps = this.mappingsFor(id).filter(
-        (t) => (t.role === 'input' || t.role === 'memory') && !this.tagStore.isDriverReadSkipped(t),
-      );
-      if (!maps.length) continue;
-      try {
-        await driver.readBatch(maps, this.tagStore);
-      } catch (e) {
-        driver._lastError = e.message || String(e);
-      }
-    }
-    await this.syncParcTelemetry();
-  }
-
-  /** Poll cloud/API drivers (NextCentury, etc.) for Live I/O refresh. */
-  async readHostApi() {
-    for (const cfg of this.configs) {
-      if (!cfg.enabled || cfg.type !== 'nextcentury') continue;
-      const inst = this.instances.get(cfg.id);
-      if (!inst?.connected) continue;
-      const maps = this.mappingsFor(cfg.id).filter(
-        (t) => (t.role === 'input' || t.role === 'memory') && !this.tagStore.isDriverReadSkipped(t),
-      );
-      try {
-        await inst.readBatch(maps, this.tagStore);
-      } catch (e) {
-        inst._lastError = e.message || String(e);
-      }
-    }
-  }
-
-  async writeAll() {
-    for (const [id, driver] of this.instances) {
+      if (!filterFn(id)) continue;
       const maps = this.mappingsFor(id).filter((t) => t.dirty && t.role === 'output');
       if (!maps.length) continue;
       try {
@@ -481,10 +525,43 @@ class DriverManager {
         driver._lastError = e.message;
       }
     }
+  }
+
+  async readAll() {
+    await this._readDrivers(() => true);
+  }
+
+  /** Poll PC-attached buses (RS-485, HAL, etc.) while ST runs on Opta. */
+  async readFieldbus() {
+    await this._readDrivers((id) => this._isFieldbusDriver(id));
+  }
+
+  /** Poll PC-hosted cloud/API drivers (NextCentury, HTTPS, MQTT) while ST runs on Opta. */
+  async readHostApi() {
+    await this._readDrivers((id) => this._isHostApiDriver(id));
+  }
+
+  async writeAll() {
+    await this._writeDrivers(() => true);
+    this.tagStore.clearDirty();
+  }
+
+  async writeFieldbus() {
+    await this._writeDrivers((id) => this._isFieldbusDriver(id));
     this.tagStore.clearDirty();
   }
 
   async testConnection(cfg) {
+    const type = String(cfg?.type || '').trim();
+    const timeoutMs = testConnectionTimeoutMs(type);
+    return withTimeout(
+      this._testConnectionOnce(cfg),
+      timeoutMs,
+      `Driver test timed out after ${Math.round(timeoutMs / 1000)}s`,
+    );
+  }
+
+  async _testConnectionOnce(cfg) {
     const type = String(cfg?.type || '').trim();
     const factory = FACTORIES[type];
     if (!factory) {
@@ -502,16 +579,16 @@ class DriverManager {
         await sleep(WIN32_COM_RELEASE_MS);
       }
     }
-    let connectCfg = this._connectCfg(cfg);
-    if (cfg.type === 'modbus_rtu' || cfg.type === 'vgreen_epc') {
+    let connectCfg = { ...this._connectCfg(cfg), testConnection: true };
+    if (cfg.type === 'modbus_rtu' || cfg.type === 'vgreen_epc' || cfg.type === 'pentair_rs485') {
       const exclude = [
         ...this._rtuConfiguredPorts(cfg.id),
         ...this._liveRtuPorts(cfg.id),
       ];
       const resolved = await resolveSerialPort(cfg.serialPort, { exclude });
       connectCfg = resolved.path !== cfg.serialPort
-        ? { ...cfg, serialPort: resolved.path }
-        : cfg;
+        ? { ...connectCfg, serialPort: resolved.path }
+        : connectCfg;
       liveConnectCfg = connectCfg;
     }
     const inst = factory(connectCfg);

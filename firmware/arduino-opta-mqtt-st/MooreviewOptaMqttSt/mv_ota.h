@@ -16,6 +16,8 @@ struct MvOtaInfo {
 };
 
 void mvOtaBegin();
+/** Start/stop ArduinoOTA with the WiFi setup AP (skipped when AP off — saves RAM for MQTT). */
+void mvOtaWifiSync(bool enable);
 void mvOtaLoop();
 void mvOtaSetRuntimeFlag(bool* runningFlag);
 void mvOtaAppendStatus(JsonObject doc);

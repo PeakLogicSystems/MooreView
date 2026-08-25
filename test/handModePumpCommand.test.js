@@ -26,7 +26,7 @@ function loadHmiView() {
 }
 
 describe('resolveHandModePumpWrite', () => {
-  const { resolveHandModePumpWrite, resolveHandModePumpDisplayValue } = loadHmiView();
+  const { resolveHandModePumpWrite, resolveHandModePumpDisplayValue, resolvePumpCommandWrites } = loadHmiView();
 
   it('maps START/STOP to MOTORx_HAND when HOA is Hand (2)', () => {
     const start = resolveHandModePumpWrite('MOTOR1_START', true, 2);
@@ -39,6 +39,29 @@ describe('resolveHandModePumpWrite', () => {
     const p2 = resolveHandModePumpWrite('MOTOR2_START', true, 2);
     assert.equal(p2.tagId, 'MOTOR2_HAND');
     assert.equal(p2.value, true);
+  });
+
+  it('batches Hand Start as HOA + START + HAND in one write', () => {
+    const start = resolvePumpCommandWrites('MOTOR1_START', true, 2);
+    assert.equal(start.length, 3);
+    assert.equal(start[0].tagId, 'MOTOR1_HOA');
+    assert.equal(start[0].value, 2);
+    assert.equal(start[1].tagId, 'MOTOR1_START');
+    assert.equal(start[1].value, true);
+    assert.equal(start[2].tagId, 'MOTOR1_HAND');
+    assert.equal(start[2].value, true);
+    const stop = resolvePumpCommandWrites('MOTOR2_STOP', true, 2);
+    assert.equal(stop[0].tagId, 'MOTOR2_HOA');
+    assert.equal(stop[1].tagId, 'MOTOR2_STOP');
+    assert.equal(stop[2].tagId, 'MOTOR2_HAND');
+    assert.equal(stop[2].value, false);
+    const release = resolvePumpCommandWrites('MOTOR1_START', false, 2);
+    assert.equal(release.length, 1);
+    assert.equal(release[0].tagId, 'MOTOR1_START');
+    assert.equal(release[0].value, false);
+    const auto = resolvePumpCommandWrites('MOTOR1_START', true, 0);
+    assert.equal(auto.length, 1);
+    assert.equal(auto[0].tagId, 'MOTOR1_START');
   });
 
   it('ignores release edge and non-hand HOA', () => {
@@ -77,8 +100,18 @@ describe('resolveHandModePumpWrite', () => {
     }), false);
   });
 
+  it('wires START/STOP pulse buttons when tag type is unknown', () => {
+    const { isBoolCommandBinding } = loadHmiView();
+    assert.equal(isBoolCommandBinding({
+      tagId: 'MOTOR1_START',
+      elementId: 't1_1_z0__btn_p1_start',
+      property: 'fill',
+      interaction: 'pulse',
+    }, ''), true);
+  });
+
   it('wires HOA mode buttons from interaction even when tag type is unknown', () => {
-    const { isHoaModeButtonBinding } = loadHmiView();
+    const { isHoaModeButtonBinding, hoaValueForBinding } = loadHmiView();
     assert.equal(isHoaModeButtonBinding({
       tagId: 'MOTOR2_HOA',
       elementId: 't1_1_z0__btn_p2_hand',
@@ -86,5 +119,11 @@ describe('resolveHandModePumpWrite', () => {
       interaction: 'hoaMode',
       hoaValue: 2,
     }, ''), true);
+    assert.equal(hoaValueForBinding({
+      elementId: 't1_1_z0__btn_p1_off',
+    }), 1);
+    assert.equal(hoaValueForBinding({
+      elementId: 'btn_p2_hand',
+    }), 2);
   });
 });

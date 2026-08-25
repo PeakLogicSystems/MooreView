@@ -3,9 +3,13 @@
   --ps-purple-dark: #3a0d3f;
   --ps-purple-deep: #2c0930;
   --ps-purple-light: #efd9f2;
+  --ps-purple-mid: #6b3480;
   --bg: #f1f5f9;
   --sidebar: #1e293b;
   --accent: #49104F;
+  --accent-soft: #faf5fb;
+  --link: #49104F;
+  --link-hover: #3a0d3f;
   --text: #0f172a;
   --muted: #64748b;
   --border: #cbd5e1;
@@ -191,7 +195,7 @@ tr.force-on { background: #fef9c3; }
   font-weight: 700;
   vertical-align: middle;
 }
-tr.tag-editing { background: #eff6ff; }
+tr.tag-editing { background: var(--accent-soft); }
 .panel-hint { margin: -0.35rem 0 0.75rem; font-size: 0.88rem; color: var(--muted); line-height: 1.4; }
 .proj-section-title { margin: 1rem 0 0.5rem; font-size: 0.95rem; font-weight: 600; color: var(--text); }
 .proj-section-title:first-of-type { margin-top: 0; }
@@ -232,7 +236,7 @@ tr.tag-editing { background: #eff6ff; }
   font-size: 0.9rem;
 }
 .setup-tab:hover { background: #e2e8f0; }
-.setup-tab.active { background: #2563eb; color: #fff; font-weight: 600; }
+.setup-tab.active { background: var(--accent); color: #fff; font-weight: 600; }
 .setup-panels { flex: 1; min-width: 0; padding: 14px 16px; }
 .setup-panel { min-height: 200px; }
 .setup-panel.view-hidden { display: none; }
@@ -262,7 +266,7 @@ tr.tag-editing { background: #eff6ff; }
   border-radius: 8px;
   background: #fff;
 }
-.hmi-asset-grid:focus { outline: 2px solid #2563eb; outline-offset: 1px; }
+.hmi-asset-grid:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .hmi-asset-tile {
   display: flex;
   flex-direction: column;
@@ -280,7 +284,7 @@ tr.tag-editing { background: #eff6ff; }
   color: inherit;
 }
 .hmi-asset-tile:hover { border-color: #cbd5e1; background: #f1f5f9; }
-.hmi-asset-tile.selected { border-color: #2563eb; background: #eff6ff; font-weight: 600; }
+.hmi-asset-tile.selected { border-color: var(--accent); background: var(--accent-soft); font-weight: 600; }
 .hmi-asset-tile.hmi-asset-dragging { opacity: 0.45; cursor: grabbing; }
 .hmi-asset-tile-composite { border-style: dashed; }
 .hmi-asset-thumb {
@@ -304,7 +308,7 @@ tr.tag-editing { background: #eff6ff; }
   letter-spacing: 0.02em;
   padding: 1px 4px;
   border-radius: 3px;
-  background: #2563eb;
+  background: var(--accent);
   color: #fff;
   pointer-events: none;
 }
@@ -318,9 +322,9 @@ tr.tag-editing { background: #eff6ff; }
 }
 .hmi-asset-empty { grid-column: 1 / -1; margin: 0.5rem; text-align: center; }
 .hmi-setup-preview.hmi-drop-target {
-  outline: 2px dashed #2563eb;
+  outline: 2px dashed var(--accent);
   outline-offset: -4px;
-  background: #dbeafe;
+  background: var(--accent-soft);
 }
 .popup-chrome-hmi { max-width: min(96vw, 1200px); }
 .popup-chrome-hmi-setup {
@@ -370,9 +374,9 @@ tr.tag-editing { background: #eff6ff; }
 }
 .hmi-nav-btn:hover { background: #e2e8f0; }
 .hmi-nav-btn.active {
-  background: #2563eb;
+  background: var(--accent);
   color: #fff;
-  border-color: #2563eb;
+  border-color: var(--accent);
   font-weight: 600;
 }
 #hmi-screen-number { background: #f1f5f9; cursor: default; }
@@ -840,8 +844,8 @@ body.hmi-composer-col-split-active {
   flex-shrink: 0;
 }
 .hmi-palette-slot.active {
-  border-color: #2563eb;
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.25);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(73, 16, 79, 0.25);
 }
 .hmi-palette-slot-label {
   position: absolute;
@@ -1149,6 +1153,15 @@ body.hmi-composer-col-split-active {
   .dashboard-body.dashboard-cloud {
     min-height: 100dvh;
   }
+  .hmi-operator-hand-banner {
+    margin: 0.35rem 0 0.5rem;
+    padding: 0.45rem 0.65rem;
+    border-radius: 6px;
+    background: #faf5fb;
+    border: 1px solid rgba(73, 16, 79, 0.25);
+    color: #49104f;
+    font-size: 0.85rem;
+  }
   .hmi-live-stage-wrap:has(.hmi-alarm-sidebar:not(.view-hidden)) {
     flex-direction: column;
   }
@@ -1167,6 +1180,7 @@ body.hmi-composer-col-split-active {
   #program-chrome:not(.view-hidden),
   #tags-chrome:not(.view-hidden),
   #alarms-chrome:not(.view-hidden),
+  #report-chrome:not(.view-hidden),
   #historian-chrome:not(.view-hidden),
   #historian-config-chrome:not(.view-hidden),
   #historian-logger-chrome:not(.view-hidden) {
@@ -1510,9 +1524,9 @@ html {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   vertical-align: middle;
-  background: rgba(147, 197, 253, 0.2);
-  color: #93c5fd;
-  border: 1px solid rgba(147, 197, 253, 0.45);
+  background: rgba(239, 217, 242, 0.15);
+  color: var(--ps-purple-light);
+  border: 1px solid rgba(239, 217, 242, 0.35);
 }
 
 /* Cloud SaaS — second nav row on Studio dashboard (mooreview.io) */
@@ -1537,16 +1551,16 @@ html {
   font-size: 0.88rem;
 }
 .cloud-studio-nav-link:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
-.cloud-studio-nav-link.active { background: rgba(147, 197, 253, 0.22); color: #93c5fd; font-weight: 600; }
+.cloud-studio-nav-link.active { background: var(--accent); color: #fff; font-weight: 600; }
 .cloud-studio-nav-spacer { flex: 1; min-width: 0.5rem; }
 .cloud-studio-nav-user { font-size: 0.82rem; max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cloud-studio-nav-signout {
   margin-left: 0.35rem;
-  border-color: rgba(147, 197, 253, 0.45);
-  color: #93c5fd;
-  background: rgba(147, 197, 253, 0.12);
+  border-color: rgba(239, 217, 242, 0.35);
+  color: var(--ps-purple-light);
+  background: rgba(239, 217, 242, 0.12);
 }
-.cloud-studio-nav-signout:hover { background: rgba(147, 197, 253, 0.22); color: #fff; }
+.cloud-studio-nav-signout:hover { background: rgba(239, 217, 242, 0.22); color: #fff; }
 
 /* Collapsible cloud nav on phones */
 .cloud-studio-nav-menu {
@@ -1564,7 +1578,7 @@ html {
   display: none;
   padding: 0.45rem 1rem;
   background: var(--ps-purple-deep);
-  color: #93c5fd;
+  color: var(--ps-purple-light);
   font-size: 0.88rem;
   font-weight: 600;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
@@ -1800,8 +1814,8 @@ html {
 }
 .topbar-text-btn:hover { background: var(--ps-purple-dark); color: #fff; }
 .topbar-version { opacity: 0.85; font-size: 0.78rem; }
-.topbar .btn { border-color: #475569; background: #334155; color: #f8fafc; }
-.topbar .btn:hover { background: #475569; }
+.topbar .btn { border-color: rgba(255, 255, 255, 0.25); background: var(--ps-purple-dark); color: #f8fafc; }
+.topbar .btn:hover { background: var(--ps-purple-deep); }
 .topbar .btn.primary { background: var(--accent); border-color: var(--accent); }
 .topbar .btn.danger { background: var(--danger); border-color: var(--danger); }
 .topbar .btn.ok { background: var(--ok); border-color: var(--ok); }
@@ -2285,15 +2299,15 @@ html {
   padding: 0.35rem 0.5rem;
   font-size: 0.82rem;
   font-weight: 600;
-  border: 1px solid #2563eb;
+  border: 1px solid var(--accent);
   border-radius: 6px;
-  background: linear-gradient(180deg, #3b82f6, #2563eb);
+  background: linear-gradient(180deg, var(--ps-purple-mid), var(--accent));
   color: #fff;
   cursor: pointer;
   pointer-events: auto;
   position: relative;
   z-index: 11;
-  box-shadow: 0 1px 3px rgba(37, 99, 235, 0.35);
+  box-shadow: 0 1px 3px rgba(73, 16, 79, 0.35);
 }
 .hmi-tile-grid-editable .hmi-nav-cell-btn {
   cursor: default;
@@ -2303,7 +2317,7 @@ html {
   outline-offset: 1px;
 }
 .hmi-nav-cell-btn:hover {
-  background: linear-gradient(180deg, #60a5fa, #3b82f6);
+  background: linear-gradient(180deg, var(--ps-purple-light), var(--ps-purple-mid));
 }
 .hmi-tile-grid-live .hmi-nav-cell-btn:active {
   transform: translateY(1px);
@@ -2365,7 +2379,7 @@ html {
 }
 .st-editor-wrap:focus-within {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+  box-shadow: 0 0 0 2px rgba(73, 16, 79, 0.15);
 }
 .st-editor-gutter {
   margin: 0;
@@ -2430,7 +2444,7 @@ html {
 }
 #btn-prog-debug-trace.active {
   background: #1e40af;
-  border-color: #1d4ed8;
+  border-color: var(--ps-purple-dark);
   color: #fff;
 }
 .st-editor-input.program-editor {
@@ -2493,6 +2507,42 @@ html {
   font-size: 0.82rem;
   margin: 0.5rem 0 0.75rem;
 }
+.topbar-site-select-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-right: 0.5rem;
+  font-size: 0.78rem;
+}
+.topbar-site-select-wrap select {
+  max-width: 10rem;
+  font-size: 0.78rem;
+}
+.dashboard-cloud .project-list-sort {
+  margin-top: 0.25rem;
+}
+.project-list-sort {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.35rem 0 0.15rem;
+}
+.project-list-sort-label {
+  font-size: 0.75rem;
+  color: var(--muted, #64748b);
+  margin-right: 0.15rem;
+}
+.project-list-sort .project-sort-btn {
+  min-width: 3.6rem;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.78rem;
+}
+.project-list-sort .project-sort-btn.active {
+  border-color: var(--accent, #2563eb);
+  color: var(--accent, #2563eb);
+  font-weight: 600;
+}
 
 /* Program live I/O */
 .program-io-panel {
@@ -2534,8 +2584,8 @@ html {
 .io-point.digital.off { color: var(--muted); }
 .io-point.analog {
   min-width: 5.5rem;
-  background: #eff6ff;
-  border-color: #93c5fd;
+  background: var(--accent-soft);
+  border-color: var(--ps-purple-light);
 }
 .io-point.forced {
   outline: 2px dashed var(--warn);
@@ -2833,7 +2883,7 @@ html {
   pointer-events: auto;
 }
 #live-io-chrome .popup-resize-handle:hover {
-  background: rgba(37, 99, 235, 0.12);
+  background: rgba(73, 16, 79, 0.12);
 }
 /* ST Program + Tags — floating panels on document.body */
 .program-shell-stub,
@@ -2974,7 +3024,9 @@ html {
 #historian-logger-chrome.popup-resizing,
 #historian-logger-chrome.popup-resizing *,
 #alarms-chrome.popup-resizing,
-#alarms-chrome.popup-resizing * {
+#alarms-chrome.popup-resizing *,
+#report-chrome.popup-resizing,
+#report-chrome.popup-resizing * {
   user-select: none;
 }
 .window-stack-controls {
@@ -2993,7 +3045,8 @@ html {
 #historian-chrome .popup-resize-handle,
 #historian-config-chrome .popup-resize-handle,
 #historian-logger-chrome .popup-resize-handle,
-#alarms-chrome .popup-resize-handle {
+#alarms-chrome .popup-resize-handle,
+#report-chrome .popup-resize-handle {
   position: absolute;
   z-index: 100;
   touch-action: none;
@@ -3005,8 +3058,9 @@ html {
 #historian-chrome .popup-resize-handle:hover,
 #historian-config-chrome .popup-resize-handle:hover,
 #historian-logger-chrome .popup-resize-handle:hover,
-#alarms-chrome .popup-resize-handle:hover {
-  background: rgba(37, 99, 235, 0.12);
+#alarms-chrome .popup-resize-handle:hover,
+#report-chrome .popup-resize-handle:hover {
+  background: rgba(73, 16, 79, 0.12);
 }
 .alarms-tab-badge {
   display: inline-block;
@@ -3091,6 +3145,69 @@ html {
   opacity: 0.4;
   font-size: 0.85em;
 }
+/* Reports — floating panel */
+.report-shell-stub,
+.app-popup[data-popup="report"].report-shell-stub {
+  display: none !important;
+  visibility: hidden;
+  pointer-events: none;
+}
+#report-chrome.view-hidden {
+  display: none !important;
+  visibility: hidden;
+  pointer-events: none;
+}
+#report-chrome:not(.view-hidden) {
+  pointer-events: auto;
+  position: fixed !important;
+  margin: 0;
+  top: 56px;
+  left: 32px;
+  right: auto;
+  bottom: auto;
+  width: min(1150px, 94vw);
+  min-width: 560px;
+  min-height: 360px;
+  max-height: calc(100vh - 3rem);
+  overflow: visible;
+  z-index: 220;
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.28);
+  display: flex;
+  flex-direction: column;
+  touch-action: none;
+}
+#report-chrome.report-sized {
+  max-height: none;
+  width: auto;
+  right: auto;
+}
+#report-chrome:not(.view-hidden) .popup-header,
+#report-chrome:not(.view-hidden) .popup-footer,
+#report-chrome:not(.view-hidden) .hmi-setup-drag-bar {
+  flex-shrink: 0;
+}
+#report-chrome .report-floater-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  max-height: none;
+}
+#report-chrome .popup-header-draggable,
+#report-chrome .hmi-setup-drag-bar {
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+#report-chrome .popup-header-draggable.popup-dragging,
+#report-chrome .hmi-setup-drag-bar.hmi-dragging {
+  cursor: grabbing;
+}
+#report-chrome .popup-header-draggable h2::before {
+  content: '⠿';
+  margin-right: 0.35rem;
+  opacity: 0.4;
+  font-size: 0.85em;
+}
 .alarms-filter { font-size: 0.9rem; display: inline-flex; align-items: center; gap: 0.35rem; }
 .tags-view-toolbar {
   margin-bottom: 0.35rem;
@@ -3109,8 +3226,8 @@ html {
   align-items: center;
 }
 .tags-view-filter.active {
-  background: var(--accent, #2563eb);
-  border-color: var(--accent, #2563eb);
+  background: var(--accent);
+  border-color: var(--accent);
   color: #fff;
 }
 .alarms-table { min-width: 100%; }
@@ -3394,9 +3511,9 @@ html {
   background: #fff;
 }
 .hmi-tile-cell.hmi-tile-drop-target {
-  border-color: #2563eb;
-  background: #dbeafe;
-  box-shadow: inset 0 0 0 2px #2563eb;
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 .hmi-tile-stack {
   position: relative;
@@ -3510,9 +3627,9 @@ html {
 }
 .hmi-tile-grid-editable .hmi-page-hotspot-btn {
   cursor: default;
-  color: rgba(37, 99, 235, 0.75);
-  border: 1px dashed rgba(37, 99, 235, 0.55);
-  background: rgba(37, 99, 235, 0.08);
+  color: rgba(73, 16, 79, 0.75);
+  border: 1px dashed rgba(73, 16, 79, 0.55);
+  background: rgba(73, 16, 79, 0.08);
   box-sizing: border-box;
 }
 .hmi-tile-grid-editable .hmi-tile-cell.hmi-tile-selected .hmi-page-hotspot-btn,
@@ -3522,10 +3639,10 @@ html {
   color: rgba(180, 83, 9, 0.85);
 }
 .hmi-tile-grid-editable .hmi-page-hotspot-btn:hover {
-  background: rgba(37, 99, 235, 0.14);
+  background: rgba(73, 16, 79, 0.14);
 }
 .hmi-tile-grid-live .hmi-page-hotspot-btn:active {
-  background: rgba(37, 99, 235, 0.12);
+  background: rgba(73, 16, 79, 0.12);
 }
 .hmi-room-hotspot-btn {
   width: 100%;
@@ -4219,6 +4336,9 @@ html {
 .hmi-tile-cell.hmi-hoa-mode-cell svg.hmi-tile-asset {
   pointer-events: auto;
 }
+.hmi-bool-cmd-btn.hmi-bool-cmd-pressed {
+  filter: brightness(1.45);
+}
 .hmi-bool-cmd-btn,
 .hmi-bool-toggle-btn,
 .hmi-hoa-mode-btn,
@@ -4261,11 +4381,13 @@ html {
 .hmi-tile-grid-editable .hmi-tile-cell.hmi-hoa-switch .hmi-tile-layer,
 .hmi-tile-grid-editable .hmi-tile-cell.hmi-bool-cmd-cell .hmi-tile-layer,
 .hmi-tile-grid-editable .hmi-tile-cell.hmi-bool-toggle-cell .hmi-tile-layer,
+.hmi-tile-grid-editable .hmi-tile-cell.hmi-hoa-mode-cell .hmi-tile-layer,
 .hmi-tile-grid-editable .hmi-tile-cell.hmi-state3-readout-cell .hmi-tile-layer {
   pointer-events: none !important;
 }
 .hmi-tile-grid-editable .hmi-bool-cmd-btn,
 .hmi-tile-grid-editable .hmi-bool-toggle-btn,
+.hmi-tile-grid-editable .hmi-hoa-mode-btn,
 .hmi-tile-grid-editable .hmi-state3-readout-interactive,
 .hmi-tile-grid-editable .hmi-param-edit {
   pointer-events: none !important;
@@ -4294,7 +4416,7 @@ html {
   pointer-events: auto;
 }
 #hmi-setup-chrome .popup-resize-handle:hover {
-  background: rgba(37, 99, 235, 0.12);
+  background: rgba(73, 16, 79, 0.12);
 }
 .popup-resize-e {
   top: 0;
@@ -4393,7 +4515,6 @@ html {
   min-width: 1680px;
   font-size: 0.9rem;
 }
-.popup-chrome-report { width: min(1150px, 96vw); }
 /* Historian — floating panel on document.body */
 .historian-shell-stub,
 .app-popup[data-popup="historian"].historian-shell-stub {
@@ -4744,7 +4865,7 @@ svg.hmi-strip-chart {
   opacity: 0.4;
   font-size: 0.85em;
 }
-.popup-chrome-report { width: min(1150px, 96vw); max-height: 92vh; display: flex; flex-direction: column; }
+.popup-chrome-report { display: flex; flex-direction: column; }
 .report-chart-preview {
   display: block;
   width: 100%;
@@ -4838,9 +4959,9 @@ svg.hmi-strip-chart {
 }
 .report-mongo-logs-panel summary { cursor: pointer; font-weight: 600; margin-bottom: 0.35rem; }
 .report-mongo-tabs { margin: 0.5rem 0 0.25rem; }
-.report-mongo-tab.active { background: var(--accent, #2563eb); color: #fff; border-color: var(--accent, #2563eb); }
+.report-mongo-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .report-cmms-tabs { margin: 0.5rem 0 0.25rem; }
-.report-cmms-tab.active { background: var(--accent, #2563eb); color: #fff; border-color: var(--accent, #2563eb); }
+.report-cmms-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .report-cmms-pane .table-wrap { max-height: 16rem; margin-top: 0.35rem; }
 .cmms-page-body { background: var(--bg, #f1f5f9); min-height: 100vh; }
 .cmms-page-main, .cmms-page, .cmms-cloud-embed { max-width: 1200px; margin: 0 auto; padding: 1rem 1.25rem 2rem; }
@@ -4849,9 +4970,9 @@ svg.hmi-strip-chart {
 .cmms-stat-val { display: block; font-size: 1.35rem; font-weight: 700; line-height: 1.2; }
 .cmms-stat-label { display: block; font-size: 0.78rem; color: var(--muted, #64748b); margin-top: 0.15rem; }
 .cmms-tabs { margin: 0.75rem 0 0.35rem; }
-.cmms-tab.active { background: var(--accent, #2563eb); color: #fff; border-color: var(--accent, #2563eb); }
+.cmms-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .cmms-pane .table-wrap { max-height: 18rem; margin-top: 0.5rem; }
-.cmms-pane .data-table tr.selected { background: rgba(37, 99, 235, 0.08); }
+.cmms-pane .data-table tr.selected { background: rgba(73, 16, 79, 0.08); }
 .report-mongo-table { max-height: 16rem; margin-top: 0.35rem; }
 .report-mongo-table .data-table { font-size: 0.85rem; }
 .report-mongo-status-line { margin: 0.25rem 0 0.35rem; font-size: 0.82rem; }
@@ -4941,13 +5062,13 @@ svg.hmi-strip-chart {
   padding: 0;
   border: none;
   background: none;
-  color: var(--link, #2563eb);
+  color: var(--link);
   font: inherit;
   text-decoration: underline;
   cursor: pointer;
 }
 .setup-tab-jump.btn-link:hover {
-  color: var(--link-hover, #1d4ed8);
+  color: var(--link-hover);
 }
 .logging-block {
   margin-top: 0.75rem;
@@ -5369,7 +5490,7 @@ svg.hmi-strip-chart {
   padding: 1rem 1.1rem;
   margin-bottom: 1rem;
 }
-.driver-card.driver-editing { background: #eff6ff; }
+.driver-card.driver-editing { background: var(--accent-soft); }
 .driver-parc-toolbar { margin: 0.35rem 0 0.25rem; }
 .driver-parc-status { margin: 0 0 0.5rem; font-size: 0.82rem; }
 .parc-registry-list { margin-top: 0.5rem; }
@@ -5582,8 +5703,8 @@ svg.hmi-strip-chart {
   font-size: 1rem;
 }
 .training-quiz-pass {
-  background: #dbeafe;
-  border: 1px solid #93c5fd;
+  background: var(--accent-soft);
+  border: 1px solid var(--ps-purple-light);
   color: #1e3a8a;
 }
 .training-quiz-fail {
@@ -5765,8 +5886,8 @@ svg.hmi-strip-chart {
   background: #fff;
   cursor: pointer;
 }
-.hw-wizard-card:hover { border-color: #93c5fd; background: #f8fafc; }
-.hw-wizard-card.selected { border-color: #2563eb; background: #eff6ff; }
+.hw-wizard-card:hover { border-color: var(--ps-purple-light); background: #f8fafc; }
+.hw-wizard-card.selected { border-color: var(--accent); background: var(--accent-soft); }
 .hw-wizard-template-list {
   list-style: none;
   margin: 0.5rem 0 0;
@@ -5788,7 +5909,7 @@ svg.hmi-strip-chart {
   cursor: pointer;
 }
 .hw-wizard-template-row:hover { background: #f8fafc; }
-.hw-wizard-template-row.selected { border-color: #2563eb; background: #eff6ff; }
+.hw-wizard-template-row.selected { border-color: var(--accent); background: var(--accent-soft); }
 .hw-wizard-template-label { font-weight: 600; }
 .hw-wizard-success { color: #166534; }
 .hw-wizard-review { max-width: 36rem; }
@@ -5810,7 +5931,7 @@ svg.hmi-strip-chart {
 .cloud-sim-badge { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 999px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }
 .cloud-sim-badge-running { background: #dcfce7; color: #166534; }
 .cloud-sim-badge-stopped { background: #f1f5f9; color: #475569; }
-.cloud-sim-badge-starting { background: #dbeafe; color: #1d4ed8; }
+.cloud-sim-badge-starting { background: var(--accent-soft); color: var(--ps-purple-dark); }
 .cloud-sim-badge-error { background: #fee2e2; color: #b91c1c; }
 .error-text { color: #b91c1c; }
 
@@ -5833,7 +5954,7 @@ svg.hmi-strip-chart {
 .cellular-sim-badge-inactive { background: #f1f5f9; color: #475569; }
 .cellular-sim-badge-paused { background: #fef3c7; color: #92400e; }
 .cellular-sim-badge-suspended { background: #fee2e2; color: #b91c1c; }
-.cellular-sim-badge-pending { background: #dbeafe; color: #1d4ed8; }
+.cellular-sim-badge-pending { background: var(--accent-soft); color: var(--ps-purple-dark); }
 .cellular-sim-badge-deactivated { background: #e2e8f0; color: #64748b; }
 .cellular-sim-badge-unknown { background: #f8fafc; color: #94a3b8; }
 .cellular-sims-messaging { margin-bottom: 1rem; }

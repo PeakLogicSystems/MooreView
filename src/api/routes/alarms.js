@@ -1,137 +1,56 @@
 'use strict';
 
-
-
-const { formatAckUserLabel } = require('../../tags/tagStore');
-
-
+const { isAlarmActive, isAlarmCapableType } = require('../../tags/tagAnalog');
 
 function createAlarmRoutes(deps) {
-
   const { tagStore } = deps;
-
-  const mongoSysLog = require('../../logger/mongoSysLog');
-
-  const { requireFeature } = require('../../auth/featureGate');
-
-  const { isCloudDeployment } = require('../../cloud/agentProtocol');
-
   const router = require('express').Router();
 
-
-
-  const ackGuard = isCloudDeployment()
-
-    ? (req, res, next) => next()
-
-    : requireFeature('alarms');
-
-
-
-  function logUserFromRequest(req) {
-
-    const user = req.mvAuth?.user;
-
-    if (!user) return null;
-
-    return {
-
-      id: user.userId || user.id,
-
-      email: user.email,
-
-      name: user.name,
-
-      role: user.role,
-
-    };
-
-  }
-
-
-
-  function ackLogLabel(user) {
-
-    return formatAckUserLabel(user) || 'unknown user';
-
-  }
-
-
-
-  router.post('/alarms/ack', ackGuard, (req, res) => {
-
-    const body = req.body || {};
-
-    const logUser = logUserFromRequest(req);
-
-
-
-    if (body.all) {
-
-      const count = tagStore.ackAllAlarms(logUser);
-
-      mongoSysLog.info(
-
-        'alarms',
-
-        `Acknowledged ${count} active alarm(s) by ${ackLogLabel(logUser)}`,
-
-        { count, ackedBy: logUser },
-
-        { user: logUser },
-
-      );
-
-      return res.json({ ok: true, count, live: tagStore.liveSnapshotSlim() });
-
+  router.get('/alarms', (req, res) => {
+    const tags = tagStore.list();
+    const live = tagStore.liveSnapshot();
+    const liveMap = new Map(live.map((e) => [e.tagId, e]));
+    const rows = [];
+    for (const t of tags) {
+      if (!t.alarmsEnabled || !isAlarmCapableType(t.type)) continue;
+      const le = liveMap.get(t.id);
+      const level = le?.alarmLevel || t.alarmLevel || null;
+      if (!isAlarmActive(level)) continue;
+      rows.push({
+        tagId: t.id,
+        label: t.label || '',
+        type: t.type,
+        level,
+        value: le?.value,
+        acked: !!(le?.alarmAcked),
+        since: le?.alarmSince || null,
+      });
     }
-
-    const tagId = String(body.tagId || '').trim();
-
-    if (!tagId) {
-
-      return res.status(400).json({ error: 'tagId required (or all: true)' });
-
-    }
-
-    if (!tagStore.get(tagId)) {
-
-      return res.status(404).json({ error: 'tag not found' });
-
-    }
-
-    const ok = tagStore.ackAlarm(tagId, logUser);
-
-    if (!ok) {
-
-      return res.status(409).json({ error: 'tag has no active alarm' });
-
-    }
-
-    mongoSysLog.info(
-
-      'alarms',
-
-      `Alarm acknowledged (${tagId}) by ${ackLogLabel(logUser)}`,
-
-      { tagId, ackedBy: logUser },
-
-      { user: logUser },
-
-    );
-
-    return res.json({ ok: true, tagId, live: tagStore.liveSnapshotSlim() });
-
+    rows.sort((a, b) => String(a.tagId).localeCompare(String(b.tagId)));
+    return res.json({ alarms: rows });
   });
 
-
+  router.post('/alarms/ack', (req, res) => {
+    const body = req.body || {};
+    if (body.all) {
+      const count = tagStore.ackAllAlarms();
+      return res.json({ ok: true, count, live: tagStore.liveSnapshot() });
+    }
+    const tagId = String(body.tagId || '').trim();
+    if (!tagId) {
+      return res.status(400).json({ error: 'tagId required (or all: true)' });
+    }
+    if (!tagStore.get(tagId)) {
+      return res.status(404).json({ error: 'tag not found' });
+    }
+    const ok = tagStore.ackAlarm(tagId);
+    if (!ok) {
+      return res.status(409).json({ error: 'tag has no active alarm' });
+    }
+    return res.json({ ok: true, tagId, live: tagStore.liveSnapshot() });
+  });
 
   return router;
-
 }
 
-
-
 module.exports = { createAlarmRoutes };
-
-

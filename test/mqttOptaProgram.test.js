@@ -2,7 +2,7 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { buildOptaProgramBody } = require('../src/parc/mqttOptaProgram');
+const { buildOptaProgramBody, slimPutProgramBodyForMqtt } = require('../src/parc/mqttOptaProgram');
 
 describe('buildOptaProgramBody', () => {
   it('parses minimal ST program', () => {
@@ -89,9 +89,27 @@ describe('buildOptaProgramBody', () => {
     );
     const est = estimateOptaDeploy(src, tagStore, null);
     assert.equal(est.ok, true);
-    assert.ok(est.bcTotalBytes < OPTA_PROGRAM_MAX_BYTES, `bytecode ${est.bcTotalBytes} >= ${OPTA_PROGRAM_MAX_BYTES}`);
-    assert.ok(est.wireBytes < est.wireLimit, `wire ${est.wireBytes} >= ${est.wireLimit}`);
+    assert.ok(est.bytes < OPTA_PROGRAM_MAX_BYTES, `deploy ${est.bytes} >= ${OPTA_PROGRAM_MAX_BYTES}`);
     assert.ok(est.tagCount > 0);
     assert.ok(est.bcBytes > 0);
+  });
+
+  it('slimPutProgramBodyForMqtt omits traceMap and sends tracePointCount', () => {
+    const tagStore = {
+      list: () => [
+        { id: 'I1', type: 'BOOL', role: 'input', driverId: 'opta_mqtt_st' },
+        { id: 'R1', type: 'BOOL', role: 'output', driverId: 'opta_mqtt_st' },
+      ],
+    };
+    const src = 'IF IsON(I1) THEN TurnON(R1); ELSE TurnOFF(R1); END_IF;';
+    const built = buildOptaProgramBody(src, tagStore, 'opta_mqtt_st');
+    assert.equal(built.ok, true);
+    assert.ok(built.body.traceMap?.length > 0);
+
+    const full = JSON.stringify(built.body);
+    const slim = slimPutProgramBodyForMqtt(built.body, built.traceMap);
+    assert.equal(slim.traceMap, undefined);
+    assert.equal(slim.tracePointCount, built.traceMap.length);
+    assert.ok(Buffer.byteLength(JSON.stringify(slim)) < Buffer.byteLength(full));
   });
 });

@@ -44,12 +44,9 @@ struct MvDeviceConfig {
   uint8_t a0602RtdEnable;
   /** 1 = MQTT over TLS (port 8883). Occupies former reservedPad[0] — V3 CRC unchanged when 0. */
   uint8_t mqttUseTls;
-  /** 1 = also publish telemetry when tag values / alarms change (exception reporting). */
-  uint8_t mqttReportOnException;
-  /** 1 = do not publish MQTT telemetry (commands still work). */
-  uint8_t mqttTelemetryDisable;
-  /** Periodic telemetry interval (100 ms … 2 h). */
-  uint32_t mqttReportMs;
+  uint8_t reservedPad[2];
+  /** Device→host MQTT Parc telemetry interval (ms). 0 = use firmware default. */
+  uint32_t reportMs;
 };
 
 #define MV_DEVICE_STANDALONE 0

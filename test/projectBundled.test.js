@@ -11,7 +11,9 @@ describe('ensure-bundled-projects', () => {
     assert.ok(BUNDLED.includes('atu-cloud-dwts'));
     assert.ok(BUNDLED.includes('putnam-mle-plant'));
     assert.ok(BUNDLED.includes('mle-poc-50gpd'));
-    assert.equal(BUNDLED.length, 15);
+    assert.ok(BUNDLED.includes('opta-split-hvac'));
+    assert.ok(BUNDLED.includes('opta-double-split-hvac'));
+    assert.equal(BUNDLED.length, 18);
   });
 
   it('generator projects are subset of bundled list', () => {

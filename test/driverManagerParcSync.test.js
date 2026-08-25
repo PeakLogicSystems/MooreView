@@ -4,6 +4,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const { DriverManager } = require('../src/drivers/index');
 const { registry } = require('../src/parc/deviceRegistry');
+const { getMqttCentralHub } = require('../src/parc/mqttCentralHub');
 const { TagStore } = require('../src/tags/tagStore');
 const persistence = require('../src/persistence');
 
@@ -46,6 +47,31 @@ describe('DriverManager.syncParcTelemetry', () => {
       else persistence.writeJson('drivers.json', []);
       if (tagsBackup != null) persistence.writeJson('tags.json', tagsBackup);
       else persistence.writeJson('tags.json', []);
+    }
+  });
+});
+
+describe('DriverManager deferred mqtt_parc connect', () => {
+  it('skips mqtt_parc connect when connectDeferred is true even if hub is live', async () => {
+    const tagStore = new TagStore();
+    const dm = new DriverManager(tagStore);
+    const hub = getMqttCentralHub(registry);
+    const hubBackup = hub.isLive();
+    hub._connected = true;
+    try {
+      dm.save([{
+        id: 'ls_test',
+        type: 'mqtt_parc',
+        enabled: true,
+        deviceId: 'mv_pcu_test_01',
+      }]);
+      const t0 = Date.now();
+      await dm.rebuild({ connectDeferred: true });
+      assert.ok(Date.now() - t0 < 2000, 'deferred rebuild should not wait on runtime_status');
+      const inst = dm.instances.get('ls_test');
+      assert.equal(inst?.connected, false);
+    } finally {
+      hub._connected = hubBackup;
     }
   });
 });

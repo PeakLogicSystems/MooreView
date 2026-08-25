@@ -1,6 +1,7 @@
 'use strict';
 
 const { QUALITY } = require('../tags/constants');
+const { shouldSkipFieldbusPoll, markFieldbusPolled } = require('./fieldbusPoll');
 const {
   FC,
   MOTOR_STATUS,
@@ -176,6 +177,7 @@ class VgreenDriver {
 
   async readBatch(tags, store) {
     if (!this.connected || !tags.length) return;
+    if (shouldSkipFieldbusPoll(this, this.cfg)) return;
     const slave = this._slaveForTag(tags[0]);
     await this._enqueue(async () => {
       for (const t of tags) {
@@ -210,6 +212,7 @@ class VgreenDriver {
           this._lastError = e.message || String(e);
         }
       }
+      markFieldbusPolled(this);
     });
   }
 

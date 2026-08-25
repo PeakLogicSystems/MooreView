@@ -1,7 +1,5 @@
 'use strict';
 
-const { applyLinearize, formatLinearizeLabel, normalizeLinearizeFields } = require('./tagLinearize');
-
 const NUMERIC_TAG_TYPES = new Set(['INT', 'REAL']);
 
 const ALARM_LEVELS = {
@@ -81,17 +79,6 @@ function scaleEngToRaw(eng, tag) {
   return Math.round((n - normalizeOffset(tag?.offset)) / scale);
 }
 
-/** Linearize (e.g. NTC) then scale/offset — used on driver read. */
-function rawToEngineering(raw, tag) {
-  const linearized = applyLinearize(raw, tag);
-  return scaleRawToEng(linearized, tag);
-}
-
-/** Invert scale/offset only (linearize inverse not supported for writes). */
-function engineeringToRaw(eng, tag) {
-  return scaleEngToRaw(eng, tag);
-}
-
 function alarmLimitsValid(tag) {
   const numeric = isNumericTagType(tag?.type) || String(tag?.type || '').toUpperCase() === 'PID';
   if (!tag?.alarmsEnabled || !numeric) return false;
@@ -143,13 +130,11 @@ function evaluateAlarmLevel(tag, value = tag?.value) {
 
 function formatScaleLabel(tag) {
   if (!isNumericTagType(tag?.type)) return '—';
-  const lin = formatLinearizeLabel(tag);
   const scale = normalizeScale(tag.scale);
   const offset = normalizeOffset(tag.offset);
   const offStr = offset >= 0 ? `+${offset}` : String(offset);
-  const scaleStr = (scale === 1 && offset === 0) ? '×1' : `×${scale} ${offStr}`;
-  if (lin) return `${lin} · ${scaleStr}`;
-  return scaleStr;
+  if (scale === 1 && offset === 0) return '×1';
+  return `×${scale} ${offStr}`;
 }
 
 function formatAlarmLimitsLabel(tag) {
@@ -180,10 +165,6 @@ module.exports = {
   normalizeAlarmFields,
   scaleRawToEng,
   scaleEngToRaw,
-  rawToEngineering,
-  engineeringToRaw,
-  normalizeLinearizeFields,
-  formatLinearizeLabel,
   alarmLimitsValid,
   digitalAlarmActive,
   evaluateAlarmLevel,

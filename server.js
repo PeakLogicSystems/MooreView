@@ -1,233 +1,230 @@
 'use strict';
 
+require('./src/loadEnv');
+const { installConsoleTimestamp, setConsoleTimezone } = require('./src/logger/consoleTimestamp');
+installConsoleTimestamp();
+
 const path = require('path');
 const fs = require('fs');
 const express = require('express');
-const { DEFAULT_PORT, DATA_DIR, ST_DIR } = require('./src/config');
+const {
+  DEFAULT_PORT, DATA_DIR, ST_DIR, DEPLOYMENT_MODE, TENANT_ID, REQUEST_JSON_LIMIT,
+} = require('./src/config');
 const { ensureUserImportsDir } = require('./src/hmi/hmiUserAssets');
 const persistence = require('./src/persistence');
-const { sanitizeLegacyProjectHwDefaultsOnDisk } = require('./src/settings/portableSettings');
+const { readTimezoneFromSettings } = require('./src/settings/timezoneSettings');
+setConsoleTimezone(readTimezoneFromSettings(persistence.readJson('settings.json', {})));
 const { TagStore } = require('./src/tags/tagStore');
 const { DriverManager } = require('./src/drivers');
 const { ScanEngine, shouldAutoStartRuntime } = require('./src/runtime/scanEngine');
+const { applyStartupOnBoot } = require('./src/project/startupLoader');
+const { seedDefaultProjectIfEmpty } = require('./src/configStore/seedDefaultProject');
 const { GraphHistory } = require('./src/runtime/graphHistory');
 const { createExpressApi } = require('./src/api/expressRouter');
-const { setTagStore } = require('./src/cameras/cameraAiHolder');
 const { createPageRoutes } = require('./src/routes/pages');
+const { createCloudStudioPages } = require('./src/routes/cloudStudioPages');
+const { attachSession } = require('./src/tenants/authMiddleware');
 const { createHmiAssetRedirect } = require('./src/routes/staticAssets');
 const programStore = require('./src/programs/programStore');
-const { ensureProgramTags } = require('./src/programs/ensureProgramTags');
 const mongoTagLogger = require('./src/logger/mongoTagLogger');
+const hardwareHistoryStore = require('./src/hardware/hardwareHistoryStore');
+const mongoSysLog = require('./src/logger/mongoSysLog');
 const { registry } = require('./src/parc/deviceRegistry');
 const { getMqttCentralHub } = require('./src/parc/mqttCentralHub');
+const { bootstrapMqttParc, hubBootSkipReason } = require('./src/parc/mqttParcBootstrap');
+const {
+  stripParcNoiseDrivers,
+  reconcileMqttParcDriversFromRegistry,
+  pruneParcRegistryNoise,
+} = require('./src/devices/bulkAddParcOpta');
+const { patchWorkspaceDrivers } = require('./src/project/estFile');
 const { startPdmBatchScheduler } = require('./src/pdm/pdmBatchScheduler');
 const { setBatchScheduler } = require('./src/api/routes/pdmSchedulerHolder');
-const { attachLiveWebSocket } = require('./src/live/liveWebSocket');
+const { registerApplianceServices } = require('./src/runtime/applianceServices');
+const configStore = require('./src/configStore');
+const simManager = require('./src/cloud/simManager');
+const { isCloudSimsEnabled } = require('./src/cloud/cloudSimsEnabled');
+const mosquittoLogIngest = require('./src/mqtt/mosquittoLogIngest');
+const tenantRuntime = require('./src/tenants/tenantRuntime');
+const { createTenantRuntimeProxies } = require('./src/tenants/tenantRuntimeProxy');
 
 const PRODUCT = process.env.MOOREVIEW_PRODUCT || 'mvp-suite';
+const IS_CLOUD = DEPLOYMENT_MODE === 'cloud';
 
-const tagStore = new TagStore();
-const driverManager = new DriverManager(tagStore);
-const graphHistory = new GraphHistory();
-const scanEngine = new ScanEngine(tagStore, driverManager, graphHistory);
-const { registerParcRecoveryDeps } = require('./src/parc/parcDeviceRecovery');
-registerParcRecoveryDeps({ scanEngine, driverManager });
-getMqttCentralHub(registry).setGlobalMirrorDeps({ tagStore });
+registerApplianceServices();
+mongoSysLog.installProcessHandlers();
+
+let tagStore;
+let driverManager;
+let graphHistory;
+let scanEngine;
+
+function createRuntimeStores() {
+  const bundle = tenantRuntime.createRuntimeBundle('appliance');
+  tagStore = bundle.tagStore;
+  driverManager = bundle.driverManager;
+  graphHistory = bundle.graphHistory;
+  scanEngine = bundle.scanEngine;
+  tenantRuntime.setApplianceRuntime(bundle);
+  getMqttCentralHub(registry).setAutoDiscoveryDeps({
+    driverManager,
+    tagStore,
+    getSettings: () => persistence.readJson('settings.json', {}),
+  });
+  getMqttCentralHub(registry).setGlobalMirrorDeps({ tagStore });
+}
+
+if (IS_CLOUD) {
+  const proxies = createTenantRuntimeProxies();
+  tagStore = proxies.tagStore;
+  driverManager = proxies.driverManager;
+  graphHistory = proxies.graphHistory;
+  scanEngine = proxies.scanEngine;
+} else {
+  createRuntimeStores();
+}
 
 const { version: APP_VERSION } = require('./package.json');
 const publicRoot = path.join(__dirname, 'public');
 
 const app = express();
-app.use(express.json({ limit: '12mb' }));
+app.use(express.json({ limit: REQUEST_JSON_LIMIT }));
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
-const { attachSession, requireAuth } = require('./src/tenants/authMiddleware');
-const { sysLogRequestContext } = require('./src/api/middleware/sysLogContext');
-const mongoSysLog = require('./src/logger/mongoSysLog');
-
-app.use(attachSession);
-app.use(sysLogRequestContext);
-mongoSysLog.installProcessHandlers();
-
-function resolveDeployment() {
-  try {
-    const { isCloudDeployment } = require('./src/cloud/agentProtocol');
-    if (isCloudDeployment()) return 'cloud';
-  } catch { /* ignore */ }
-  return 'appliance';
-}
-
-const DEPLOYMENT = resolveDeployment();
-
-if (DEPLOYMENT === 'cloud') {
-  try {
-    require('./src/tenants/tenantStore'); // seed demo org/users
-  } catch (e) {
-    console.warn('[tenants] seed:', e.message || e);
-  }
-
-  app.get('/health', (req, res) => {
-    res.json({
-      ok: true,
-      app: 'MooreVIEW',
-      product: PRODUCT,
-      version: APP_VERSION,
-      deployment: 'cloud',
-      role: 'saas',
-      studio: true,
-      multiTenant: true,
-      tenantId: req.mvAuth?.tenant?.tenantId || process.env.MOOREVIEW_TENANT_ID || null,
-      runtime: scanEngine.status(),
-      dataDir: DATA_DIR,
-      stDir: ST_DIR,
-    });
-  });
-
-  app.get('/login', (req, res) => {
-    if (req.mvAuth) return res.redirect('/');
-    const showDemoLogin = process.env.NODE_ENV !== 'production'
-      || String(process.env.MOOREVIEW_SHOW_DEMO_LOGIN || '').trim() === '1';
-    res.render('cloud-login', { assetV: APP_VERSION, appVersion: APP_VERSION, showDemoLogin });
-  });
-
-  app.use((req, res, next) => {
-    if (req.path === '/login' || req.path === '/health') return next();
-    if (req.path.startsWith('/api/')) return next();
-    if (/\.(css|js|png|jpg|jpeg|gif|svg|ico|woff2?|map)$/i.test(req.path)) return next();
-    if (req.path.startsWith('/css/') || req.path.startsWith('/js/') || req.path.startsWith('/hmi/')) return next();
-    return requireAuth(req, res, next);
-  });
-} else {
-  try {
-    require('./src/auth/applianceAuthStore'); // seed local tenant users
-  } catch (e) {
-    console.warn('[auth] seed:', e.message || e);
-  }
-
-  app.get('/health', (req, res) => {
-    res.json({
-      ok: true,
-      app: 'MooreVIEW',
-      product: PRODUCT,
-      version: APP_VERSION,
-      deployment: 'appliance',
-      role: 'appliance',
-      studio: true,
-      singleTenant: true,
-      tenantId: 'local',
-      user: req.mvAuth?.user?.email || null,
-      runtime: scanEngine.status(),
-      dataDir: DATA_DIR,
-      stDir: ST_DIR,
-    });
-  });
-
-  app.get('/login', (req, res) => {
-    if (req.mvAuth) return res.redirect('/');
-    res.render('appliance-login', { assetV: APP_VERSION, appVersion: APP_VERSION });
-  });
-
-  app.use((req, res, next) => {
-    if (req.path === '/login' || req.path === '/health') return next();
-    if (req.path.startsWith('/api/')) return next();
-    if (/\.(css|js|png|jpg|jpeg|gif|svg|ico|woff2?|map|webmanifest)$/i.test(req.path)) return next();
-    if (req.path.startsWith('/css/') || req.path.startsWith('/js/') || req.path.startsWith('/hmi/')) return next();
-    if (req.path.startsWith('/icons/') || req.path.startsWith('/vendor/')) return next();
-    return requireAuth(req, res, next);
-  });
-}
-
 app.use(createHmiAssetRedirect(publicRoot));
 ensureUserImportsDir(DATA_DIR);
-app.use((req, res, next) => {
-  if (/^\/js\/.+\.js$/i.test(req.path) || /^\/css\/.+\.css$/i.test(req.path)) {
-    res.setHeader('Cache-Control', 'no-cache, must-revalidate');
-  }
-  next();
-});
 app.use('/hmi/user', express.static(path.join(DATA_DIR, 'hmi-imports'), { fallthrough: false }));
 app.use(express.static(publicRoot));
-
-app.use(createPageRoutes({ appVersion: APP_VERSION, product: PRODUCT, deployment: DEPLOYMENT }));
-try {
-  if (DEPLOYMENT === 'cloud') {
-    const { createCloudStudioPages } = require('./src/routes/cloudStudioPages');
-    app.use(createCloudStudioPages({ appVersion: APP_VERSION, product: PRODUCT }));
-  }
-} catch (e) {
-  console.warn('[cloud-studio] pages:', e.message || e);
+if (DEPLOYMENT_MODE === 'cloud') {
+  app.use(attachSession);
+  app.get('/login', (req, res) => {
+    if (req.mvAuth) return res.redirect(String(req.query.next || '/'));
+    return res.render('cloud-login');
+  });
+  app.get('/accept-invite', (req, res) => {
+    if (req.mvAuth) return res.redirect('/');
+    return res.render('accept-invite');
+  });
+  app.get('/forgot-password', (req, res) => {
+    if (req.mvAuth) return res.redirect('/');
+    return res.render('forgot-password');
+  });
+  app.get('/reset-password', (req, res) => {
+    if (req.mvAuth) return res.redirect('/');
+    return res.render('reset-password');
+  });
 }
+app.use(createPageRoutes({ appVersion: APP_VERSION, product: PRODUCT, deployment: DEPLOYMENT_MODE }));
 app.use('/api', createExpressApi({ tagStore, driverManager, scanEngine, graphHistory }));
-setTagStore(tagStore);
+if (DEPLOYMENT_MODE === 'cloud') {
+  app.use(createCloudStudioPages({ appVersion: APP_VERSION, product: PRODUCT }));
+}
+
+app.use((err, req, res, next) => {
+  if (err?.type === 'entity.too.large') {
+    return res.status(413).json({
+      error: `Request body too large for ${req.method} ${req.path} (limit ${REQUEST_JSON_LIMIT}). Restart MooreView after updating, or reduce tags/HMI payload size.`,
+      limit: REQUEST_JSON_LIMIT,
+      path: req.path,
+    });
+  }
+  return next(err);
+});
+
+app.get('/health', (req, res) => {
+  res.json({
+    ok: true,
+    app: 'MooreView',
+    product: PRODUCT,
+    deployment: DEPLOYMENT_MODE,
+    tenantId: TENANT_ID,
+    version: APP_VERSION,
+    requestJsonLimit: REQUEST_JSON_LIMIT,
+    runtime: IS_CLOUD ? { mode: 'cloud-multi-tenant' } : scanEngine.status(),
+    dataDir: DATA_DIR,
+    stDir: ST_DIR,
+    config: configStore.status(),
+  });
+});
 
 async function boot() {
   console.log('[boot] MooreVIEW starting…');
   persistence.ensureDataDir();
-  if (await sanitizeLegacyProjectHwDefaultsOnDisk(persistence)) {
-    console.log('[boot] removed legacy project RTU defaults from data files');
-  }
-  try {
-    require('./scripts/ensure-bundled-projects').ensureBundledProjects();
-  } catch (e) {
-    console.warn('[boot] bundled projects:', e.message || e);
-  }
-  try {
-    const { applyStartupOnBoot } = require('./src/project/startupLoader');
+  const configInit = await configStore.init();
+  console.log('[configStore]', configInit.status?.db || 'mongo');
+
+  let settings = { port: DEFAULT_PORT };
+  if (!IS_CLOUD) {
+    tagStore.load();
+    driverManager.reloadFromPersistence();
+    registry.reloadFromPersistence();
+    programStore.migrateLegacyProgram();
+    await seedDefaultProjectIfEmpty({ tagStore, driverManager });
     const startupResult = await applyStartupOnBoot({ tagStore, driverManager, scanEngine, graphHistory });
     if (startupResult.loaded) {
       console.log(`[startup] loaded ${startupResult.mode}${startupResult.name ? `: ${startupResult.name}` : ''}`);
+      programStore.ensureActiveProgram();
     } else if (startupResult.reason || startupResult.error) {
-      console.warn('[startup]', startupResult.reason || startupResult.error);
+      console.log(`[startup] ${startupResult.mode}: ${startupResult.reason || startupResult.error}`);
     }
-  } catch (e) {
-    console.warn('[startup]', e.message || e);
-  }
-  try {
-    const { initMongoServicesFromSettings } = require('./src/logger/mongoServicesInit');
-    await initMongoServicesFromSettings();
-  } catch (e) {
-    console.warn('[boot] MongoDB services:', e.message || e);
-  }
-  programStore.migrateLegacyProgram();
-  try {
-    const activeSrc = programStore.readActive();
-    if (String(activeSrc || '').trim()) {
-      const { added } = ensureProgramTags(tagStore, activeSrc);
-      if (added.length) {
-        const preview = added.slice(0, 10).join(', ');
-        console.log(`[tags] ensured ${added.length} program tag(s): ${preview}${added.length > 10 ? '…' : ''}`);
-      }
+    const strip = stripParcNoiseDrivers(driverManager.list());
+    if (strip.changed) {
+      driverManager.save(strip.drivers);
+      patchWorkspaceDrivers(strip.drivers);
+      console.log(`[mqtt-parc] removed test/debug drivers: ${strip.removed.join(', ')}`);
     }
-  } catch (e) {
-    console.warn('[tags] ensure program tags:', e.message || e);
-  }
-  const settings = persistence.readJson('settings.json', {});
-  const deployment = resolveDeployment();
-  const product = process.env.MOOREVIEW_PRODUCT || 'mvp-suite';
-  const envPort = Number(process.env.PORT || process.env.MOOREVIEW_PORT) || 0;
-  let port;
-  if (envPort > 0) {
-    port = envPort;
-  } else if (deployment === 'cloud' && product === 'cloud') {
-    // Multi-tenant SaaS — never fall back to settings.json port (often 3090 from Studio exports)
-    port = 3100;
+    const regPrune = pruneParcRegistryNoise(registry);
+    if (regPrune.removed.length) {
+      console.log(`[mqtt-parc] pruned Parc registry noise: ${regPrune.removed.join(', ')}`);
+    }
+    settings = persistence.readJson('settings.json', settings);
+    if (settings.graphMaxPoints) graphHistory.setMaxPoints(settings.graphMaxPoints);
+    scanEngine.loadSettings();
   } else {
-    const cloudDefault = deployment === 'cloud' ? 3100 : DEFAULT_PORT;
-    port = settings.port || cloudDefault;
+    console.log('[boot] cloud SaaS — Studio workspace loads per organization on first request');
+    try {
+      const { syncBoilerplateFromLibrary, seedAllTenantsBoilerplate } = require('./src/project/seedTenantBoilerplate');
+      syncBoilerplateFromLibrary();
+      const rows = seedAllTenantsBoilerplate();
+      const copied = rows.reduce((n, r) => n + (r.copied || 0), 0);
+      if (copied) console.log(`[boot] synced ${copied} new boilerplate project(s) to tenant libraries`);
+    } catch (e) {
+      console.warn('[boot] tenant boilerplate sync:', e.message || e);
+    }
+    try {
+      registry.reloadFromPersistence();
+      const { bootstrapCloudParcMqttHub } = require('./src/parc/cloudParcHubBoot');
+      const hubBoot = await bootstrapCloudParcMqttHub(registry);
+      if (hubBoot.started) {
+        console.log(`[mqtt-parc] cloud central hub connected → ${hubBoot.brokerUrl || hubBoot.status?.brokerUrl || 'broker'}`);
+        mongoSysLog.maintenance('mqtt-parc', 'Cloud central MQTT hub connected', {
+          brokerUrl: hubBoot.brokerUrl || hubBoot.status?.brokerUrl,
+        });
+      } else if (hubBoot.error) {
+        console.warn('[mqtt-parc] cloud hub start:', hubBoot.error);
+        mongoSysLog.error('mqtt-parc', 'Cloud hub start failed', { error: hubBoot.error });
+      } else if (hubBoot.skipped) {
+        console.log(`[mqtt-parc] cloud hub not started: ${hubBoot.skipped}`);
+      }
+    } catch (e) {
+      console.warn('[mqtt-parc] cloud hub boot:', e.message || e);
+      mongoSysLog.error('mqtt-parc', 'Cloud hub boot failed', { message: e.message || String(e) });
+    }
   }
-  if (settings.graphMaxPoints) graphHistory.setMaxPoints(settings.graphMaxPoints);
-  scanEngine.loadSettings();
 
-  const httpServer = await new Promise((resolve, reject) => {
-    const server = app.listen(port, '0.0.0.0');
-    server.once('listening', () => {
+  const port = process.env.PORT || settings.port || DEFAULT_PORT;
+
+  let httpServer;
+  await new Promise((resolve, reject) => {
+    httpServer = app.listen(port, '0.0.0.0');
+    httpServer.once('listening', () => {
       try {
         fs.writeFileSync(path.join(DATA_DIR, 'mooreview.pid'), String(process.pid), 'utf8');
       } catch { /* ignore */ }
-      resolve(server);
+      resolve();
     });
-    server.once('error', (err) => {
+    httpServer.once('error', (err) => {
       if (err?.code === 'EADDRINUSE') {
         reject(new Error(
           `Port ${port} is already in use — run "npm stop" in est-pc, then "npm start"`,
@@ -237,193 +234,167 @@ async function boot() {
       }
     });
   });
-  attachLiveWebSocket(httpServer, { tagStore, driverManager, scanEngine, graphHistory });
-  const label = resolveDeployment() === 'cloud' ? 'Cloud Studio' : 'MVP Suite';
-  console.log(`MooreVIEW ${label}  http://127.0.0.1:${port}`);
+  try {
+    const { attachLiveWebSocket } = require('./src/live/liveWebSocket');
+    attachLiveWebSocket(httpServer, { tagStore, driverManager, scanEngine });
+  } catch (e) {
+    console.warn('[live-ws] attach failed (HTTP GET /api/live remains):', e.message || e);
+  }
+  console.log(`MooreVIEW MVP Suite  http://127.0.0.1:${port}`);
   console.log(`Data: ${DATA_DIR}`);
   console.log(`ST programs: ${ST_DIR}`);
+  console.log(`API JSON body limit: ${REQUEST_JSON_LIMIT}`);
 
-  if (settings.mongoLogger?.uri) {
+  const { resolveMongoLoggerForDeployment } = require('./src/settings/mongoLoggerSettings');
+  const envUri = String(process.env.MONGODB_URI || process.env.MONGO_URL || '').trim();
+  let mongoLogger = resolveMongoLoggerForDeployment(settings.mongoLogger, DEPLOYMENT_MODE);
+  if (!mongoLogger?.uri && envUri && envUri !== 'memory') {
+    mongoLogger = resolveMongoLoggerForDeployment({}, DEPLOYMENT_MODE);
+  }
+  if (mongoLogger?.uri) {
     try {
-      await mongoTagLogger.setConfig(settings.mongoLogger);
-      await mongoSysLog.setConfig(settings.mongoLogger);
+      await mongoTagLogger.setConfig(mongoLogger);
+      await hardwareHistoryStore.setConfig(mongoLogger);
+      await mongoSysLog.setConfig(mongoLogger);
     } catch (e) {
       console.warn('[mongo] startup connect:', e.message || e);
+      mongoSysLog.error('mongo', 'startup connect failed', { message: e.message || String(e) });
     }
+  } else {
+    await mongoSysLog.setConfig(null);
   }
+  const mqttLogTail = mosquittoLogIngest.startFromEnv();
+  if (mqttLogTail?.tailer?.running) {
+    console.log(`[mqtt-log] tailing Mosquitto log → sys_log (${mqttLogTail.tailer.path})`);
+    mongoSysLog.maintenance('mqtt', 'Mosquitto log tailer started', { path: mqttLogTail.tailer.path });
+  }
+  mongoSysLog.maintenance('boot', 'MooreVIEW started', {
+    product: PRODUCT,
+    deployment: DEPLOYMENT_MODE,
+    tenantId: TENANT_ID,
+    dataDir: DATA_DIR,
+    port,
+  });
   try {
-    await driverManager.rebuild();
+    if (!IS_CLOUD) {
+      const imported = await hardwareHistoryStore.importFromDriverHistories(driverManager.list());
+      if (imported.imported > 0) {
+        console.log(`[hardware-history] imported ${imported.imported} assignment(s) from drivers`);
+        mongoSysLog.maintenance('hardware-history', 'Imported driver hardware assignments', imported);
+      }
+    }
+  } catch (e) {
+    console.warn('[hardware-history] import:', e.message || e);
+    mongoSysLog.warn('hardware-history', 'Import from drivers failed', { message: e.message || String(e) });
+  }
+  if (!IS_CLOUD) {
+  try {
+    await driverManager.rebuild({ connectDeferred: true });
   } catch (e) {
     console.warn('[drivers] rebuild at startup:', e.message || e);
+    mongoSysLog.error('drivers', 'Rebuild at startup failed', { message: e.message || String(e) });
   }
-  if (settings.remoteExecution === true || settings.mqttParc?.enabled !== false) {
-    const {
-      stripParcNoiseDrivers,
-      pruneParcRegistryNoise,
-      reconcileMqttParcDriversFromRegistry: reconcileParc,
-    } = require('./src/devices/bulkAddParcOpta');
-    const pruned = pruneParcRegistryNoise(registry);
-    if (pruned.removed?.length) {
-      console.log(`[parc] pruned registry noise: ${pruned.removed.join(', ')}`);
-    }
-    const stripped = stripParcNoiseDrivers(driverManager.configs);
-    let configs = stripped.drivers;
-    if (stripped.changed) {
-      console.log(`[drivers] stripped mqtt_parc noise: ${stripped.removed.join(', ')}`);
-    }
-    const rec = reconcileParc(configs, registry);
-    configs = rec.drivers;
-    if (stripped.changed || rec.changed) {
-      driverManager.save(configs);
-      try {
-        await driverManager.rebuild();
-        if (rec.changed) {
-          console.log(`[drivers] reconciled mqtt_parc from Parc registry: ${rec.added.join(', ')}`);
-        }
-      } catch (e) {
-        console.warn('[drivers] rebuild after Parc reconcile:', e.message || e);
-      }
-    }
-  }
-  const remoteBoot = settings.remoteExecution === true && settings.mqttParc?.enabled !== false;
-  const mqttHub = getMqttCentralHub(registry);
-  if (remoteBoot) {
+  const recon = reconcileMqttParcDriversFromRegistry(driverManager.list(), registry);
+  if (recon.changed) {
+    driverManager.save(recon.drivers);
+    patchWorkspaceDrivers(recon.drivers);
+    console.log(`[mqtt-parc] restored driver(s) from Parc registry: ${recon.added.join(', ')}`);
     try {
-      await mqttHub.start(settings.mqttParc);
-      if (mqttHub.isLive()) {
-        console.log('[mqtt-parc] central hub connected');
-      } else {
-        console.warn('[mqtt-parc] hub enabled but not connected — check Mosquitto and mqttParc.brokerUrl');
-      }
+      await driverManager.rebuild({ connectDeferred: true });
     } catch (e) {
-      console.warn('[mqtt-parc] hub start:', e.message || e);
+      console.warn('[drivers] rebuild after registry restore:', e.message || e);
     }
   }
-  if (shouldAutoStartRuntime(settings, driverManager.configs)) {
-    try {
-      await scanEngine.start();
-      console.log('[boot] runtime started (driver polling + historian)');
-    } catch (e) {
-      const detail = e.errors?.length ? e.errors.join('; ') : (e.message || String(e));
-      console.warn('[boot] runtime auto-start:', detail);
-    }
+  const bootMqtt = await bootstrapMqttParc({
+    settings,
+    drivers: driverManager.list(),
+    driverManager,
+    tagStore,
+  });
+  const mergedSettings = bootMqtt.settings || settings;
+  if (bootMqtt.changed) {
+    scanEngine.loadSettings();
   }
-  if (!remoteBoot && settings.mqttParc?.enabled) {
-    try {
-      await mqttHub.start(settings.mqttParc);
-      if (mqttHub.isLive()) {
-        console.log('[mqtt-parc] central hub connected');
-      } else {
-        console.warn('[mqtt-parc] hub enabled but not connected — check Mosquitto and mqttParc.brokerUrl');
-      }
-    } catch (e) {
-      console.warn('[mqtt-parc] hub start:', e.message || e);
-    }
-  }
-  if (settings.pdm?.buildEnabled) {
-    setBatchScheduler(startPdmBatchScheduler(() => persistence.readJson('settings.json', {})));
-    console.log('[pdm] nightly feature batch enabled (includes proactive CMMS check when pending failure)');
-  } else {
-    console.log('[pdm] top bar PdM button · Historian → PdM… · pending failure → CMMS WO when cmms.autoWorkOrdersFromPdm');
-  }
-  try {
-    const { registry: cameraRegistry } = require('./src/cameras/cameraRegistry');
-    const go2rtc = require('./src/cameras/go2rtcManager');
-    const { stopCameraSystem } = require('./src/cameras/cameraSystemControl');
-    const camSettings = cameraRegistry.settings();
-    go2rtc.attachUpgradeProxy(httpServer, () => cameraRegistry.settings());
-    if (camSettings.camerasEnabled === false) {
-      await stopCameraSystem();
-      console.log('[cameras] camera system disabled in settings (Cameras → Administration… → Settings)');
-    } else if (camSettings.go2rtcEnabled !== false) {
-      await go2rtc.start(camSettings);
-      const sync = await go2rtc.syncAllFromRegistry(cameraRegistry, camSettings);
-      const ok = sync.synced.filter((s) => s.ok).length;
-      const skipped = sync.skipped?.length || 0;
-      if (sync.synced.length || skipped) {
-        const parts = [`synced ${ok}/${sync.synced.length}`];
-        if (skipped) parts.push(`skipped ${skipped} unreachable`);
-        console.log(`[go2rtc] ${parts.join(', ')} camera stream(s)`);
-      }
-    }
-    const unprobed = camSettings.camerasEnabled === false
-      ? []
-      : cameraRegistry.listCameraRecords().filter((c) => !c.probeStatus && !c.rtspUrl);
-    if (unprobed.length) {
-      const { probeCamera } = require('./src/cameras/cameraProbe');
-      console.log(`[cameras] auto-probing ${unprobed.length} unprobed camera(s)…`);
-      for (const rec of unprobed) {
-        try {
-          const probe = await probeCamera(rec, { settings: camSettings, apiBase: '/api' });
-          cameraRegistry.applyProbe(rec.cameraId, probe);
-          if (probe.ok) {
-            console.log(`[cameras] probe OK: ${rec.cameraId} (${rec.host})`);
-          } else {
-            console.warn(`[cameras] probe failed: ${rec.cameraId} — ${probe.error || 'unknown error'}`);
-          }
-        } catch (e) {
-          console.warn(`[cameras] probe ${rec.cameraId}:`, e.message || e);
-        }
-      }
-      if (camSettings.go2rtcEnabled !== false) {
-        try {
-          await go2rtc.syncAllFromRegistry(cameraRegistry, camSettings);
-        } catch (e) {
-          console.warn('[go2rtc] post-probe sync:', e.message || e);
-        }
-      }
-    }
-  } catch (e) {
-    console.warn('[go2rtc] startup:', e.message || e);
-  }
-  try {
-    const { isCloudDeployment } = require('./src/cloud/agentProtocol');
-    const { attachAgentHub } = require('./src/cloud/agentHub');
-    const siteAgent = require('./src/cloud/siteAgent');
-    if (isCloudDeployment()) {
-      attachAgentHub(httpServer);
-      console.log('[cloud-sites] agent hub listening on /api/sites/:siteId/agent');
-    }
-    const agentCfg = siteAgent.loadConfig();
-    if (agentCfg.enabled && agentCfg.cloudUrl && agentCfg.siteId) {
-      await siteAgent.start();
-      console.log(`[site-agent] starting → ${agentCfg.cloudUrl} site=${agentCfg.siteId}`);
-    }
-  } catch (e) {
-    console.warn('[cloud-sites] startup:', e.message || e);
-  }
-  try {
-    const { registry: cameraRegistry } = require('./src/cameras/cameraRegistry');
-    const cameraScheduler = require('./src/cameras/cameraScheduler');
-    const schedSettings = cameraRegistry.settings();
-    if (schedSettings.camerasEnabled !== false && schedSettings.snapshotArchiveEnabled) {
-      cameraScheduler.start();
-    }
-  } catch (e) {
-    console.warn('[camera-scheduler] startup:', e.message || e);
-  }
-  try {
-    const { registry: cameraRegistry } = require('./src/cameras/cameraRegistry');
-    const cameraLiveSampler = require('./src/cameras/cameraLiveSampler');
-    const cameraMotionMonitor = require('./src/cameras/cameraMotionMonitor');
-    const camSettings = cameraRegistry.settings();
-    if (camSettings.camerasEnabled !== false) {
-      if (camSettings.cameraAiEnabled !== false) {
-        if (camSettings.cameraAiLiveEnabled !== false) cameraLiveSampler.start();
-        if (camSettings.cameraAiMotionEnabled !== false) cameraMotionMonitor.start();
-        console.log('[camera-ai] vision pipeline started (live + motion + post-capture)');
-      }
-      const cameraTagBridge = require('./src/cameras/cameraTagBridge');
-      if (camSettings.cameraTagBridgeEnabled !== false) {
-        cameraTagBridge.start();
-        console.log('[camera-tag-bridge] I/O overlay edge snapshots enabled');
-      }
+  if (bootMqtt.hub?.started) {
+    console.log('[mqtt-parc] central hub connected');
+    mongoSysLog.maintenance('mqtt-parc', 'Central MQTT hub connected', { brokerUrl: bootMqtt.hub?.brokerUrl });
+    const { optaBrokerHint } = require('./src/parc/mqttBrokerHint');
+    const brokerHint = optaBrokerHint();
+    if (brokerHint.lanIp !== '127.0.0.1') {
+      console.log(`[mqtt-parc] Opta /setup broker → ${brokerHint.optaBrokerIp}:1883 (MooreVIEW Mosquitto LAN)`);
     } else {
-      console.log('[cameras] vision pipeline skipped (camera system disabled)');
+      console.log(`[mqtt-parc] Opta /setup broker → gateway LAN IP:1883 (hub uses ${bootMqtt.hub?.status?.brokerUrl || 'mqtt://127.0.0.1:1883'})`);
     }
-  } catch (e) {
-    console.warn('[camera-ai] startup:', e.message || e);
+    driverManager.linkMqttParcDriversIfHubLive()
+      .then((linked) => {
+        const n = linked.filter((r) => r.ok && !r.skipped).length;
+        if (n) console.log(`[mqtt-parc] auto-linked ${n} driver(s)`);
+      })
+      .catch((e) => {
+        console.warn('[mqtt-parc] auto-link drivers:', e.message || e);
+      });
+  } else if (mergedSettings.mqttParc?.enabled && bootMqtt.hub?.error) {
+    console.warn('[mqtt-parc] hub start:', bootMqtt.hub.error);
+    mongoSysLog.error('mqtt-parc', 'Hub start failed', { error: bootMqtt.hub.error });
+  } else if (bootMqtt.hub?.skipped) {
+    const why = hubBootSkipReason(mergedSettings, driverManager.list());
+    console.log(`[mqtt-parc] hub not started${why ? `: ${why}` : ''}`);
+    mongoSysLog.info('mqtt-parc', 'Hub not started on boot', { reason: why });
   }
+  if (shouldAutoStartRuntime(mergedSettings)) {
+    const activeRel = programStore.ensureActiveProgram();
+    if (!activeRel) {
+      console.warn('[boot] runtime auto-start skipped: no activeProgram in settings or workspace');
+    } else if (!programStore.readActive()?.trim()) {
+      console.warn(`[boot] runtime auto-start skipped: ST file missing for ${activeRel}`);
+    } else {
+      const bootDeployDelayMs = Math.max(0, Number(mergedSettings.bootParcDeployDelayMs) || 8000);
+      if (bootDeployDelayMs > 0 && mergedSettings.remoteExecution) {
+        console.log(`[boot] waiting ${bootDeployDelayMs}ms before Parc deploy (Opta cmd link settle)`);
+        await new Promise((r) => setTimeout(r, bootDeployDelayMs));
+      }
+      try {
+        await scanEngine.start();
+        console.log(`[boot] runtime started (driver polling + historian) — ${activeRel}`);
+        mongoSysLog.maintenance('runtime', 'Runtime auto-started on boot', { activeProgram: activeRel });
+      } catch (e) {
+        console.warn('[boot] runtime auto-start failed:', e.message || e);
+        mongoSysLog.error('runtime', 'Runtime auto-start failed', { message: e.message || String(e), activeProgram: activeRel });
+      }
+    }
+  } else {
+    const why = mergedSettings.autoStartRuntime === false
+      ? 'autoStartRuntime=false — enable in Historian → Logger config or System setup → General'
+      : 'autoStartRuntime not enabled — enable in Historian → Logger config';
+    console.log(`[boot] runtime auto-start skipped: ${why}`);
+  }
+  }
+  if (!IS_CLOUD && settings.pdm?.buildEnabled) {
+    setBatchScheduler(startPdmBatchScheduler(() => persistence.readJson('settings.json', {})));
+    console.log('[pdm] nightly feature batch enabled');
+  }
+  if (isCloudSimsEnabled()) {
+    try {
+      const simInit = await simManager.init();
+      console.log(`[cloud-sims] manager ready (${simInit.count ?? 0} sim(s), store=${simInit.store?.backend || 'json'})`);
+    } catch (e) {
+      console.warn('[cloud-sims] init:', e.message || e);
+    }
+  }
+  process.on('SIGINT', async () => {
+    removePidFile();
+    mosquittoLogIngest.stopTailer();
+    await simManager.shutdown().catch(() => {});
+    await configStore.shutdown().catch(() => {});
+    process.exit(0);
+  });
+  process.on('SIGTERM', async () => {
+    removePidFile();
+    mosquittoLogIngest.stopTailer();
+    await simManager.shutdown().catch(() => {});
+    await configStore.shutdown().catch(() => {});
+    process.exit(0);
+  });
   process.on('unhandledRejection', (err) => {
     console.error('[unhandledRejection]', err?.message || err);
   });
@@ -431,6 +402,7 @@ async function boot() {
 
 boot().catch((e) => {
   console.error(e);
+  mongoSysLog.error('boot', 'MooreVIEW boot failed', { message: e.message || String(e), stack: e.stack });
   process.exit(1);
 });
 
@@ -440,22 +412,6 @@ function removePidFile() {
   } catch { /* ignore */ }
 }
 
-process.on('SIGINT', () => {
-  try {
-    const { flushDebouncedSave } = require('./src/parc/deviceRegistry');
-    flushDebouncedSave();
-  } catch { /* ignore */ }
-  removePidFile();
-  process.exit(0);
-});
-process.on('SIGTERM', () => {
-  try {
-    const { flushDebouncedSave } = require('./src/parc/deviceRegistry');
-    flushDebouncedSave();
-  } catch { /* ignore */ }
-  removePidFile();
-  process.exit(0);
-});
 process.on('exit', removePidFile);
 
-module.exports = { app, tagStore, driverManager, scanEngine, graphHistory };
+module.exports = { app, get tagStore() { return tagStore; }, get driverManager() { return driverManager; }, get scanEngine() { return scanEngine; }, get graphHistory() { return graphHistory; } };

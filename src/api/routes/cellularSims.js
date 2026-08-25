@@ -5,43 +5,26 @@ const { isCellularSimsEnabled } = require('../../cellular/cellularSimsEnabled');
 const { normalizeCellularSimsSettings } = require('../../cellular/cellularSettings');
 const persistence = require('../../persistence');
 
-const FEATURE_DISABLED_MSG = 'Cellular SIM management requires MOOREVIEW_DEPLOYMENT=cloud, MOOREVIEW_CELLULAR_SIMS=1, or settings cellularSims.enabled';
-
 function requireCellularSims(req, res, next) {
-  const path = String(req.path || '');
-  if (!path.startsWith('/cellular')) return next();
-  if (isCellularSimsEnabled()) return next();
-  if (req.method === 'GET') {
-    if (path === '/cellular/sims') {
-      return res.json({ ok: true, enabled: false, sims: [], count: 0 });
-    }
-    if (path === '/cellular/vendors') {
-      return res.json({ ok: true, enabled: false, vendors: [] });
-    }
-    if (path === '/cellular/vendors/catalog') {
-      return res.json({ ok: true, enabled: false, vendors: [] });
-    }
+  if (!isCellularSimsEnabled()) {
+    return res.status(403).json({
+      error: 'Cellular SIM management requires MOOREVIEW_DEPLOYMENT=cloud, MOOREVIEW_CELLULAR_SIMS=1, or settings cellularSims.enabled',
+    });
   }
-  return res.status(403).json({ error: FEATURE_DISABLED_MSG, enabled: false });
+  return next();
 }
 
 function createCellularSimRoutes() {
   const router = require('express').Router();
+  router.use(requireCellularSims);
 
   router.get('/cellular/sims/status', (req, res) => {
-    const enabled = isCellularSimsEnabled();
-    res.json({ ok: true, enabled, ...simManager.managerStatus() });
+    res.json({ ok: true, ...simManager.managerStatus() });
   });
 
   router.get('/cellular/vendors/catalog', (req, res) => {
-    res.json({
-      ok: true,
-      enabled: isCellularSimsEnabled(),
-      vendors: simManager.listVendorCatalog(),
-    });
+    res.json({ ok: true, vendors: simManager.listVendorCatalog() });
   });
-
-  router.use(requireCellularSims);
 
   router.get('/cellular/vendors', (req, res) => {
     res.json({ ok: true, vendors: simManager.listConfiguredVendors() });
@@ -169,7 +152,76 @@ function createCellularSimRoutes() {
     }
   });
 
+  router.post('/cellular/billing/sync', async (req, res) => {
+    try {
+      const body = req.body || {};
+      const result = await simManager.syncSimetryBilling({
+        vendorConfigId: body.vendorConfigId || req.query.vendorConfigId,
+        tenantId: body.tenantId || req.query.tenantId,
+        periodStart: body.periodStart || req.query.periodStart,
+        periodEnd: body.periodEnd || req.query.periodEnd,
+      });
+      res.json({ ok: true, ...result });
+    } catch (e) {
+      res.status(e.status || 502).json({ error: e.message || String(e) });
+    }
+  });
+
+  router.get('/cellular/billing/report', async (req, res) => {
+    try {
+      const report = await simManager.getBillingReport({
+        vendor: req.query.vendor || 'simetry',
+        vendorConfigId: req.query.vendorConfigId,
+        tenantId: req.query.tenantId,
+        periodStart: req.query.periodStart,
+        periodEnd: req.query.periodEnd,
+        live: req.query.live,
+      });
+      res.json({ ok: true, report });
+    } catch (e) {
+      res.status(e.status || 502).json({ error: e.message || String(e) });
+    }
+  });
+
+  router.get('/cellular/billing/export', async (req, res) => {
+    try {
+      const csv = await simManager.exportBillingCsv({
+        vendor: req.query.vendor || 'simetry',
+        vendorConfigId: req.query.vendorConfigId,
+        tenantId: req.query.tenantId,
+        periodStart: req.query.periodStart,
+        periodEnd: req.query.periodEnd,
+        live: req.query.live,
+      });
+      const period = req.query.periodStart || 'billing';
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="simetry-billing-${period}.csv"`);
+      res.send(csv);
+    } catch (e) {
+      res.status(e.status || 502).json({ error: e.message || String(e) });
+    }
+  });
+
+  router.get('/cellular/gateway/reports', (req, res) => {
+    try {
+      const reports = simManager.listGatewayCellularReports();
+      res.json({ ok: true, reports, count: reports.length });
+    } catch (e) {
+      res.status(e.status || 500).json({ error: e.message || String(e) });
+    }
+  });
+
+  router.post('/cellular/gateway/auto-link', async (req, res) => {
+    try {
+      const body = req.body || {};
+      const result = await simManager.autoLinkFromGateway(body);
+      res.json({ ok: true, ...result });
+    } catch (e) {
+      res.status(e.status || 500).json({ error: e.message || String(e) });
+    }
+  });
+
   return router;
 }
 
-module.exports = { createCellularSimRoutes, requireCellularSims, FEATURE_DISABLED_MSG };
+module.exports = { createCellularSimRoutes, requireCellularSims };

@@ -15,7 +15,8 @@
     "baud": 19200,
     "slaveId": 21,
     "parity": "none",
-    "stopBits": 1
+    "stopBits": 1,
+    "pollIntervalMs": 120000
   },
   "driver": {
     "enabled": true,

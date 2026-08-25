@@ -1,49 +1,25 @@
 'use strict';
 
 const { version: APP_VERSION } = require('../../package.json');
+const {
+  getTimezoneOffsetMinutes,
+  resolveTimezone,
+} = require('../settings/timezoneSettings');
 
 /** Must match MV_PROTOCOL_VERSION in firmware/.../mv_version.h */
 const OPTA_PROTOCOL_VERSION = 2;
 
-/** Max compiled ST bytecode on Opta (firmware MV_BC_MAX). */
-const OPTA_PROGRAM_MAX_BYTES = 16384;
-/** Max MQTT/HTTP put_program JSON wire size (firmware MV_PROGRAM_JSON_MAX). */
-const OPTA_PROGRAM_MAX_WIRE_BYTES = 16384;
+/** Max bytecode deploy payload (wire JSON); firmware MV_BC_MAX */
+const OPTA_PROGRAM_MAX_BYTES = 32768;
 
-function optaDeployLimitsFromDeviceStatus(status) {
-  const ps = status?.programStats;
-  const bcLimit = Number(status?.programMaxBytes) || Number(ps?.maxBytes) || OPTA_PROGRAM_MAX_BYTES;
-  const wireLimit = Number(ps?.deployMaxBytes) || OPTA_PROGRAM_MAX_WIRE_BYTES;
-  return {
-    bcLimit: bcLimit > 0 ? bcLimit : OPTA_PROGRAM_MAX_BYTES,
-    wireLimit: wireLimit > 0 ? wireLimit : OPTA_PROGRAM_MAX_WIRE_BYTES,
-  };
-}
-
-/**
- * @param {{ bcBytes?: number, wireBytes?: number, bcLimit?: number, wireLimit?: number }} sizes
- */
-function assessOptaDeployLimits(sizes = {}) {
-  const bc = Math.max(0, Number(sizes.bcBytes) || 0);
-  const wire = Math.max(0, Number(sizes.wireBytes) || 0);
-  const bcLimit = Number(sizes.bcLimit) > 0 ? Number(sizes.bcLimit) : OPTA_PROGRAM_MAX_BYTES;
-  const wireLimit = Number(sizes.wireLimit) > 0 ? Number(sizes.wireLimit) : OPTA_PROGRAM_MAX_WIRE_BYTES;
-  const bcOver = bc >= bcLimit;
-  const wireOver = wire >= wireLimit;
-  const errors = [];
-  if (bcOver) errors.push(`Program bytecode is ${bc} bytes (Opta limit ${bcLimit})`);
-  if (wireOver) errors.push(`Program deploy wire size is ${wire} bytes (Opta limit ${wireLimit})`);
-  return {
-    bcLimit,
-    wireLimit,
-    bcOver,
-    wireOver,
-    overLimit: bcOver || wireOver,
-    bcHeadroom: Math.max(0, bcLimit - bc),
-    wireHeadroom: Math.max(0, wireLimit - wire),
-    pct: bcLimit > 0 ? Math.min(100, Math.round((bc / bcLimit) * 100)) : 0,
-    errors,
-  };
+function workspaceTimezone(explicit) {
+  if (explicit) return explicit;
+  try {
+    const persistence = require('../persistence');
+    return resolveTimezone(persistence);
+  } catch {
+    return resolveTimezone(null);
+  }
 }
 
 function parseSemver(v) {
@@ -62,22 +38,60 @@ function semverCompare(a, b) {
   return 0;
 }
 
-function clientHeaders() {
+function clientHeaders(opts = {}) {
+  const nowMs = Date.now();
+  const tz = workspaceTimezone(opts.timeZone);
   return {
     'X-MV-Client-Version': APP_VERSION,
     'X-MV-Protocol-Version': String(OPTA_PROTOCOL_VERSION),
-    'X-MV-Client-Time': String(Math.floor(Date.now() / 1000)),
+    'X-MV-Client-Time': String(Math.floor(nowMs / 1000)),
+    'X-MV-Client-Tz-Offset': String(getTimezoneOffsetMinutes(tz, nowMs)),
   };
 }
 
 function clientDeployMeta(opts = {}) {
+  const nowMs = Date.now();
+  const tz = workspaceTimezone(opts.timeZone);
   const meta = {
     clientVersion: APP_VERSION,
     protocolVersion: OPTA_PROTOCOL_VERSION,
-    clientTimeUnix: Math.floor(Date.now() / 1000),
+    clientTimeUnix: Math.floor(nowMs / 1000),
+    clientTzOffsetMin: getTimezoneOffsetMinutes(tz, nowMs),
   };
   if (opts.programName) meta.programName = String(opts.programName);
+  if (opts.autoRunOnBoot === true) meta.autoRunOnBoot = true;
   return meta;
+}
+
+/** Modbus CRC16 over bytecode — matches Opta mv_program_store NV CRC. */
+function crc16Modbus(buf) {
+  let crc = 0xFFFF;
+  for (let i = 0; i < buf.length; i += 1) {
+    crc ^= buf[i];
+    for (let b = 0; b < 8; b += 1) {
+      crc = (crc & 1) ? ((crc >> 1) ^ 0xA001) : (crc >> 1);
+    }
+  }
+  return crc & 0xFFFF;
+}
+
+function bcDeployCrc(bcBase64) {
+  return crc16Modbus(Buffer.from(String(bcBase64 || ''), 'base64'));
+}
+
+/**
+ * MQTT sync_time body — separate from put_program deploy meta.
+ * Uses workspace timezone (default America/New_York), not the host OS zone
+ * (cloud Linux hosts are often UTC / GMT).
+ * @param {number} [nowMs]
+ * @param {string} [timeZone] IANA zone override
+ */
+function buildSyncTimeBody(nowMs = Date.now(), timeZone) {
+  const tz = workspaceTimezone(timeZone);
+  return {
+    unixUtc: Math.floor(nowMs / 1000),
+    tzOffsetMin: getTimezoneOffsetMinutes(tz, nowMs),
+  };
 }
 
 function checkOptaDeviceStatus(status) {
@@ -111,27 +125,16 @@ function checkOptaDeviceStatus(status) {
   };
 }
 
-/** Must match MV_FIRMWARE_VERSION in firmware/arduino-opta-mqtt-st/.../mv_version.h */
-const OPTA_RECOMMENDED_FIRMWARE = '2.3.7';
-
-function firmwareStatus(reportedVersion) {
-  const v = String(reportedVersion || '').trim();
-  if (!v) return 'unknown';
-  return semverCompare(v, OPTA_RECOMMENDED_FIRMWARE) < 0 ? 'outdated' : 'current';
-}
-
 module.exports = {
   APP_VERSION,
   OPTA_PROTOCOL_VERSION,
   OPTA_PROGRAM_MAX_BYTES,
-  OPTA_PROGRAM_MAX_WIRE_BYTES,
-  optaDeployLimitsFromDeviceStatus,
-  assessOptaDeployLimits,
-  OPTA_RECOMMENDED_FIRMWARE,
   parseSemver,
   semverCompare,
   clientHeaders,
   clientDeployMeta,
+  buildSyncTimeBody,
+  crc16Modbus,
+  bcDeployCrc,
   checkOptaDeviceStatus,
-  firmwareStatus,
 };

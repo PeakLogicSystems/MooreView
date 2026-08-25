@@ -2,34 +2,29 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
-  <meta name="mobile-web-app-capable" content="yes">
-  <script>
-    (function () {
-      var s = Math.min(window.innerWidth, window.innerHeight);
-      var coarse = false;
-      try { coarse = window.matchMedia('(pointer: coarse)').matches; } catch (e) {}
-      if (s <= 520 || (coarse && s <= 640)) document.documentElement.classList.add('mv-mobile');
-    })();
-  </script>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#49104F">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/icons/icon-512.png">
-  <script src="/js/mobileViewport.js?v=<%= assetV %>"></script>
   <script src="/js/pwa.js" defer></script>
-  <title>mooreVIEW</title>
+  <title>MooreView</title>
   <link rel="stylesheet" href="/css/pc.css?v=<%= assetV %>">
-  <link rel="stylesheet" href="/css/mobile-layout.css?v=<%= assetV %>">
 </head>
 <body class="dashboard-body<%= isCloud ? ' dashboard-cloud' : '' %>">
-  <div class="dashboard-header-chrome">
   <header class="topbar">
-    <div class="topbar-brand">moore<span>VIEW</span><% if (isCloud) { %><span class="topbar-cloud-badge" title="Cloud Studio">Cloud</span><% } %></div>
-    <details class="topbar-mobile-menu">
-      <summary class="topbar-mobile-toggle">Studio menu</summary>
-      <div class="topbar-mobile-panel">
+    <div class="topbar-brand">Moore<span>View</span><% if (isCloud) { %><span class="topbar-cloud-badge" title="Cloud Studio">Cloud</span><% } %></div>
     <div class="topbar-project-bar">
+      <% if (isCloud) { %>
+      <label class="topbar-site-select-wrap view-hidden" id="studio-org-wrap">
+        <span class="muted">Org</span>
+        <select id="studio-org-select" class="cell-mono" aria-label="Switch organization"></select>
+      </label>
+      <label class="topbar-site-select-wrap" id="studio-location-wrap">
+        <span class="muted">Site</span>
+        <select id="studio-location-select" class="cell-mono" aria-label="Studio site"></select>
+      </label>
+      <% } %>
       <details class="topbar-project-details" id="project-menu-details">
         <summary class="topbar-project-trigger">Project <span class="topbar-project-caret" aria-hidden="true">&#x25BE;</span></summary>
         <div id="project-menu" class="topbar-project-dropdown" role="menu" aria-label="Project">
@@ -99,31 +94,25 @@
     </details>
     <div class="topbar-about-meta">
       <span class="topbar-user-meta view-hidden" id="topbar-user-meta" title="Signed-in user"></span>
-      <button type="button" class="topbar-action-btn view-hidden" id="btn-topbar-logout" title="Sign out of MooreVIEW">Sign out</button>
-      <button type="button" class="topbar-text-btn" id="btn-topbar-about" title="About MooreVIEW">About</button>
-      <span class="topbar-version muted cell-mono" title="MooreVIEW release">v<%= appVersion %></span>
+      <button type="button" class="topbar-action-btn view-hidden" id="btn-topbar-logout" title="Sign out of MooreView">Sign out</button>
+      <button type="button" class="topbar-text-btn" id="btn-topbar-about" title="About MooreView">About</button>
+      <span class="topbar-version muted cell-mono" title="MooreView release">v<%= appVersion %></span>
     </div>
-      </div>
-    </details>
   </header>
   <% if (isCloud) { %>
-  <details class="cloud-studio-nav-menu">
-    <summary class="cloud-studio-nav-toggle">Cloud menu</summary>
-    <nav class="cloud-studio-nav" aria-label="Cloud Studio">
-      <a href="/" class="cloud-studio-nav-link active" data-cloud-nav="studio">Studio</a>
-      <a href="/sites" class="cloud-studio-nav-link" data-cloud-nav="sites">Sites</a>
-      <a href="/sites/devices" class="cloud-studio-nav-link" data-cloud-nav="devices">Devices</a>
-      <a href="/fleet" class="cloud-studio-nav-link" data-cloud-nav="fleet">Assets</a>
-      <a href="/people" class="cloud-studio-nav-link" data-cloud-nav="people">People</a>
-      <a href="/cmms" class="cloud-studio-nav-link" data-cloud-nav="cmms">CMMS</a>
-      <a href="/admin/tenants" class="cloud-studio-nav-link view-hidden" id="cloud-nav-admin" data-cloud-nav="admin">Admin</a>
-      <span class="cloud-studio-nav-spacer"></span>
-      <span class="cloud-studio-nav-user muted cell-mono" id="cloud-nav-user" title="Signed-in user"></span>
-      <button type="button" class="btn btn-sm cloud-studio-nav-signout" id="btn-cloud-nav-logout" title="Sign out">Sign out</button>
-    </nav>
-  </details>
+  <nav class="cloud-studio-nav" aria-label="Cloud Studio">
+    <a href="/" class="cloud-studio-nav-link active" data-cloud-nav="studio">Studio</a>
+    <a href="/sites" class="cloud-studio-nav-link" data-cloud-nav="sites">Sites</a>
+    <a href="/sites/devices" class="cloud-studio-nav-link" data-cloud-nav="devices">Devices</a>
+    <a href="/fleet" class="cloud-studio-nav-link" data-cloud-nav="fleet">Assets</a>
+    <a href="/people" class="cloud-studio-nav-link" data-cloud-nav="people">People</a>
+    <a href="/cmms" class="cloud-studio-nav-link" data-cloud-nav="cmms">CMMS</a>
+    <a href="/admin/tenants" class="cloud-studio-nav-link view-hidden" id="cloud-nav-admin" data-cloud-nav="admin">Admin</a>
+    <span class="cloud-studio-nav-spacer"></span>
+    <span class="cloud-studio-nav-user muted cell-mono" id="cloud-nav-user" title="Signed-in user"></span>
+    <button type="button" class="btn btn-sm cloud-studio-nav-signout" id="btn-cloud-nav-logout" title="Sign out">Sign out</button>
+  </nav>
   <% } %>
-  </div>
 
   <main class="hmi-workspace">
     <section class="panel panel-hmi-main" id="sec-hmi-main">
@@ -155,6 +144,9 @@
           <button type="button" id="btn-hmi-toggle-screen-bar" class="btn btn-sm hmi-screen-bar-toggle" title="Hide screen tabs and status" aria-expanded="true" aria-controls="hmi-screen-bar">Hide</button>
         </div>
         <div class="hmi-live-stage-wrap">
+          <p id="hmi-operator-hand-banner" class="hmi-operator-hand-banner view-hidden" role="status">
+            Operator mode — view HMI; set HOA to <strong>Hand</strong>, then use run/stop controls. Auto and engineering tools are restricted.
+          </p>
           <div id="hmi-viewport" class="hmi-viewport hmi-viewport-live hmi-display-viewport"></div>
           <div class="hmi-zoom-controls" id="hmi-zoom-controls" role="group" aria-label="Zoom screen">
             <button type="button" class="btn btn-sm hmi-zoom-btn" id="hmi-zoom-out" aria-label="Zoom out">&minus;</button>
@@ -207,7 +199,6 @@
           <button type="button" id="btn-remote-connect" class="btn btn-sm" disabled title="Link HTTP driver to Opta">Connect</button>
           <button type="button" id="btn-remote-disconnect" class="btn btn-sm" disabled title="Unlink Opta HTTP driver">Disconnect</button>
           <button type="button" id="btn-prog-opta-io-view" class="btn btn-sm" hidden title="Open Opta live I/O map (http://&lt;opta-ip&gt;/io-map)">Opta I/O view</button>
-          <button type="button" id="btn-prog-opta-ct-cal" class="btn btn-sm" hidden title="Open Opta CT calibration (http://&lt;opta-ip&gt;/ct-cal)">Calibrate CT</button>
         </div>
         <div class="program-runtime-primary">
           <button type="button" id="btn-start" class="btn ok" title="Validate and run ST">Start</button>
@@ -263,7 +254,7 @@
         <button type="button" id="btn-prog-pid" class="btn">PID loop…</button>
         <button type="button" id="btn-prog-validate" class="btn">Validate</button>
         <button type="button" id="btn-prog-debug-trace" class="btn" title="Show IF/THEN conditions and output tags using current tag values (no runtime start). Click again to clear.">Debug trace</button>
-        <button type="button" id="btn-prog-apply" class="btn primary" title="Validate ST and load into MooreVIEW runtime (does not save to disk). Deploy to Opta on Start when Remote is on.">Load for runtime</button>
+        <button type="button" id="btn-prog-apply" class="btn primary" title="Validate ST and load into MooreView runtime (does not save to disk). Deploy to Opta on Start when Remote is on.">Load for runtime</button>
         <span id="prog-deploy-estimate" class="prog-deploy-estimate muted cell-mono" hidden title="Estimated Opta HTTP deploy size when Remote is on"></span>
         <span id="program-errors" class="inline-msg"></span>
       </div>
@@ -362,7 +353,7 @@
         </div>
       </header>
       <div class="popup-body popup-scroll">
-        <p class="panel-hint">Who receives email/SMS when tags enter alarm states. Delivery integration is pending — notifications are queued locally for now.</p>
+        <p class="panel-hint">Who receives email/SMS when tags enter alarm states. Assign each contact to all alarms or selected sites, devices, and PdM assets. Delivery integration is pending — notifications are queued locally for now.</p>
         <div class="toolbar wrap">
           <button type="button" id="btn-user-add" class="btn primary">Add user</button>
           <span id="users-msg" class="muted"></span>
@@ -376,9 +367,7 @@
               <select id="user-role">
                 <option value="admin">Admin</option>
                 <option value="operator">Operator</option>
-                <option value="technician">Technician</option>
                 <option value="viewer">Viewer</option>
-                <option value="homeowner">Homeowner</option>
               </select>
             </label>
             <label>Display name <input id="user-display-name"></label>
@@ -411,13 +400,27 @@
             <label>Quiet start <input id="user-quiet-start" type="time" value="22:00"></label>
             <label>Quiet end <input id="user-quiet-end" type="time" value="07:00"></label>
           </div>
+          <h4 class="setup-subhead">Alarm assignment</h4>
+          <label class="historian-ctl"><input type="checkbox" id="user-alarm-scope-all" checked> All sites, devices &amp; assets</label>
+          <div id="user-alarm-scope-pickers" class="form-grid compact user-alarm-scope-pickers">
+            <label>Sites
+              <select id="user-alarm-scope-sites" multiple size="5" disabled title="Hold Ctrl or Cmd to select multiple"></select>
+            </label>
+            <label>Devices
+              <select id="user-alarm-scope-devices" multiple size="5" disabled title="Hold Ctrl or Cmd to select multiple"></select>
+            </label>
+            <label>Assets
+              <select id="user-alarm-scope-assets" multiple size="5" disabled title="Hold Ctrl or Cmd to select multiple"></select>
+            </label>
+          </div>
+          <p class="panel-hint" id="user-alarm-scope-hint">Checked = all alarms. Uncheck to pick specific sites, devices, and/or assets.</p>
           <div class="toolbar wrap">
             <button type="button" id="btn-user-save" class="btn primary">Save user</button>
             <button type="button" id="btn-user-delete" class="btn danger">Delete user</button>
           </div>
         </details>
         <details id="cmms-integration" class="user-editor" open>
-          <summary>CMMS / MQTT integration (MooreVIEW v1)</summary>
+          <summary>CMMS / MQTT integration (MooreView v1)</summary>
           <p class="panel-hint">Publishes alarm events to MQTT for TPS CMMS or other subscribers. Topics: <code>mooreview/v1/{siteId}/alarms</code> and <code>{siteId}/alarm-notify</code>. See <code>docs/CMMS_INTEGRATION.md</code>.</p>
           <div class="form-grid compact">
             <label class="historian-ctl"><input type="checkbox" id="cmms-enabled"> Enable CMMS MQTT publish</label>
@@ -478,7 +481,6 @@
           <button type="button" class="setup-tab active" data-drivers-tab-btn="list">Driver list</button>
           <button type="button" class="setup-tab" data-drivers-tab-btn="modbus">Modbus RTU ↔ TCP</button>
           <button type="button" class="setup-tab" data-drivers-tab-btn="nextcentury">NextCentury API</button>
-          <button type="button" class="setup-tab" data-drivers-tab-btn="bacnet-builder">BACnet device builder</button>
         </nav>
         <div class="drivers-panels setup-panels popup-scroll">
           <section class="drivers-panel setup-panel" data-drivers-tab="list">
@@ -503,13 +505,13 @@
             </details>
             <details class="device-template-bar">
               <summary>Add Opta Parc devices (bulk)</summary>
-              <p class="panel-hint">Each driver has a permanent <strong>position ID</strong> (plant name) and a physical <strong>device ID</strong> (<code>opta_</code> + serial). Tags and ST bind to position — use <strong>Replace hardware</strong> when an Opta is swapped.</p>
+              <p class="panel-hint">Each driver has a permanent <strong>position ID</strong> (plant name) and a physical <strong>device ID</strong> (<code>mv_</code> or legacy <code>opta_</code> + serial). When MQTT Parc is enabled, registry devices appear in the driver list automatically. Tags and ST bind to position — use <strong>Replace hardware</strong> when an Opta is swapped.</p>
               <div class="form-grid compact">
                 <label class="span-all">Position ID (permanent)
                   <input id="parc-opta-position-id" placeholder="motor_skid_main" title="Optional when adding one device — auto-suggested from registry if blank">
                 </label>
                 <label class="span-all">Physical device ID
-                  <input id="parc-opta-single-id" placeholder="opta_012355b52d66a109ee" title="One Opta — ATECC SN-based id from firmware, or legacy opta_st_01">
+                  <input id="parc-opta-single-id" placeholder="mv_f2e689fd60d96bab" title="One Opta — mv_ id from firmware (or legacy opta_ + serial)">
                 </label>
                 <label class="span-all">Or multiple IDs (one per line)
                   <textarea id="parc-opta-bulk-ids" rows="3" placeholder="opta_st_02&#10;opta_st_03"></textarea>
@@ -584,53 +586,6 @@
             </div>
             <p id="nc-deploy-estimate" class="prog-deploy-estimate muted cell-mono" aria-live="polite" title="Estimated tag count and scan load per poll"></p>
             <p id="nc-status" class="muted cell-mono" aria-live="polite"></p>
-          </section>
-          <section class="drivers-panel setup-panel view-hidden" data-drivers-tab="bacnet-builder">
-            <p class="panel-hint">Define a <strong>device profile</strong> (point slots) once, then apply it to however many BACnet devices respond on the LAN — no upfront device count. Capture slots from a sample browse, or load the example VAV profile.</p>
-            <div class="form-grid compact">
-              <label>BACnet driver
-                <select id="bac-builder-driver"></select>
-              </label>
-              <label>Profile
-                <select id="bac-builder-profile"></select>
-              </label>
-              <label>Profile ID <input id="bac-builder-profile-id" placeholder="vav_standard"></label>
-              <label>Profile label <input id="bac-builder-profile-label" placeholder="VAV controller"></label>
-              <label class="span-all">Tag prefix pattern
-                <input id="bac-builder-prefix" value="{profileId}_{deviceInstance}" title="Used in tag ids — {deviceInstance}, {deviceLabel}, {profileId}">
-              </label>
-              <label class="span-all">Device name filter (regex, optional)
-                <input id="bac-builder-device-filter" placeholder="(?i)vav|vav-">
-              </label>
-            </div>
-            <div class="toolbar wrap">
-              <button type="button" id="bac-builder-load-example" class="btn">Load example profile</button>
-              <button type="button" id="bac-builder-save-profile" class="btn primary">Save profile</button>
-              <button type="button" id="bac-builder-delete-profile" class="btn">Delete profile</button>
-            </div>
-            <h4 class="panel-subhead">Capture from sample device</h4>
-            <div class="form-grid compact">
-              <label>Sample host <input id="bac-builder-sample-host" placeholder="192.168.1.10"></label>
-              <label>Sample device inst <input id="bac-builder-sample-dev" type="number" min="0" placeholder="1001"></label>
-            </div>
-            <div class="toolbar wrap">
-              <button type="button" id="bac-builder-browse-sample" class="btn">Browse sample</button>
-              <button type="button" id="bac-builder-capture-profile" class="btn primary">Capture profile from browse</button>
-            </div>
-            <p id="bac-builder-sample-status" class="muted cell-mono" aria-live="polite"></p>
-            <details id="bac-builder-slots-wrap" class="device-template-bar">
-              <summary>Point slots (<span id="bac-builder-slot-count">0</span>)</summary>
-              <div id="bac-builder-slots" class="bac-builder-slots popup-scroll"></div>
-            </details>
-            <h4 class="panel-subhead">Apply to fleet</h4>
-            <p class="panel-hint">Who-Is discovers devices on the LAN; each device is browsed and matched to profile slots. Tag ids use the prefix pattern so devices do not collide.</p>
-            <div class="toolbar wrap">
-              <label class="checkbox-inline"><input type="checkbox" id="bac-builder-discover" checked> Discover on LAN (Who-Is)</label>
-              <label class="checkbox-inline"><input type="checkbox" id="bac-builder-allow-partial" checked> Allow partial match (optional slots)</label>
-              <button type="button" id="bac-builder-preview" class="btn">Preview tags</button>
-              <button type="button" id="bac-builder-apply" class="btn primary">Discover &amp; import tags</button>
-            </div>
-            <pre id="bac-builder-result" class="log cell-mono"></pre>
           </section>
         </div>
       </div>
@@ -952,7 +907,6 @@
           id="nc-portal-iframe"
           class="nc-portal-iframe view-hidden"
           title="NextCentury web portal"
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads"
           referrerpolicy="no-referrer"></iframe>
       </div>
     </div>
@@ -962,7 +916,7 @@
   <div class="app-popup view-hidden" data-popup="about" role="dialog" aria-labelledby="popup-about-title">
     <div class="popup-chrome popup-chrome-about">
       <header class="popup-header popup-header-split">
-        <h2 id="popup-about-title">About MooreVIEW</h2>
+        <h2 id="popup-about-title">About MooreView</h2>
         <div class="popup-header-actions">
           <button type="button" class="btn popup-close" data-popup-close="about" title="Close">Close</button>
         </div>
@@ -970,7 +924,7 @@
       <div class="popup-body popup-scroll about-panel-body" id="about-panel-body">
         <p class="about-lead">Industrial SCADA studio — ST programs, HMI, drivers, historian, and MQTT Parc edge runtime.</p>
         <dl class="about-meta-grid">
-          <dt>Product</dt><dd>moore<span class="about-view-accent">VIEW</span></dd>
+          <dt>Product</dt><dd>Moore<span class="about-view-accent">View</span></dd>
           <dt>Version</dt><dd class="cell-mono"><%= appVersion %></dd>
           <dt>Company</dt><dd><%= companyName %></dd>
           <dt>Edition</dt><dd class="cell-mono"><%= product %></dd>
@@ -1149,7 +1103,7 @@
       <p id="hist-log-mongo-status" class="logging-status cell-mono muted">MongoDB logger: checking…</p>
       <div class="form-grid compact">
         <label>MongoDB URI
-          <input id="hist-log-uri" value="mongodb://127.0.0.1:27017" placeholder="mongodb://127.0.0.1:27017" autocomplete="off">
+          <input id="hist-log-uri" value="" placeholder="Leave blank on cloud — uses platform MONGODB_URI" autocomplete="off">
         </label>
         <label>Database
           <input id="hist-log-db" value="mooreview" placeholder="mooreview">
@@ -1323,16 +1277,17 @@
     <div class="popup-resize-handle popup-resize-se" data-resize="se" aria-hidden="true"></div>
   </div>
 
-  <!-- Historian report popup -->
-  <div class="app-popup view-hidden" data-popup="report" role="dialog" aria-labelledby="popup-report-title">
-    <div class="popup-chrome popup-chrome-report">
-      <header class="popup-header popup-header-split">
-        <h2 id="popup-report-title">Reports</h2>
-        <div class="popup-header-actions">
-          <button type="button" class="btn popup-close" data-popup-close="report" title="Close">Close</button>
-        </div>
-      </header>
-      <div class="popup-body popup-scroll">
+  <!-- Reports floating panel -->
+  <div class="app-popup view-hidden report-shell-stub" data-popup="report" role="dialog" aria-labelledby="popup-report-title" aria-hidden="true"></div>
+  <div class="popup-chrome popup-chrome-report popup-chrome-floater view-hidden" id="report-chrome" role="dialog" aria-labelledby="popup-report-title">
+    <div class="hmi-setup-drag-bar popup-header-draggable" data-floater-drag-handle title="Drag to move">⠿ Move</div>
+    <header class="popup-header popup-header-split popup-header-draggable">
+      <h2 id="popup-report-title">Reports <span class="popup-drag-hint muted">— drag bar or header · edges to resize</span></h2>
+      <div class="popup-header-actions">
+        <button type="button" class="btn popup-close" data-popup-close="report" title="Close">Close</button>
+      </div>
+    </header>
+    <div class="popup-body popup-scroll report-floater-body">
         <p class="panel-hint">Build tabular reports from MongoDB data (system log, hardware history, tag samples, CMMS work orders/PM, and allowlisted collections). Historian trend export is below.</p>
         <details class="report-builder-panel" id="report-builder-panel" open>
           <summary>MongoDB report builder</summary>
@@ -1554,10 +1509,11 @@
           <p><a href="/cmms" class="btn btn-sm primary">Open CMMS</a></p>
         </details>
         <details class="report-mongo-logs-panel" id="report-mongo-logs-panel">
-          <summary>MongoDB logs (system, hardware, historian)</summary>
-          <p class="panel-hint">Operational logs stored in MongoDB or local fallback files — hardware change-outs, system errors, and tag historian status.</p>
+          <summary>MongoDB logs (system, hardware, MQTT broker, historian)</summary>
+          <p class="panel-hint">Operational logs stored in MongoDB or local fallback files — Mosquitto device logins and auth failures, hardware change-outs, system errors, and tag historian status.</p>
           <div class="report-mongo-tabs toolbar wrap" role="tablist" aria-label="Mongo log sections">
             <button type="button" class="btn btn-sm report-mongo-tab active" data-report-mongo-tab="syslog" role="tab" aria-selected="true">System log</button>
+            <button type="button" class="btn btn-sm report-mongo-tab" data-report-mongo-tab="mqtt" role="tab" aria-selected="false">MQTT broker</button>
             <button type="button" class="btn btn-sm report-mongo-tab" data-report-mongo-tab="hardware" role="tab" aria-selected="false">Hardware history</button>
             <button type="button" class="btn btn-sm report-mongo-tab" data-report-mongo-tab="historian" role="tab" aria-selected="false">Historian / tags</button>
           </div>
@@ -1574,6 +1530,27 @@
             <label class="report-mongo-filter report-mongo-syslog-only">Category
               <input type="text" id="report-mongo-syslog-category" placeholder="e.g. hardware" maxlength="64">
             </label>
+            <label class="report-mongo-filter report-mongo-mqtt-only view-hidden">Event
+              <select id="report-mongo-mqtt-event">
+                <option value="">All</option>
+                <option value="client_connect">Device connect</option>
+                <option value="client_disconnect">Device disconnect</option>
+                <option value="auth_fail">Auth failure</option>
+                <option value="connection">TCP connection</option>
+                <option value="error">Error</option>
+                <option value="hub_connect">Hub connect</option>
+                <option value="hub_disconnect">Hub disconnect</option>
+                <option value="hub_error">Hub error</option>
+              </select>
+            </label>
+            <label class="report-mongo-filter report-mongo-mqtt-only view-hidden">Level
+              <select id="report-mongo-mqtt-level">
+                <option value="">All</option>
+                <option value="error">Error</option>
+                <option value="warn">Warn</option>
+                <option value="info">Info</option>
+              </select>
+            </label>
             <label>Limit
               <input type="number" id="report-mongo-limit" min="10" max="500" value="100" class="report-mongo-limit-input">
             </label>
@@ -1585,6 +1562,9 @@
           <div id="report-mongo-syslog" class="table-wrap report-mongo-table report-mongo-pane" data-report-mongo-pane="syslog" role="tabpanel">
             <p class="muted">Open this panel or click Refresh to load system log entries.</p>
           </div>
+          <div id="report-mongo-mqtt" class="table-wrap report-mongo-table report-mongo-pane view-hidden" data-report-mongo-pane="mqtt" role="tabpanel">
+            <p class="muted">Mosquitto broker events — device logins, auth failures, disconnects, and hub errors. Click Refresh to load.</p>
+          </div>
           <div id="report-mongo-hardware" class="table-wrap report-mongo-table report-mongo-pane view-hidden" data-report-mongo-pane="hardware" role="tabpanel">
             <p class="muted">Click Refresh to load hardware change-out history.</p>
           </div>
@@ -1593,7 +1573,11 @@
           </div>
         </details>
       </div>
-    </div>
+    <div class="popup-resize-handle popup-resize-w" data-resize="w" aria-hidden="true"></div>
+    <div class="popup-resize-handle popup-resize-s" data-resize="s" aria-hidden="true"></div>
+    <div class="popup-resize-handle popup-resize-e" data-resize="e" aria-hidden="true"></div>
+    <div class="popup-resize-handle popup-resize-sw" data-resize="sw" aria-hidden="true"></div>
+    <div class="popup-resize-handle popup-resize-se" data-resize="se" aria-hidden="true"></div>
   </div>
 
   <!-- Unified Setup popup -->
@@ -1631,10 +1615,24 @@
               <label>Starting HMI screen
                 <select id="proj-hmi-home-screen"></select>
               </label>
+              <label>Display timezone
+                <select id="proj-timezone" title="Used for logs, reports, and Opta device clocks. Storage stays UTC.">
+                  <option value="America/New_York">America/New_York (Eastern)</option>
+                  <option value="America/Chicago">America/Chicago (Central)</option>
+                  <option value="America/Denver">America/Denver (Mountain)</option>
+                  <option value="America/Los_Angeles">America/Los_Angeles (Pacific)</option>
+                  <option value="America/Phoenix">America/Phoenix (Arizona)</option>
+                  <option value="America/Anchorage">America/Anchorage</option>
+                  <option value="Pacific/Honolulu">Pacific/Honolulu</option>
+                  <option value="America/Puerto_Rico">America/Puerto_Rico</option>
+                  <option value="UTC">UTC</option>
+                </select>
+              </label>
             </div>
+            <p class="panel-hint">Timezone defaults to Eastern. Timestamps in logs and device clocks use this zone; data is still stored in UTC.</p>
             <p class="panel-hint">The selected screen loads first on the main HMI page. Use the navigation bar to switch screens after load. Configure screens, layout, and bindings via <strong>Setup&#x2026;</strong> on the HMI panel.</p>
             <h3 class="setup-subhead">On startup</h3>
-            <p class="panel-hint">Applied when MooreVIEW boots (before drivers connect). Alarm notification users are under <strong>Alarms → Notification users…</strong>.</p>
+            <p class="panel-hint">Applied when MooreView boots (before drivers connect). Alarm notification users are under <strong>Alarms → Notification users…</strong>.</p>
             <div class="form-grid compact">
               <label>Load on boot
                 <select id="proj-startup-mode">
@@ -1655,7 +1653,8 @@
               </label>
             </div>
             <h3 class="setup-subhead">MQTT Parc (Opta)</h3>
-            <p class="panel-hint">Central MQTT hub for all Opta Parc devices. Enable before bulk-adding drivers or when Optas report to the broker. Broker URL is shared by every <code>mqtt_parc</code> driver.</p>
+            <p class="panel-hint"><% if (isCloud) { %>Platform MQTT hub stays connected even when Optas are powered down. Checkboxes here are tenant flags (remote ST, auto-discover). The broker is set by the SaaS host — saving this form does not move the hub.<% } else { %>Central MQTT hub for all Opta Parc devices. Enable before bulk-adding drivers or when Optas report to the broker. Broker URL is shared by every <code>mqtt_parc</code> driver.<% } %></p>
+            <p id="proj-mqtt-hub-status" class="panel-hint span-all" aria-live="polite"></p>
             <div class="form-grid compact">
               <label class="historian-ctl span-all">
                 <input type="checkbox" id="proj-mqtt-parc-enabled"> Enable MQTT Parc hub
@@ -1684,24 +1683,8 @@
                 <input type="checkbox" id="proj-mqtt-parc-auto-discover"> Auto-discover Opta drivers from MQTT reports
               </label>
             </div>
-            <h3 class="setup-subhead">EZ Meter PQ (Opta RS485)</h3>
-            <p class="panel-hint">Low-voltage and phase-loss thresholds for duplex lift + EZ Meter ST (<code>MECH_PQ_CFG_UV_V</code>). Pushed to Opta memory tags when MQTT Parc drivers are connected. Also configurable on Opta <code>/setup</code>.</p>
-            <div class="form-grid compact">
-              <label>Nominal voltage (V)
-                <input id="proj-mqtt-parc-ezmeter-nom-v" type="number" min="1" step="1" placeholder="120">
-              </label>
-              <label>Undervolt threshold (V)
-                <input id="proj-mqtt-parc-ezmeter-uv-v" type="number" min="1" step="0.1" placeholder="108">
-              </label>
-              <label>Overvolt threshold (V)
-                <input id="proj-mqtt-parc-ezmeter-ov-v" type="number" min="1" step="0.1" placeholder="132">
-              </label>
-              <label>THD alarm (%)
-                <input id="proj-mqtt-parc-ezmeter-thd-pct" type="number" min="0" step="0.1" placeholder="8">
-              </label>
-            </div>
             <h3 class="setup-subhead">Cloud remote (appliance uplink)</h3>
-            <p class="panel-hint">When this MooreVIEW runs as a site appliance, relay Parc telemetry to a cloud VM tenant topic <code>mooreview/v1/{tenantId}/{deviceId}/telemetry</code>. Set the same <code>tenantId</code> on the cloud VM and use the appliance <code>gatewayId</code> from pairing.</p>
+            <p class="panel-hint">When this MooreView runs as a site appliance, relay Parc telemetry to a cloud VM tenant topic <code>mooreview/v1/{tenantId}/{deviceId}/telemetry</code>. Set the same <code>tenantId</code> on the cloud VM and use the appliance <code>gatewayId</code> from pairing.</p>
             <div class="form-grid compact">
               <label class="historian-ctl span-all">
                 <input type="checkbox" id="proj-cloud-remote-enabled"> Enable cloud remote uplink
@@ -1726,12 +1709,8 @@
           </section>
 
           <section class="setup-panel view-hidden" data-setup-tab="features">
-            <p class="panel-hint">Single-tenant user access. Check which MooreVIEW areas each account may use. Admins always have full access. Sign-in, sign-out, and alarm acknowledgements are recorded in MongoDB system log when logging is configured.</p>
+            <p class="panel-hint">Single-tenant user access. Check which MooreView areas each account may use. Admins always have full access. Sign-in, sign-out, and alarm acknowledgements are recorded in MongoDB system log when logging is configured.</p>
             <div id="setup-features-admin-only" class="view-hidden">
-              <p class="panel-hint">Role defaults for non-admin accounts. Override per user in the matrix below.</p>
-              <div class="setup-features-matrix-wrap popup-scroll-x">
-                <div id="setup-role-defaults-matrix-host"></div>
-              </div>
               <div class="toolbar wrap">
                 <button type="button" class="btn primary" id="btn-features-matrix-save">Save access matrix</button>
                 <button type="button" class="btn" id="btn-features-add-user">Add user…</button>
@@ -1748,11 +1727,9 @@
                   <label>Display name <input id="feat-user-name" autocomplete="off"></label>
                   <label>Role
                     <select id="feat-user-role">
-                <option value="operator">Operator</option>
-                <option value="technician">Technician</option>
-                <option value="viewer">Viewer</option>
-                <option value="homeowner">Homeowner</option>
-                <option value="admin">Admin</option>
+                      <option value="operator">Operator</option>
+                      <option value="viewer">Viewer</option>
+                      <option value="admin">Admin</option>
                     </select>
                   </label>
                   <label>Password <input id="feat-user-password" type="password" autocomplete="new-password" placeholder="Required for new users"></label>
@@ -1788,12 +1765,18 @@
           </section>
 
           <section class="setup-panel view-hidden" data-setup-tab="projects">
-            <p class="panel-hint">Start a blank project, save snapshots to the on-disk library, or <strong>import/export .est.zip</strong> and legacy <strong>.est.json</strong> files to move projects between MooreVIEW versions and PCs.</p>
+            <p class="panel-hint">Start a blank project, save snapshots to the on-disk library, or <strong>import/export .est.zip</strong> and legacy <strong>.est.json</strong> files to move projects between MooreView versions and PCs.</p>
             <div class="toolbar wrap">
               <button type="button" id="btn-proj-new" class="btn primary">New project</button>
             </div>
             <div class="form-grid compact">
               <label>Saved project
+                <div class="project-list-sort" data-project-sort-scope="setup" role="group" aria-label="Sort saved projects">
+                  <span class="project-list-sort-label">Sort</span>
+                  <button type="button" class="btn btn-sm project-sort-btn" data-project-sort="name">Name</button>
+                  <button type="button" class="btn btn-sm project-sort-btn" data-project-sort="date">Date</button>
+                  <button type="button" class="btn btn-sm project-sort-btn" data-project-sort="type">Type</button>
+                </div>
                 <select id="proj-list"></select>
               </label>
             </div>
@@ -2323,7 +2306,7 @@
   <div class="app-popup view-hidden" data-popup="training" role="dialog" aria-labelledby="popup-training-title">
     <div class="popup-chrome popup-chrome-help">
       <header class="popup-header popup-header-split">
-        <h2 id="popup-training-title">MooreVIEW Training</h2>
+        <h2 id="popup-training-title">MooreView Training</h2>
         <div class="popup-header-actions"></div>
       </header>
       <div class="training-panel-wrap" id="training-panel">
@@ -2349,7 +2332,7 @@
   <div class="app-popup view-hidden" data-popup="help" role="dialog" aria-labelledby="popup-help-title">
     <div class="popup-chrome popup-chrome-help">
       <header class="popup-header popup-header-split">
-        <h2 id="popup-help-title">MooreVIEW Help</h2>
+        <h2 id="popup-help-title">MooreView Help</h2>
         <div class="popup-header-actions">
           <button type="button" class="btn popup-close" data-popup-close="help" title="Close">Close</button>
         </div>
@@ -2401,6 +2384,12 @@
       </header>
       <div class="program-picker-form-body">
         <p class="panel-hint cell-mono" id="project-picker-dir"></p>
+        <div class="project-list-sort" data-project-sort-scope="picker" role="group" aria-label="Sort projects">
+          <span class="project-list-sort-label">Sort</span>
+          <button type="button" class="btn btn-sm project-sort-btn" data-project-sort="name">Name</button>
+          <button type="button" class="btn btn-sm project-sort-btn" data-project-sort="date">Date</button>
+          <button type="button" class="btn btn-sm project-sort-btn" data-project-sort="type">Type</button>
+        </div>
         <select id="project-picker-list" class="program-picker-list" size="14" required></select>
       </div>
       <footer class="popup-footer">
@@ -2423,6 +2412,12 @@
       </header>
       <div class="program-picker-form-body">
         <p class="panel-hint cell-mono" id="project-import-dir"></p>
+        <div class="project-list-sort" data-project-sort-scope="import" role="group" aria-label="Sort importable projects">
+          <span class="project-list-sort-label">Sort</span>
+          <button type="button" class="btn btn-sm project-sort-btn" data-project-sort="name">Name</button>
+          <button type="button" class="btn btn-sm project-sort-btn" data-project-sort="date">Date</button>
+          <button type="button" class="btn btn-sm project-sort-btn" data-project-sort="type">Type</button>
+        </div>
         <select id="project-import-list" class="program-picker-list" size="14"></select>
       </div>
       <footer class="popup-footer">
@@ -2443,11 +2438,24 @@
       </header>
       <div class="program-picker-form-body">
         <div class="setup-tabs" role="tablist" id="project-hub-tabs">
-          <button type="button" class="setup-tab active" data-hub-tab="local" role="tab">Local repository</button>
+          <button type="button" class="setup-tab active" data-hub-tab="local" role="tab"><%= isCloud ? 'Workspace library' : 'Local repository' %></button>
           <button type="button" class="setup-tab" data-hub-tab="cloud" role="tab">MV Cloud</button>
           <button type="button" class="setup-tab" data-hub-tab="file" role="tab">File</button>
         </div>
-        <p class="panel-hint" id="project-hub-hint">One-step deploy — drivers and ports adapt to this device automatically.</p>
+        <% if (isCloud) { %>
+        <div id="project-hub-location-wrap" class="form-grid compact view-hidden">
+          <label>Site
+            <select id="project-hub-location" aria-label="Site for cloud projects"></select>
+          </label>
+        </div>
+        <% } %>
+        <p class="panel-hint" id="project-hub-hint"><%= isCloud ? 'Deploy a saved workspace project, one from MV Cloud, or upload a file.' : 'One-step deploy — drivers and ports adapt to this device automatically.' %></p>
+        <div class="project-list-sort" data-project-sort-scope="hub" role="group" aria-label="Sort repository projects">
+          <span class="project-list-sort-label">Sort</span>
+          <button type="button" class="btn btn-sm project-sort-btn" data-project-sort="name">Name</button>
+          <button type="button" class="btn btn-sm project-sort-btn" data-project-sort="date">Date</button>
+          <button type="button" class="btn btn-sm project-sort-btn" data-project-sort="type">Type</button>
+        </div>
         <select id="project-hub-list" class="program-picker-list" size="12"></select>
         <p class="panel-hint cell-mono" id="project-hub-msg"></p>
         <input type="file" id="project-hub-file" accept=".est.zip,.est.json,.mvbundle,.json,application/json,application/zip" class="view-hidden" />
@@ -2478,7 +2486,9 @@
   </dialog>
 
   <script src="/js/api.js?v=<%= assetV %>"></script>
+  <script src="/js/projectListSort.js?v=<%= assetV %>"></script>
   <script>
+    window.MOOREVIEW_DEPLOYMENT = '<%= deployment %>';
     window.MOOREVIEW_BUILD = {
       version: '<%= appVersion %>',
       company: '<%= companyName %>',
@@ -2494,6 +2504,7 @@
   <script src="/js/tagDisplay.js?v=<%= assetV %>"></script>
   <script src="/js/hmi.js?v=<%= assetV %>"></script>
   <script src="/js/hmiViewMode.js?v=<%= assetV %>"></script>
+  <% if (isCloud) { %><script src="/js/cloudHmiPolicy.js?v=<%= assetV %>"></script><% } %>
   <script src="/js/hmiSetupUi.js?v=<%= assetV %>"></script>
   <script src="/js/stEditor.js"></script>
   <script src="/js/stPidEditor.js?v=<%= assetV %>"></script>
@@ -2503,17 +2514,19 @@
   <script src="/js/programIoTags.js?v=<%= assetV %>"></script>
   <script src="/js/liveIoUpdate.js?v=<%= assetV %>"></script>
   <script src="/js/liveWs.js?v=<%= assetV %>"></script>
+  <script src="/js/timeFormat.js?v=<%= assetV %>"></script>
   <script src="/js/ioTimestamp.js?v=<%= assetV %>"></script>
   <script src="/js/programUi.js?v=<%= assetV %>"></script>
-  <script src="/js/help.js"></script>
-  <script src="/js/training-quizzes.js"></script>
-  <script src="/js/training.js"></script>
+  <script src="/js/help.js?v=<%= assetV %>"></script>
+  <script src="/js/training-quizzes.js?v=<%= assetV %>"></script>
+  <script src="/js/training.js?v=<%= assetV %>"></script>
   <script src="/js/roiCalculator.js?v=<%= assetV %>"></script>
   <script src="/js/projectConfigPrint.js?v=<%= assetV %>"></script>
   <script src="/js/hardwareWizardUi.js?v=<%= assetV %>"></script>
   <script src="/js/cameraAdminUi.js?v=<%= assetV %>"></script>
   <script src="/js/signOut.js?v=<%= assetV %>"></script>
   <script src="/js/app.js?v=<%= assetV %>"></script>
+  <% if (isCloud) { %><script src="/js/projectHubUi.js?v=<%= assetV %>"></script><% } %>
   <script src="/js/hmiZoom.js?v=<%= assetV %>"></script>
 </body>
 </html>

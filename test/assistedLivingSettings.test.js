@@ -102,7 +102,6 @@ describe('assistedLivingSettings', () => {
     const tagStore = {
       get: (id) => (values.has(id) ? { id, value: values.get(id) } : { id, value: false }),
       setValue: (id, value) => values.set(id, value),
-      list: () => [...values.entries()].map(([id, value]) => ({ id, value })),
     };
     ['POOL_CFG_USE_ORP', 'POOL_CFG_USE_CL2', 'POOL_CFG_SALT', 'POOL_CFG_FRESH', 'POOL_CFG_FP_CNT', 'POOL_CFG_FP2'].forEach((id) => {
       values.set(id, id.endsWith('ORP') || id.endsWith('FRESH') ? true : false);
@@ -207,63 +206,5 @@ describe('assistedLivingSettings', () => {
     const patched = patchAssistedLivingHmi(hmi);
     assert.equal(patched.bindings.length, 2);
     assert.ok(patched.bindings.some((b) => b.tagId === 'MECH_METER_INTERVAL_KWH'));
-  });
-
-  it('does not apply default HaLow map on NextCentury facility projects', () => {
-    const tags = [{
-      id: 'RM101_AC_PAN_LEAK',
-      label: 'Rm101 A/C pan leak',
-      type: 'BOOL',
-      role: 'input',
-      value: false,
-    }];
-    const tagStore = {
-      list: () => tags,
-      get: (id) => tags.find((t) => t.id === id),
-      replaceAll: (next) => {
-        tags.length = 0;
-        tags.push(...next);
-      },
-    };
-    syncAssistedLivingTags(tagStore, {
-      facility: { driver: 'nextcentury' },
-      nextCentury: {
-        driverId: 'nextcentury1',
-        propertyIds: [40100],
-        semanticMap: [
-          { tagId: 'RM101_AC_PAN_LEAK', deviceId: 'FA003A90', field: 'leakActive' },
-        ],
-      },
-    });
-    assert.equal(tags[0].driverId, 'nextcentury1');
-    assert.equal(tags[0].driverAddress.deviceId, 'FA003A90');
-    assert.equal(tags[0].driverAddress.field, 'leakActive');
-  });
-
-  it('still applies explicit HaLow semantic map when halow phase is configured', () => {
-    const tags = [{
-      id: 'RM101_AC_PAN_LEAK',
-      type: 'BOOL',
-      role: 'input',
-      value: false,
-    }];
-    const tagStore = {
-      list: () => tags,
-      get: (id) => tags.find((t) => t.id === id),
-      replaceAll: (next) => {
-        tags.length = 0;
-        tags.push(...next);
-      },
-    };
-    syncAssistedLivingTags(tagStore, {
-      halow: {
-        phase: 't-halow',
-        semanticMap: [
-          { tagId: 'RM101_AC_PAN_LEAK', deviceId: 'thalow_rm101_room', parcTagId: 'LEAK_PAN' },
-        ],
-      },
-    });
-    assert.equal(tags[0].driverId, 'thalow_rm101_room');
-    assert.equal(tags[0].driverAddress.channel, 'LEAK_PAN');
   });
 });

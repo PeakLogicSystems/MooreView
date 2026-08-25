@@ -102,11 +102,7 @@ async function ensureCollection() {
 
 async function setConfig(cfg) {
   if (cfg && typeof cfg === 'object' && cfg.uri) {
-    override = {
-      uri: cfg.uri,
-      db: cfg.db,
-    };
-    if (cfg.hardwareCollection) override.collection = cfg.hardwareCollection;
+    override = { ...cfg };
     forceFallback = false;
   } else {
     override = null;

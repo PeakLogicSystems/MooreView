@@ -14,11 +14,12 @@ const {
   normalizeScale,
   normalizeOffset,
   normalizeAlarmFields,
-  normalizeLinearizeFields,
   evaluateAlarmLevel,
   isAlarmActive,
+  isAlarmCapableType,
 } = require('./tagAnalog');
 const { pidDisplayFb } = require('../engine/functionBlocks');
+const { effectiveValue, refreshEffective } = require('./tagEffective');
 const { arrayLength, defaultArrayValue, normalizeArrayValue } = require('./tagArrays');
 
 const MAX_TAG_LABEL_LEN = 80;
@@ -34,6 +35,7 @@ function defaultPreset(type) {
   if (type === 'PID') return 0;
   if (type === 'AVG') return 1;
   if (type === 'FLOW') return 100;
+  if (type === 'ALT') return 2;
   return 0;
 }
 
@@ -43,6 +45,7 @@ function defaultMode(type) {
   if (type === 'PID') return 'PID';
   if (type === 'AVG') return 'MOV';
   if (type === 'FLOW') return 'GPM';
+  if (type === 'ALT') return 'ALT2';
   return 'TON';
 }
 
@@ -115,33 +118,69 @@ function ensureFb(type, fb) {
       prevTmrDone: !!f.prevTmrDone,
     };
   }
+  if (type === 'ALT') {
+    const onlineIds = Array.isArray(f.onlineIds) ? f.onlineIds.slice(0, 4) : [];
+    const unitOutIds = Array.isArray(f.unitOutIds) ? f.unitOutIds.slice(0, 4) : [];
+    const leadSelIds = Array.isArray(f.leadSelIds) ? f.leadSelIds.slice(0, 4) : [];
+    const lagSelIds = Array.isArray(f.lagSelIds) ? f.lagSelIds.slice(0, 4) : [];
+    const lag2SelIds = Array.isArray(f.lag2SelIds) ? f.lag2SelIds.slice(0, 4) : [];
+    while (onlineIds.length < 4) onlineIds.push('');
+    while (unitOutIds.length < 4) unitOutIds.push('');
+    while (leadSelIds.length < 4) leadSelIds.push('');
+    while (lagSelIds.length < 4) lagSelIds.push('');
+    while (lag2SelIds.length < 4) lag2SelIds.push('');
+    return {
+      enabled: !!f.enabled,
+      enableId: f.enableId || '',
+      advance: !!f.advance,
+      advanceId: f.advanceId || '',
+      advancePulse: !!f.advancePulse,
+      prevAdvance: !!f.prevAdvance,
+      autoFault: !!f.autoFault,
+      autoFaultId: f.autoFaultId || '',
+      leadOutId: f.leadOutId || '',
+      lagOutId: f.lagOutId || '',
+      offId: f.offId || '',
+      highId: f.highId || '',
+      lowId: f.lowId || '',
+      low2Id: f.low2Id || '',
+      levelId: f.levelId || '',
+      levelControlEnabled: !!f.levelControlEnabled,
+      levelInputMode: f.levelInputMode || 'both',
+      levelOffLo: Number.isFinite(f.levelOffLo) ? f.levelOffLo : 0,
+      levelOffHi: Number.isFinite(f.levelOffHi) ? f.levelOffHi : 0,
+      levelLowLo: Number.isFinite(f.levelLowLo) ? f.levelLowLo : 0,
+      levelLowHi: Number.isFinite(f.levelLowHi) ? f.levelLowHi : 0,
+      levelHighLo: Number.isFinite(f.levelHighLo) ? f.levelHighLo : 0,
+      levelHighHi: Number.isFinite(f.levelHighHi) ? f.levelHighHi : 0,
+      leadSelIds,
+      lagSelIds,
+      lag2SelIds,
+      onlineIds,
+      unitOutIds,
+      unitOnline: Array.isArray(f.unitOnline) ? f.unitOnline.slice(0, 4) : [false, false, false, false],
+      unitCount: Number.isFinite(f.unitCount) ? f.unitCount : 2,
+      leadIndex: Number.isInteger(f.leadIndex) ? f.leadIndex : 0,
+      lagIndex: Number.isInteger(f.lagIndex) ? f.lagIndex : -1,
+      lag2Index: Number.isInteger(f.lag2Index) ? f.lag2Index : -1,
+      activeUnit: Number.isFinite(f.activeUnit) ? f.activeUnit : 0,
+      ready: !!f.ready,
+      fault: !!f.fault,
+      prevLeadOnline: !!f.prevLeadOnline,
+      offActive: !!f.offActive,
+      highActive: !!f.highActive,
+      lowActive: !!f.lowActive,
+      low2Active: !!f.low2Active,
+      pumpStage: f.pumpStage || 'normal',
+    };
+  }
   return { ...f };
-}
-
-function normalizeAckUser(user) {
-  if (!user || typeof user !== 'object') return null;
-  const id = String(user.id || user.userId || '').trim();
-  const email = String(user.email || '').trim();
-  const name = String(user.name || user.displayName || '').trim();
-  const role = String(user.role || '').trim();
-  if (!id && !email && !name) return null;
-  return {
-    id: id || null,
-    email: email || null,
-    name: name || null,
-    role: role || null,
-  };
-}
-
-function formatAckUserLabel(user) {
-  if (!user || typeof user !== 'object') return null;
-  return user.name || user.email || user.id || null;
 }
 
 class TagStore {
   constructor() {
     this.tags = new Map();
-    /** @type {Map<string, { level: string, acked: boolean, since: number, ackedAt: number|null, ackedBy: object|null }>} */
+    /** @type {Map<string, { level: string, acked: boolean, since: number, ackedAt: number|null }>} */
     this._alarmAnnunc = new Map();
     this.load();
   }
@@ -164,34 +203,55 @@ class TagStore {
     }
     const cur = this._alarmAnnunc.get(t.id);
     if (!cur || cur.level !== level) {
+      const preserveAck = !!(cur?.acked && isAlarmActive(cur.level) && isAlarmActive(level));
+      const since = cur?.since ?? Date.now();
       this._alarmAnnunc.set(t.id, {
         level,
-        acked: false,
-        since: Date.now(),
-        ackedAt: null,
-        ackedBy: null,
+        acked: preserveAck,
+        since,
+        ackedAt: preserveAck ? (cur.ackedAt ?? Date.now()) : null,
       });
+      if (preserveAck) return;
+      try {
+        const { emit } = require('../runtime/eventBus');
+        emit('alarm:transition', {
+          tagId: t.id,
+          level,
+          previousLevel: cur?.level ?? null,
+          value: t.value,
+          since,
+        });
+      } catch { /* optional */ }
     }
   }
 
-  ackAlarm(tagId, user = null) {
-    const entry = this._alarmAnnunc.get(tagId);
+  _ensureAlarmAnnuncForTag(t) {
+    if (!t?.alarmsEnabled || !isAlarmCapableType(t.type)) return null;
+    if (!isAlarmActive(t.alarmLevel)) this._refreshAlarmLevel(t);
+    if (!isAlarmActive(t.alarmLevel)) return null;
+    if (!this._alarmAnnunc.has(t.id)) this._syncAlarmAnnunc(t);
+    return this._alarmAnnunc.get(t.id) || null;
+  }
+
+  ackAlarm(tagId) {
+    const t = this.get(tagId);
+    if (!t) return false;
+    const entry = this._ensureAlarmAnnuncForTag(t);
     if (!entry) return false;
     entry.acked = true;
     entry.ackedAt = Date.now();
-    entry.ackedBy = normalizeAckUser(user);
     return true;
   }
 
-  ackAllAlarms(user = null) {
+  ackAllAlarms() {
     const now = Date.now();
-    const ackedBy = normalizeAckUser(user);
     let n = 0;
-    for (const entry of this._alarmAnnunc.values()) {
+    for (const t of this.list()) {
+      const entry = this._ensureAlarmAnnuncForTag(t);
+      if (!entry) continue;
       if (!entry.acked) n += 1;
       entry.acked = true;
       entry.ackedAt = now;
-      entry.ackedBy = ackedBy;
     }
     return n;
   }
@@ -210,23 +270,22 @@ class TagStore {
       this.tags.set(normalized.id, normalized);
     }
     if (labeled) this.save();
+    for (const t of this.tags.values()) this._refreshAlarmLevel(t);
     try {
       const { repairTpoIntTags } = require('../programs/tpoTags');
       const repaired = repairTpoIntTags(this);
       if (repaired.length) this.save();
     } catch { /* ignore */ }
-    try {
-      const { repairSensorTestTags } = require('../programs/sensorTestTags');
-      const repairedSt = repairSensorTestTags(this);
-      if (repairedSt.length) this.save();
-    } catch { /* ignore */ }
   }
 
   save() {
+    const cs = require('../configStore');
+    if (cs.isConfigJsonFile('tags.json') && !cs.status().ready) return;
     persistence.writeJson('tags.json', Array.from(this.tags.values()).map((t) => {
       const out = { ...t };
       delete out.alarmLevel;
       delete out.dirty;
+      delete out.updatedAt;
       return out;
     }));
   }
@@ -244,6 +303,10 @@ class TagStore {
       : 1;
     const pidGains = type === 'PID' ? defaultPidGains() : {};
     const alarms = normalizeAlarmFields(src);
+    const logicValue = normalizeArrayValue(
+      { type, arrayLen },
+      src.logicValue ?? src.value ?? (arrayLen > 1 ? defaultArrayValue({ type, arrayLen }) : (type === 'BOOL' ? false : 0)),
+    );
     const tag = {
       id,
       label: normalizeTagLabel(src.label),
@@ -254,16 +317,13 @@ class TagStore {
       default: src.default ?? 0,
       scale: normalizeScale(src.scale),
       offset: normalizeOffset(src.offset),
-      ...normalizeLinearizeFields(src),
       ...alarms,
       readonly: !!src.readonly,
       preset: src.preset != null && src.preset !== '' ? Number(src.preset) : defaultPreset(type),
       mode: src.mode || defaultMode(type),
       arrayLen,
-      value: normalizeArrayValue(
-        { type, arrayLen },
-        src.value ?? (arrayLen > 1 ? defaultArrayValue({ type, arrayLen }) : (type === 'BOOL' ? false : 0)),
-      ),
+      logicValue,
+      value: logicValue,
       kp: type === 'PID'
         ? (Number.isFinite(Number(src.kp)) ? Number(src.kp) : pidGains.kp)
         : undefined,
@@ -283,12 +343,13 @@ class TagStore {
       forceValue: src.forceValue,
       graphEnabled: src.graphEnabled !== false && (
         type === 'INT' || type === 'REAL' || type === 'BOOL'
-        || type === 'PID' || type === 'AVG' || type === 'FLOW'
+        || type === 'PID' || type === 'AVG' || type === 'FLOW' || type === 'ALT'
       ),
+      global: !!src.global,
       dirty: false,
       alarmLevel: null,
       fb: (() => {
-        if (!['TIMER', 'COUNTER', 'PID', 'AVG', 'FLOW'].includes(type)) return src.fb || {};
+        if (!['TIMER', 'COUNTER', 'PID', 'AVG', 'FLOW', 'ALT'].includes(type)) return src.fb || {};
         const fb = ensureFb(type, src.fb);
         if (type === 'PID') {
           const sp = src.preset != null && src.preset !== '' ? Number(src.preset) : defaultPreset(type);
@@ -297,6 +358,7 @@ class TagStore {
         return fb;
       })(),
     };
+    refreshEffective(tag);
     this._refreshAlarmLevel(tag);
     return tag;
   }
@@ -356,6 +418,7 @@ class TagStore {
         forceInput: t.forceInput,
         forceOutput: t.forceOutput,
         forceValue: t.forceValue,
+        logicValue: t.logicValue,
         value: t.value,
       }]))
       : null;
@@ -368,11 +431,15 @@ class TagStore {
         forceInput: prev.forceInput,
         forceOutput: prev.forceOutput,
         forceValue: prev.forceValue,
+        logicValue: prev.logicValue,
         value: (prev.forceInput || prev.forceOutput) ? (prev.forceValue ?? prev.value) : raw.value,
       } : raw;
       normalized.push(this._normalize(merged, { siblingTags: normalized }));
     }
-    for (const t of normalized) this.tags.set(t.id, t);
+    for (const t of normalized) {
+      this.tags.set(t.id, t);
+      this._refreshAlarmLevel(t);
+    }
     this.save();
   }
 
@@ -385,43 +452,39 @@ class TagStore {
   setValue(id, value, quality = QUALITY.GOOD) {
     const t = this.tags.get(id);
     if (!t) return false;
-    t.value = value;
+    t.logicValue = value;
+    refreshEffective(t);
     t.quality = quality;
+    t.updatedAt = Date.now();
     this._refreshAlarmLevel(t);
     return true;
   }
 
-  /** Merge Parc telemetry row (effective value + force metadata) into tag store. */
-  applyParcTelemetry(id, row = {}) {
-    const t = this.get(id);
-    if (!t) return false;
-    if (row.value !== undefined) {
-      t.value = row.value;
-      t.quality = row.quality || QUALITY.GOOD;
-      if (t.type === 'ALT') {
-        const au = Math.trunc(Number(row.value) || 0);
-        t.fb = { ...(t.fb || {}), activeUnit: au };
-      }
-    }
+  applyDeviceTelemetry(id, row, quality = QUALITY.GOOD) {
+    const t = this.tags.get(id);
+    if (!t || !row) return false;
     if (row.forceInput != null) t.forceInput = !!row.forceInput;
     if (row.forceOutput != null) t.forceOutput = !!row.forceOutput;
-    const forced = t.forceInput || t.forceOutput;
-    if (forced && row.forceValue !== undefined) {
-      t.forceValue = row.type === 'BOOL' || t.type === 'BOOL' ? !!row.forceValue : row.forceValue;
-    } else if (!forced) {
-      t.forceValue = undefined;
-      t.logicValue = undefined;
+    if (row.forceValue !== undefined) t.forceValue = row.forceValue;
+    let val = row.value;
+    if (t.type === 'BOOL') val = !!val;
+    else if (t.type === 'INT') val = Math.trunc(Number(val) || 0);
+    else if (t.type === 'REAL' || t.type === 'PID' || t.type === 'AVG') val = Number(val) || 0;
+    if (row.logicValue !== undefined) {
+      t.logicValue = row.logicValue;
+    } else if (!t.forceInput && !t.forceOutput) {
+      t.logicValue = val;
     }
-    if (forced && row.logicValue !== undefined) {
-      t.logicValue = row.type === 'BOOL' || t.type === 'BOOL' ? !!row.logicValue : row.logicValue;
-    }
+    t.value = val;
+    t.quality = quality;
+    t.updatedAt = Date.now();
     this._refreshAlarmLevel(t);
     return true;
   }
 
   markDirty(id) {
     const t = this.tags.get(id);
-    if (t && (t.role === 'output' || t.role === 'memory')) {
+    if (t && (t.role === 'output' || t.role === 'memory' || t.global)) {
       t.dirty = true;
     }
   }
@@ -430,63 +493,35 @@ class TagStore {
     for (const t of this.tags.values()) t.dirty = false;
   }
 
-  liveSnapshot() {
-    const list = this.list();
-    const byId = new Map(list.map((tag) => [tag.id, tag]));
-    return list.map((t) => this._liveRowFromTag(t, byId));
-  }
-
-  /** Lightweight poll payload — omits labels/scales/PID tuning fields the client already has in tags[]. */
   liveSnapshotSlim() {
-    const list = this.list();
-    const byId = new Map(list.map((tag) => [tag.id, tag]));
-    return list.map((t) => this._liveRowFromTag(t, byId, { slim: true }));
-  }
-
-  _liveRowFromTag(t, byId, { slim = false } = {}) {
-    const annunc = this._alarmAnnunc.get(t.id);
-    const complex = t.type === 'PID'
-      || t.type === 'TIMER'
-      || t.type === 'COUNTER'
-      || t.type === 'AVG'
-      || t.type === 'FLOW'
-      || t.type === 'ALT';
-    const row = {
+    return this.list().map((t) => ({
       tagId: t.id,
       value: t.value,
       quality: t.quality,
-      type: t.type,
       forceInput: t.forceInput,
       forceOutput: t.forceOutput,
       forceValue: t.forceValue,
-      ...(t.logicValue !== undefined ? { logicValue: t.logicValue } : {}),
       alarmLevel: t.alarmLevel,
-      alarmAcked: annunc?.acked ?? false,
-      alarmAckedAt: annunc?.ackedAt ?? null,
-      alarmAckedBy: annunc?.ackedBy ?? null,
-      ts: Date.now(),
-    };
-    if (slim) {
-      if (complex) {
-        row.preset = t.preset;
-        row.mode = t.mode;
-        row.fb = t.type === 'PID'
-          ? pidDisplayFb(t, byId)
-          : (t.fb && typeof t.fb === 'object' ? { ...t.fb } : undefined);
-      }
-      if (t.arrayLen > 1) row.arrayLen = t.arrayLen;
-      return row;
-    }
-    return {
-      ...row,
+      updatedAt: t.updatedAt ?? null,
+    }));
+  }
+
+  liveSnapshot() {
+    const list = this.list();
+    const byId = new Map(list.map((tag) => [tag.id, tag]));
+    return list.map((t) => ({
+      tagId: t.id,
       label: t.label || '',
+      value: t.value,
+      quality: t.quality,
+      type: t.type,
       wordWidth: t.wordWidth,
       arrayLen: t.arrayLen > 1 ? t.arrayLen : undefined,
       preset: t.preset,
       mode: t.mode,
       fb: t.type === 'PID'
         ? pidDisplayFb(t, byId)
-        : (t.type === 'TIMER' || t.type === 'COUNTER' || t.type === 'AVG' || t.type === 'FLOW')
+        : (t.type === 'TIMER' || t.type === 'COUNTER' || t.type === 'AVG' || t.type === 'FLOW' || t.type === 'ALT')
           ? { ...(t.fb || {}) }
           : undefined,
       kp: t.kp,
@@ -494,14 +529,19 @@ class TagStore {
       kd: t.kd,
       outMin: t.outMin,
       outMax: t.outMax,
+      forceInput: t.forceInput,
+      forceOutput: t.forceOutput,
+      forceValue: t.forceValue,
+      logicValue: (t.forceInput || t.forceOutput) ? t.logicValue : undefined,
       scale: t.scale,
       offset: t.offset,
       alarmsEnabled: t.alarmsEnabled,
       alarmCondition: t.alarmCondition,
-      alarmSince: annunc?.since ?? null,
-      alarmAckedAt: annunc?.ackedAt ?? null,
-      alarmAckedBy: annunc?.ackedBy ?? null,
-    };
+      alarmLevel: t.alarmLevel,
+      alarmAcked: this._alarmAnnunc.get(t.id)?.acked ?? false,
+      alarmSince: this._alarmAnnunc.get(t.id)?.since ?? null,
+      updatedAt: t.updatedAt ?? null,
+    }));
   }
 
   writeHmiMemory(id, rawValue) {
@@ -553,9 +593,9 @@ class TagStore {
       t.forceValue = forceValue;
     }
     if (t.forceInput || t.forceOutput) {
-      t.value = t.forceValue ?? t.value;
       if (t.forceOutput) this.markDirty(id);
     }
+    refreshEffective(t);
     this._refreshAlarmLevel(t);
     this.save();
     return t;
@@ -567,6 +607,8 @@ class TagStore {
     if (!which || which === 'input') t.forceInput = false;
     if (!which || which === 'output') t.forceOutput = false;
     if (!t.forceInput && !t.forceOutput) t.forceValue = undefined;
+    refreshEffective(t);
+    this._refreshAlarmLevel(t);
     this.save();
     return t;
   }
@@ -574,7 +616,7 @@ class TagStore {
   applyForcesAfterRead() {
     for (const t of this.tags.values()) {
       if (t.forceInput) {
-        t.value = t.forceValue ?? t.value;
+        refreshEffective(t);
         t.quality = QUALITY.GOOD;
         this._refreshAlarmLevel(t);
       }
@@ -584,7 +626,7 @@ class TagStore {
   applyForcesAfterLogic() {
     for (const t of this.tags.values()) {
       if (t.forceOutput) {
-        t.value = t.forceValue ?? t.value;
+        refreshEffective(t);
         this._refreshAlarmLevel(t);
         this.markDirty(t.id);
       }
@@ -604,6 +646,4 @@ module.exports = {
   TagStore,
   buildDefaultMemoryTags,
   mergeDefaultMemoryTags,
-  normalizeAckUser,
-  formatAckUserLabel,
 };

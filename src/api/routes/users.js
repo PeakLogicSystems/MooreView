@@ -9,6 +9,11 @@ function createUserRoutes() {
     res.json({ users: userStore.listUsers() });
   });
 
+  router.get('/users/notification-scope-catalog', (req, res) => {
+    const { buildApplianceScopeCatalog } = require('../../users/notificationScopeCatalog');
+    res.json(buildApplianceScopeCatalog());
+  });
+
   router.get('/users/:id', (req, res) => {
     const user = userStore.getUser(req.params.id);
     if (!user) return res.status(404).json({ error: 'User not found' });

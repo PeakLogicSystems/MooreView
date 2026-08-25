@@ -2,6 +2,10 @@
 
 const mongoSysLog = require('../../logger/mongoSysLog');
 const mosquittoLogIngest = require('../../mqtt/mosquittoLogIngest');
+const { DEPLOYMENT_MODE } = require('../../config');
+const { tenantStore } = require('../../tenants/tenantStore');
+const { activeTenantId } = require('../../tenants/authMiddleware');
+const { isPartnerRole } = require('../../tenants/tenantRoles');
 
 function ingestToken() {
   return String(
@@ -44,9 +48,39 @@ function createMqttBrokerLogRoutes() {
   router.get('/mqtt-broker-log', async (req, res) => {
     try {
       const filter = {
-        tenantId: mongoSysLog.status().tenantId,
         category: 'mqtt',
       };
+      if (DEPLOYMENT_MODE !== 'cloud') {
+        filter.tenantId = mongoSysLog.status().tenantId;
+      } else if (req.mvAuth?.user?.role !== 'platform_admin') {
+        if (!req.mvAuth?.user) {
+          return res.status(401).json({ error: 'Authentication required' });
+        }
+        const tid = activeTenantId(req);
+        const user = req.mvAuth.user;
+        let allowed = new Set(tid ? [tid] : []);
+        if (isPartnerRole(user.role) && user.tenantId) {
+          allowed = new Set([
+            user.tenantId,
+            ...tenantStore.listLinkedCustomers(user.tenantId).map((c) => c.tenantId),
+          ]);
+        }
+        const entries = await mongoSysLog.query(filter, {
+          limit: req.query.limit,
+          since: req.query.since,
+          until: req.query.until,
+        });
+        const event = String(req.query.event || '').trim();
+        const scoped = entries.filter((e) => {
+          const rowTid = e.detail?.tenantId || e.tenantId;
+          if (rowTid && allowed.has(rowTid)) return true;
+          return false;
+        });
+        const filtered = event
+          ? scoped.filter((e) => String(e.detail?.event || '') === event)
+          : scoped;
+        return res.json({ ok: true, entries: filtered });
+      }
       const level = String(req.query.level || '').trim();
       const event = String(req.query.event || '').trim();
       if (level) filter.level = level;

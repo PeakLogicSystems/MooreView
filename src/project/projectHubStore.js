@@ -3,10 +3,9 @@
 const fs = require('fs');
 const path = require('path');
 const { DATA_DIR } = require('../config');
-const { archiveFilename } = require('./projectArchive');
+const { exportFilename } = require('./estFile');
 
 const HUB_DIR = path.join(DATA_DIR, 'project-hub');
-const ZIP_EXT = '.est.zip';
 
 function ensureHubDir() {
   if (!fs.existsSync(HUB_DIR)) fs.mkdirSync(HUB_DIR, { recursive: true });
@@ -38,8 +37,8 @@ function safeSlug(name) {
   return base.toLowerCase();
 }
 
-function archivePathForSlug(slug) {
-  return path.join(ensureHubDir(), `${slug}${ZIP_EXT}`);
+function estPathForSlug(slug) {
+  return path.join(ensureHubDir(), `${slug}.est.json`);
 }
 
 function listEntries() {
@@ -57,21 +56,21 @@ function listEntries() {
     .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
 }
 
-function loadArchiveBuffer(idOrSlug) {
+function loadEstDoc(idOrSlug) {
   const key = String(idOrSlug || '').trim();
   if (!key) throw Object.assign(new Error('Missing project id'), { status: 400 });
   const catalog = readCatalog();
   const entry = catalog.find((e) => e.id === key || e.slug === key);
   if (!entry) throw Object.assign(new Error(`Project not in repository: ${key}`), { status: 404 });
-  const filePath = archivePathForSlug(entry.slug);
+  const filePath = estPathForSlug(entry.slug);
   if (!fs.existsSync(filePath)) {
     throw Object.assign(new Error(`Repository file missing for ${entry.name}`), { status: 404 });
   }
-  return { entry, buffer: fs.readFileSync(filePath) };
+  return { entry, doc: JSON.parse(fs.readFileSync(filePath, 'utf8')) };
 }
 
-function publishArchive(name, archiveBuffer, meta = {}) {
-  const projectName = String(name || 'project').trim() || 'project';
+function publishDoc(name, doc, meta = {}) {
+  const projectName = String(name || doc?.project?.name || 'project').trim() || 'project';
   const slug = safeSlug(meta.slug || projectName);
   const catalog = readCatalog();
   const now = new Date().toISOString();
@@ -91,15 +90,12 @@ function publishArchive(name, archiveBuffer, meta = {}) {
     entry.description = String(meta.description || entry.description || '').trim();
     entry.updatedAt = now;
   }
-  const buf = Buffer.isBuffer(archiveBuffer) ? archiveBuffer : Buffer.from(archiveBuffer);
-  const fp = archivePathForSlug(slug);
-  const tmp = `${fp}.tmp`;
-  fs.writeFileSync(tmp, buf);
-  fs.renameSync(tmp, fp);
+  const normalized = { ...doc, project: { ...(doc.project || {}), name: projectName } };
+  fs.writeFileSync(estPathForSlug(slug), JSON.stringify(normalized, null, 2));
   writeCatalog(catalog);
   return {
     ...entry,
-    filename: archiveFilename(projectName),
+    filename: exportFilename(projectName),
     source: 'local',
   };
 }
@@ -110,7 +106,7 @@ function removeEntry(idOrSlug) {
   const idx = catalog.findIndex((e) => e.id === key || e.slug === key);
   if (idx < 0) throw Object.assign(new Error(`Project not in repository: ${key}`), { status: 404 });
   const [entry] = catalog.splice(idx, 1);
-  const filePath = archivePathForSlug(entry.slug);
+  const filePath = estPathForSlug(entry.slug);
   if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
   writeCatalog(catalog);
   return { ok: true };
@@ -118,10 +114,9 @@ function removeEntry(idOrSlug) {
 
 module.exports = {
   HUB_DIR,
-  ZIP_EXT,
   listEntries,
-  loadArchiveBuffer,
-  publishArchive,
+  loadEstDoc,
+  publishDoc,
   removeEntry,
   safeSlug,
 };

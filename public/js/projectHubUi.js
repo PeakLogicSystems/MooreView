@@ -2,6 +2,7 @@
 
 (function initProjectHubUi() {
   const $ = (id) => document.getElementById(id);
+  const sortApi = () => window.MooreviewProjectListSort;
 
   function closeProjectMenu() {
     const details = $('project-menu-details');
@@ -54,6 +55,22 @@
   let hubTab = 'local';
   let pendingFileDoc = null;
   let hubProjects = [];
+  let hubSort = sortApi()?.defaultState() || { key: 'date', dir: 'desc' };
+
+  function normalizeHubProject(p) {
+    const apiSort = sortApi();
+    const defaults = {
+      source: hubTab === 'cloud' ? 'cloud' : 'local',
+      format: hubTab === 'cloud' ? 'cloud' : (p?.format || 'json'),
+    };
+    return apiSort ? apiSort.normalizeRecord(p, defaults) : { ...p, ...defaults };
+  }
+
+  function hubOptionLabel(p) {
+    const apiSort = sortApi();
+    if (apiSort) return apiSort.optionLabel(p);
+    return p.name || p.id || '';
+  }
 
   function setHubTab(tab) {
     hubTab = tab;
@@ -62,9 +79,11 @@
       btn.classList.toggle('active', btn.getAttribute('data-hub-tab') === tab);
     });
     const fileInput = $('project-hub-file');
-    if (fileInput) fileInput.value = '';
+    const list = $('project-hub-list');
+    const sortBar = document.querySelector('[data-project-sort-scope="hub"]');
     const locWrap = $('project-hub-location-wrap');
-    if (locWrap) locWrap.hidden = tab !== 'cloud';
+    if (fileInput) fileInput.value = '';
+    if (locWrap) locWrap.classList.toggle('view-hidden', tab !== 'cloud');
     const hint = $('project-hub-hint');
     if (hint) {
       hint.textContent = tab === 'cloud'
@@ -73,13 +92,22 @@
           ? 'Choose a .est or .json project file from your computer.'
           : 'Deploy a project saved in this Studio workspace (data/projects).';
     }
+    if (tab === 'file') {
+      list?.classList.add('view-hidden');
+      sortBar?.classList.add('view-hidden');
+      fileInput?.classList.remove('view-hidden');
+    } else {
+      list?.classList.remove('view-hidden');
+      sortBar?.classList.remove('view-hidden');
+      fileInput?.classList.add('view-hidden');
+    }
     refreshHubList().catch((e) => setHubMsg(e.message));
   }
 
   function fillHubList(items) {
     const sel = $('project-hub-list');
     if (!sel) return;
-    hubProjects = Array.isArray(items) ? items : [];
+    hubProjects = (Array.isArray(items) ? items : []).map(normalizeHubProject);
     if (hubTab === 'file') {
       sel.innerHTML = '<option value="">(choose file below)</option>';
       sel.disabled = true;
@@ -87,19 +115,15 @@
       return;
     }
     sel.disabled = false;
-    if (!hubProjects.length) {
+    const sorted = sortApi()?.sortItems(hubProjects, hubSort) || hubProjects;
+    sortApi()?.syncButtons('hub', hubSort);
+    if (!sorted.length) {
       sel.innerHTML = '<option value="">(no projects)</option>';
       return;
     }
-    sel.innerHTML = hubProjects.map((p) => {
-      const label = p.name || p.id || p.slug || '(unnamed)';
-      const meta = [];
-      if (p.locationName) meta.push(p.locationName);
-      if (p.version) meta.push(`v${p.version}`);
-      if (p.savedAt) meta.push(String(p.savedAt).slice(0, 19));
-      const suffix = meta.length ? ` · ${meta.join(' · ')}` : '';
-      return `<option value="${esc(p.id)}">${esc(label)}${esc(suffix)}</option>`;
-    }).join('');
+    sel.innerHTML = sorted.map((p) =>
+      `<option value="${esc(p.id)}">${esc(hubOptionLabel(p))}</option>`,
+    ).join('');
   }
 
   async function refreshHubList() {
@@ -116,7 +140,7 @@
       return;
     }
     const data = await api.listProjects();
-    fillHubList(data.projects || []);
+    fillHubList((data.projects || []).map((p) => normalizeHubProject({ ...p, format: p.format || 'zip' })));
   }
 
   async function applyDeployedProject(nameHint) {
@@ -200,7 +224,7 @@
       if (tabs) tabs.hidden = true;
       hubTab = 'cloud';
       const locWrap = $('project-hub-location-wrap');
-      if (locWrap) locWrap.hidden = false;
+      if (locWrap) locWrap.classList.remove('view-hidden');
       const hint = $('project-hub-hint');
       if (hint) hint.textContent = 'Publish the current Studio project to MV Cloud for the selected site.';
       const list = $('project-hub-list');
@@ -208,6 +232,7 @@
         list.hidden = true;
         list.disabled = true;
       }
+      document.querySelector('[data-project-sort-scope="hub"]')?.classList.add('view-hidden');
     } else {
       if (title) title.textContent = 'Deploy project';
       if (primary) primary.textContent = 'Deploy';
@@ -218,6 +243,7 @@
         list.hidden = false;
         list.disabled = false;
       }
+      document.querySelector('[data-project-sort-scope="hub"]')?.classList.remove('view-hidden');
       setHubTab(hubTab || 'local');
     }
   }
@@ -234,6 +260,7 @@
     } else {
       setHubMsg('');
     }
+    sortApi()?.syncButtons('hub', hubSort);
     showDialog(dlg);
   }
 
@@ -245,6 +272,7 @@
     const preferred = String(window.MOOREVIEW_STUDIO_LOCATION_ID || '').trim();
     const studioSel = $('studio-location-select');
     const hubSel = $('project-hub-location');
+    const studioWrap = $('studio-location-wrap');
     if (studioSel) {
       studioSel.innerHTML = opts;
       if (preferred && items.some((loc) => loc.id === preferred)) studioSel.value = preferred;
@@ -253,6 +281,7 @@
       hubSel.innerHTML = opts;
       if (preferred && items.some((loc) => loc.id === preferred)) hubSel.value = preferred;
     }
+    if (studioWrap) studioWrap.classList.toggle('view-hidden', items.length === 0);
     syncLocationPickers();
   }
 
@@ -281,16 +310,24 @@
     $('project-hub-location')?.addEventListener('change', onChange);
   }
 
+  function bindHubSortControls() {
+    const bar = document.querySelector('[data-project-sort-scope="hub"]');
+    if (!bar || bar.dataset.hubSortBound === '1') return;
+    bar.dataset.hubSortBound = '1';
+    bar.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('[data-project-sort]');
+      if (!btn || !bar.contains(btn)) return;
+      ev.preventDefault();
+      const key = btn.getAttribute('data-project-sort');
+      sortApi()?.cycleSort(hubSort, key);
+      fillHubList(hubProjects);
+    });
+  }
+
   function bindHubDialog() {
     const dlg = $('project-hub-dialog');
     if (!dlg) return;
 
-    $('btn-deploy-project')?.addEventListener('click', () => {
-      openHubDialog('deploy').catch((e) => alert(e.message));
-    });
-    $('btn-share-project')?.addEventListener('click', () => {
-      openHubDialog('share').catch((e) => alert(e.message));
-    });
     $('project-hub-cancel')?.addEventListener('click', () => hideDialog(dlg));
     $('project-hub-primary')?.addEventListener('click', () => {
       runPrimaryAction().catch((e) => alert(e.message));
@@ -318,12 +355,17 @@
       };
       reader.readAsText(file);
     });
+    bindHubSortControls();
   }
 
   document.addEventListener('DOMContentLoaded', () => {
-    if (!$('project-hub-dialog')) return;
+    if (!$('project-hub-dialog') || !window.MOOREVIEW_BUILD || window.MOOREVIEW_BUILD.deployment !== 'cloud') return;
     bindHubDialog();
     bindLocationPickers();
     loadLocations().catch(console.error);
+    window.MooreviewProjectHubUi = {
+      openHubDialog,
+      refreshHubList,
+    };
   });
 })();

@@ -29,6 +29,7 @@ const OP = {
   STORE_TAG: 0x81,
   JMP_IFNOT: 0x90,
   JMP: 0x91,
+  TRACE_PEEK: 0xa0,
   END: 0xff,
 };
 
@@ -50,6 +51,7 @@ const BUILTIN = {
   FlowValue: 14,
   FlowReady: 15,
   AltActiveUnit: 16,
+  AltReady: 17,
   AltFault: 18,
   AltLag: 19,
   AltOffActive: 20,
@@ -58,6 +60,11 @@ const BUILTIN = {
   AltPumpUp: 23,
   AltPumpDown: 24,
   AltLow2Active: 25,
+  RmtFwdRun: 26,
+  RmtRevRun: 27,
+  RmtFault: 28,
+  RmtReversing: 29,
+  RmtStatus: 30,
 };
 
 /** Built-in argc (stack args, bottom-first). */
@@ -79,6 +86,7 @@ const BUILTIN_ARGC = {
   FlowValue: 1,
   FlowReady: 1,
   AltActiveUnit: 1,
+  AltReady: 1,
   AltFault: 1,
   AltLag: 1,
   AltOffActive: 1,
@@ -87,6 +95,11 @@ const BUILTIN_ARGC = {
   AltPumpUp: 1,
   AltPumpDown: 1,
   AltLow2Active: 1,
+  RmtFwdRun: 1,
+  RmtRevRun: 1,
+  RmtFault: 1,
+  RmtReversing: 1,
+  RmtStatus: 1,
 };
 
 const ACTION = {
@@ -123,6 +136,19 @@ const ACTION = {
   AltLevel: 30,
   AltLevelBands: 31,
   AltLag2: 32,
+  RmtFwdCmd: 33,
+  RmtRevCmd: 34,
+  RmtFwdAux: 35,
+  RmtRevAux: 36,
+  RmtOverload: 37,
+  RmtHoa: 38,
+  RmtFwdOut: 39,
+  RmtRevOut: 40,
+  RmtReset: 41,
+  RmtOffline: 42,
+  RmtHrs: 43,
+  RmtStarts: 44,
+  RmtSta: 45,
 };
 
 const TAG_TYPE = {
@@ -135,6 +161,7 @@ const TAG_TYPE = {
   AVG: 6,
   FLOW: 7,
   ALT: 8,
+  RMOTOR: 9,
 };
 
 const MODE_ID = {
@@ -149,12 +176,13 @@ const MODE_ID = {
   ALT2: 8,
   ALT4: 9,
   ALT3: 10,
+  RMOTOR: 11,
 };
 
 const META_PRESET = 0x01;
 const META_MODE = 0x02;
 const META_PID = 0x04;
-/** Program tag published on mooreview/v1/g/{siteKey}/{id} — keep in sync with firmware mv_bc.h */
+/** Tag participates in P2P global MQTT (mooreview/v1/g/{siteKey}/{tag}). */
 const META_GLOBAL = 0x08;
 const NO_TAG = 0xffff;
 

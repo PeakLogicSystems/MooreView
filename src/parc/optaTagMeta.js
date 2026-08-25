@@ -1,6 +1,7 @@
 'use strict';
 
 const { applyDefaultLabel } = require('../tags/tagLabels');
+const { isGlobalTagMeta, globalBaseType, tagMetaWithGlobal } = require('./globalTagMeta');
 
 function inferTagType(id) {
   if (/^X\d+_IRAW\d+$/i.test(id)) return 'INT';
@@ -9,17 +10,13 @@ function inferTagType(id) {
   if (/^X\d+_AI\d+$/i.test(id)) return 'REAL';
   if (/^X\d+_PWM\d+$/i.test(id)) return 'INT';
   if (/^H\d+$/i.test(id)) return 'INT';
-  if (/^H_(DRY|WET|MOIST|SUB)_RAW$/i.test(id)) return 'INT';
   if (/^I\d+_RAW$/i.test(id)) return 'INT';
-  if (/^T\d+_[CF]$/i.test(id)) return 'INT';
-  if (/^MOIST_PCT$/i.test(id)) return 'INT';
-  if (/^CT_AMPS$/i.test(id)) return 'INT';
   if (/^I\d+$/i.test(id)) return 'BOOL';
   if (/^R\d+$/i.test(id) || /^Q\d+$/i.test(id)) return 'BOOL';
   if (/^PID/i.test(id)) return 'PID';
   if (/^AVG/i.test(id)) return 'AVG';
   if (/^FLOW/i.test(id)) return 'FLOW';
-  if (/^ALT\d+$/i.test(id)) return 'ALT';
+  if (/^ALT/i.test(id)) return 'ALT';
   if (/^TMR/i.test(id)) return 'TIMER';
   if (/^CTR/i.test(id)) return 'COUNTER';
   if (/^VPR/i.test(id)) return 'REAL';
@@ -43,7 +40,7 @@ function inferTagRole(id, type) {
   if (/^X\d+_R\d+$/i.test(id) || /^X\d+_PWM\d+$/i.test(id)) return 'output';
   if (/^I\d+$/i.test(id) || /^I\d+_RAW$/i.test(id)) return 'input';
   if (/^R\d+$/i.test(id) || /^Q\d+$/i.test(id)) return 'output';
-  if (type === 'TIMER' || type === 'COUNTER' || type === 'PID' || type === 'AVG' || type === 'FLOW') return 'memory';
+  if (type === 'TIMER' || type === 'COUNTER' || type === 'PID' || type === 'AVG' || type === 'FLOW' || type === 'ALT') return 'memory';
   return 'memory';
 }
 
@@ -112,9 +109,11 @@ function tagMetaForDevice(tag) {
 
 /** Minimal tag row for remote deploy — keeps tuning fields only. */
 function slimTagMetaForDeploy(tag, id, driverId) {
-  const type = tag?.type || inferTagType(id);
-  const meta = { id, type };
   const src = tag || defaultMetaForId(id, driverId);
+  const normalized = tagMetaWithGlobal(src);
+  const type = normalized?.type || inferTagType(id);
+  const meta = { id, type };
+  if (isGlobalTagMeta(src)) meta.global = true;
   if (['PID', 'AVG', 'TIMER', 'COUNTER', 'FLOW', 'ALT'].includes(type)) {
     if (src.preset != null) meta.preset = src.preset;
     if (src.mode) meta.mode = src.mode;
@@ -133,4 +132,7 @@ module.exports = {
   defaultMetaForId,
   tagMetaForDevice,
   slimTagMetaForDeploy,
+  isGlobalTagMeta,
+  globalBaseType,
+  tagMetaWithGlobal,
 };

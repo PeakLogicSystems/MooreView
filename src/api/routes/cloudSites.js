@@ -11,10 +11,27 @@ const {
 const siteAgent = require('../../cloud/siteAgent');
 const { isCloudDeployment } = require('../../cloud/agentProtocol');
 const {
+  listCheckedInUnassignedDevices,
+  siteControllerSummary,
+} = require('./tenantFleet');
+const {
   requireAuth,
   requireTenantAccess,
   activeTenantId,
 } = require('../../tenants/authMiddleware');
+const { countyBySlug } = require('../../fleet/floridaCounties');
+
+function applyCountyCoords(body) {
+  const out = { ...body };
+  if ((!out.lat || !out.lng) && out.county) {
+    const county = countyBySlug(out.county);
+    if (county) {
+      out.lat = county.lat;
+      out.lng = county.lng;
+    }
+  }
+  return out;
+}
 
 function createCloudSiteRoutes() {
   const router = require('express').Router();
@@ -84,13 +101,15 @@ function createCloudSiteRoutes() {
     }
     const tid = activeTenantId(req);
     const isAdmin = req.mvAuth.user.role === 'platform_admin';
+    const unassignedCheckIn = listCheckedInUnassignedDevices({ tenantId: tid }).length;
     const sites = siteStore.listSites()
       .filter((s) => isAdmin || s.tenantId === tid)
       .map((s) => ({
         ...s,
         agentOnline: !!(s.agentOnline || isAgentOnline(s.siteId)),
+        ...siteControllerSummary(s.siteId, s.tenantId),
       }));
-    res.json({ sites, settings: siteStore.settings(), tenantId: tid });
+    res.json({ sites, settings: siteStore.settings(), tenantId: tid, unassignedCheckIn });
   });
 
   router.post('/sites', requireAuth, requireTenantAccess, (req, res) => {
@@ -103,8 +122,21 @@ function createCloudSiteRoutes() {
       if (!body.tenantId) {
         return res.status(400).json({ error: 'tenantId required' });
       }
-      const created = siteStore.createSite(body);
+      const created = siteStore.createSite(applyCountyCoords(body));
       res.status(201).json(created);
+    } catch (e) {
+      res.status(e.status || 400).json({ error: e.message || String(e) });
+    }
+  });
+
+  router.patch('/sites/:siteId', requireAuth, requireTenantAccess, (req, res) => {
+    if (!cloudEnabled()) return res.status(404).json({ error: 'Not found' });
+    const site = siteStore.getSite(req.params.siteId);
+    if (!site || !assertSiteTenant(req, site)) return res.status(404).json({ error: 'Site not found' });
+    try {
+      const updated = siteStore.updateSite(req.params.siteId, applyCountyCoords(req.body || {}));
+      if (!updated) return res.status(404).json({ error: 'Site not found' });
+      res.json({ site: updated });
     } catch (e) {
       res.status(e.status || 400).json({ error: e.message || String(e) });
     }

@@ -1,7 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <script src="/samples/mv-live-api.js"></script>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Magnolia Village DWTS — DWTS 3D</title>
@@ -68,13 +67,12 @@
     <dl id="detail-tags"></dl>
   </div>
   <div id="fleet-list" class="panel"><strong>Fleet (24)</strong><ul id="fleet-items"></ul></div>
-  <script type="importmap">{ "imports": { "three": "/vendor/three/build/three.module.js", "three/addons/": "/vendor/three/examples/jsm/" } }</script>
+  <script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }</script>
   <script type="module">
     import * as THREE from 'three';
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
     import { buildLiftStation, applyLiftStationLevel, LIFT_STATION_TYPES } from './lift-station-3d.js';
     import { buildDwtsPlant } from './dwts-plant-3d.js';
-    import { mountNorthIndicator } from './mv-north-indicator.js';
 
     const STATIONS = [
   {
@@ -1228,8 +1226,7 @@
 
     setInterval(refreshParc, 3000);
     refreshParc();
-    const north = mountNorthIndicator();
-    function animate() { requestAnimationFrame(animate); controls.update(); north.update(camera); renderer.render(scene, camera); }
+    function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
     animate();
     addEventListener('resize', () => {
       camera.aspect = innerWidth / innerHeight;

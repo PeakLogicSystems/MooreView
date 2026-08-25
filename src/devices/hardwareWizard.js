@@ -1,14 +1,12 @@
 'use strict';
 
-/**
- * Pure helpers for the Hardware connection wizard (transport groups, preset filter, apply body).
- */
+const { defaultModbusRtuSerialPort } = require('../appliance/defaultRs485Port');
 
 const WIZARD_TRANSPORT_GROUPS = [
   {
     id: 'modbus_rtu',
     label: 'Modbus RTU (RS-485 / USB serial)',
-    hint: 'Datexel DAT10148, Waveshare, S::CAN Spectro::Lyser RTU, DFRobot/JXCT/Seeed sensors',
+    hint: 'Datexel DAT10148, Waveshare, S::CAN Spectro::Lyser RTU, APG True Echo radar, DFRobot/JXCT/Seeed sensors',
   },
   {
     id: 'modbus_tcp',
@@ -17,8 +15,8 @@ const WIZARD_TRANSPORT_GROUPS = [
   },
   {
     id: 'mqtt_parc',
-    label: 'MQTT Parc — Opta / ESP32 / Waveshare',
-    hint: 'Opta, LilyGO, Waveshare ESP32-S3-Relay-1CH-U, and other Parc peers',
+    label: 'MQTT Parc — Arduino Opta',
+    hint: 'Remote ST on Opta; MooreVIEW syncs tags from device telemetry',
   },
   {
     id: 'mqtt',
@@ -46,6 +44,8 @@ const TRANSPORT_TO_GROUP = {
   modbus_rtu: 'modbus_rtu',
   vgreen_epc: 'modbus_rtu',
   pentair_rs485: 'modbus_rtu',
+  jandy_rs485: 'modbus_rtu',
+  hayward_rs485: 'modbus_rtu',
   modbus_tcp: 'modbus_tcp',
   mqtt_parc: 'mqtt_parc',
   mqtt_parc_telemetry: 'mqtt_parc',
@@ -84,12 +84,10 @@ function connectionFieldSpec(preset) {
     return [
       {
         id: 'deviceId',
-        label: 'Parc device ID',
+        label: 'Opta device ID',
         type: 'text',
         default: defs.deviceId || preset?.driverId || 'opta_st_01',
-        hint: transport === 'mqtt_parc_telemetry'
-          ? 'Must match MQTT topic / uplink (e.g. dragino_01 for dragino/01/uplink)'
-          : 'Must match firmware /setup deviceId (Waveshare ws_relay_…, Opta opta_…, LilyGO eth_parc_…)',
+        hint: 'ATECC serial id (opta_…) from firmware /setup, or legacy opta_st_01',
       },
       {
         id: 'driverId',
@@ -111,7 +109,7 @@ function connectionFieldSpec(preset) {
     return [];
   }
   return [
-    { id: 'serialPort', label: 'COM port', type: 'text', default: defs.serialPort || 'COM3' },
+    { id: 'serialPort', label: 'COM port', type: 'text', default: defs.serialPort || defaultModbusRtuSerialPort() },
     { id: 'baud', label: 'Baud', type: 'number', default: defs.baud ?? 9600 },
     { id: 'slaveId', label: 'Slave ID', type: 'number', default: defs.slaveId ?? 1 },
     { id: 'parity', label: 'Parity', type: 'text', default: defs.parity || 'none' },

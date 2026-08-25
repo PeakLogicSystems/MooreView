@@ -45,20 +45,4 @@ describe('mongo edge inference', () => {
     assert.equal(normalizeEdgeInference({}), null);
     assert.equal(extractEdgePayloads({ deviceId: 'x', tags: [] }).length, 0);
   });
-
-  it('maps pumpIndex to pump-N asset id', () => {
-    const docs = extractEdgePayloads({
-      deviceId: 'opta_st_01',
-      edgeAi: {
-        modelId: 'lift-submersible-v2',
-        pumpIndex: 2,
-        score: 0.55,
-        label: 'seal_leak',
-        features: { startMs: 3100, peakA: 22.1, runA: 8.4 },
-      },
-    });
-    assert.equal(docs.length, 1);
-    assert.equal(docs[0].assetId, 'pump-2');
-    assert.equal(docs[0].features.startMs, 3100);
-  });
 });

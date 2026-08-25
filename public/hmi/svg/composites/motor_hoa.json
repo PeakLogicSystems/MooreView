@@ -3,7 +3,6 @@
   "label": "Motor / pump (HOA + commands)",
   "group": "Motor control",
   "subgroup": "composites",
-  "defaultInstancePrefix": "MOTOR1",
   "preview": "/hmi/svg/library/motor-faceplates/mooreview/motor_hoa.svg",
   "tagRoles": {
     "hoa": { "pick": "tagId", "tagId": "MOTOR1_HOA", "types": ["INT"] },

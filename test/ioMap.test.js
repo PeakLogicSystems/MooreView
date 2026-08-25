@@ -2,7 +2,7 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { isIoMapTag, isExpansionIoTag, sortIoMapTags, ioMapPointFromTag, shouldPollFieldbusForIoMap } = require('../src/api/routes/ioMap');
+const { isIoMapTag, isExpansionIoTag, sortIoMapTags, ioMapPointFromTag } = require('../src/api/routes/ioMap');
 
 describe('ioMap', () => {
   it('filters input and output tags only', () => {
@@ -79,11 +79,5 @@ describe('ioMap', () => {
       quality: 'BAD',
     });
     assert.equal(p.quality, 'BAD');
-  });
-
-  it('polls fieldbus on io-map when runtime is stopped or paused', () => {
-    assert.equal(shouldPollFieldbusForIoMap({ running: false, paused: false }), true);
-    assert.equal(shouldPollFieldbusForIoMap({ running: true, paused: true }), true);
-    assert.equal(shouldPollFieldbusForIoMap({ running: true, paused: false }), false);
   });
 });

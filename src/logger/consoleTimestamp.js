@@ -1,19 +1,32 @@
 'use strict';
 
-function pad(n, width = 2) {
-  return String(n).padStart(width, '0');
+const {
+  DEFAULT_TIMEZONE,
+  normalizeTimezone,
+  formatInTimezone,
+} = require('../settings/timezoneSettings');
+
+let displayTimezone = DEFAULT_TIMEZONE;
+
+function setConsoleTimezone(tz) {
+  displayTimezone = normalizeTimezone(tz);
+  return displayTimezone;
 }
 
-/** Local wall-clock timestamp for console prefixes (YYYY-MM-DD HH:MM:SS.mmm). */
+function getConsoleTimezone() {
+  return displayTimezone;
+}
+
+/** Wall-clock timestamp for console prefixes (YYYY-MM-DD HH:MM:SS.mmm) in workspace TZ. */
 function formatConsoleTimestamp(date = new Date()) {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} `
-    + `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.`
-    + `${pad(date.getMilliseconds(), 3)}`;
+  const base = formatInTimezone(date, displayTimezone);
+  const ms = String(date.getUTCMilliseconds()).padStart(3, '0');
+  return `${base}.${ms}`;
 }
 
 let installed = false;
 
-/** Prefix console.log/info/warn/error/debug with a local timestamp. Idempotent. */
+/** Prefix console.log/info/warn/error/debug with a timestamp. Idempotent. */
 function installConsoleTimestamp() {
   if (installed) return;
   installed = true;
@@ -29,4 +42,6 @@ function installConsoleTimestamp() {
 module.exports = {
   formatConsoleTimestamp,
   installConsoleTimestamp,
+  setConsoleTimezone,
+  getConsoleTimezone,
 };

@@ -5,53 +5,19 @@
   "model": "Triplex alternator (ALT3)",
   "transport": "mqtt_parc",
   "stationType": "triplex",
-  "defaultProgram": "logic/39_triplex_lift_station_ezmeter.st",
-  "tagsFromDevice": false,
-  "ioBaseOnly": false,
-  "diCount": 16,
-  "doCount": 4,
-  "aiCount": 6,
+  "defaultProgram": "logic/28_alternator_triplex.st",
+  "tagsFromDevice": true,
+  "diCount": 8,
+  "doCount": 3,
+  "aiCount": 1,
   "defaults": {
     "deviceId": "lift_tpx_01",
     "reportIntervalMs": 200,
     "scanMs": 100,
-    "remoteExecution": true,
-    "ioBaseOnly": false
+    "remoteExecution": true
   },
   "driver": {
-    "enabled": true,
-    "ioBaseOnly": false
+    "enabled": true
   },
-  "tags": {
-    "logicFixture": "tags.triplex_lift_station_ezmeter.json",
-    "expansions": [
-      { "slot": 1, "type": "d1608e" },
-      { "slot": 2, "type": "a0602", "rtdsEnabled": true }
-    ]
-  },
-  "fieldbus": {
-    "compileFlags": ["MV_FIELDBUS=1", "MV_EZMETER=1"],
-    "ezmeter": {
-      "slaveId": 1,
-      "baud": 9600,
-      "livePollMs": 30000,
-      "energyPollMs": 300000
-    }
-  },
-  "facility": {
-    "driver": "ezmeter"
-  },
-  "notes": "TRIPLEXLS + EZ Meter on Opta RS485. Deploy logic/39_triplex_lift_station_ezmeter.st. R4 = station alarm (high level, MECH_PQ_ALM, motor faults X1_I13–I15); R1–R3 = pump contactors.",
-  "pdm": {
-    "motorType": "pump",
-    "application": "lift_station",
-    "configuration": "triplex",
-    "locationClass": "school",
-    "floatLadder": "pull_down",
-    "assets": [
-      { "assetId": "pump-1", "pumpIndex": 1, "pumpRole": "lead" },
-      { "assetId": "pump-2", "pumpIndex": 2, "pumpRole": "lag" },
-      { "assetId": "pump-3", "pumpIndex": 3, "pumpRole": "lag2" }
-    ]
-  }
+  "notes": "3-pump triplex alternator. Deploy logic/28_alternator_triplex.st on device."
 }

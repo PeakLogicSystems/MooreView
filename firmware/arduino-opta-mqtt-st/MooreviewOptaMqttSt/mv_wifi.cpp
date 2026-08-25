@@ -1,4 +1,5 @@
 #include "mv_wifi.h"
+#include "mv_ota.h"
 #include "mv_config.h"
 #include "mv_debug.h"
 #include <string.h>
@@ -62,6 +63,7 @@ bool mvWifiProbe() {
 
 void mvWifiStop() {
   g_apActive = false;
+  mvOtaWifiSync(false);
 #if MV_HAS_WEBSERVER
   mvHttpWifiEnd();
 #endif
@@ -131,6 +133,7 @@ bool mvWifiBegin(const MvDeviceConfig* cfg) {
   g_apActive = true;
   g_wifiNextRetryMs = 0;
   mvWifiSetError("");
+  mvOtaWifiSync(true);
   MV_LOG_CMD2("WiFi AP listening ssid=", ssid);
   char url[64];
   snprintf(url, sizeof(url), "http://%s:%u/setup", g_apIp.toString().c_str(), (unsigned)MV_WIFI_HTTP_PORT);

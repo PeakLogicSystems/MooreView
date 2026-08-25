@@ -61,44 +61,6 @@ describe('simTelemetry', () => {
     const report = buildSimTelemetry(sim, 5);
     assert.ok(report.tags.some((t) => t.id === 'HR40001'));
   });
-
-  it('builds JXCT soil ×4 Dragino profile tags', () => {
-    const sim = normalizeSimInput({
-      name: 'JXCT',
-      tenantId: 'demo-tenant',
-      type: 'jxct_soil',
-      mqttDeviceId: 'dragino_jxct_x4',
-      config: { sensorCount: 4 },
-    });
-    const r0 = buildSimTelemetry(sim, 0);
-    const r1 = buildSimTelemetry(sim, 1);
-    assert.equal(r0.deviceId, 'dragino_jxct_x4');
-    assert.equal(r0.platform, 'dragino-rs485-nb');
-    assert.equal(r0.modbusPreset, 'jxct_npk_jxbs3001_dragino_x4');
-    assert.equal(r0.tags.length, 28);
-    assert.ok(r0.tags.some((t) => t.id === 'S1_SOIL_PH'));
-    assert.ok(r0.tags.some((t) => t.id === 'S4_K_MG_KG'));
-    assert.notEqual(
-      r0.tags.find((t) => t.id === 'S1_SOIL_PH').value,
-      r1.tags.find((t) => t.id === 'S1_SOIL_PH').value,
-    );
-  });
-
-  it('builds pool chemistry Dragino profile tags', () => {
-    const sim = normalizeSimInput({
-      name: 'Pool',
-      tenantId: 'demo-tenant',
-      type: 'pool_chemistry',
-      mqttDeviceId: 'dragino_pool_chem',
-    });
-    const report = buildSimTelemetry(sim, 10);
-    assert.equal(report.modbusPreset, 'dfrobot_pool_chemistry_dragino');
-    assert.equal(report.tags.length, 4);
-    const ph = report.tags.find((t) => t.id === 'PH_PV');
-    const cl = report.tags.find((t) => t.id === 'CL_PV');
-    assert.ok(ph && ph.value >= 7.0 && ph.value <= 8.0);
-    assert.ok(cl && cl.value >= 0.5 && cl.value <= 3.5);
-  });
 });
 
 describe('simStore fallback', () => {

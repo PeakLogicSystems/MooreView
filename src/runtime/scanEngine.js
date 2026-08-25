@@ -8,24 +8,12 @@ const { normalizePens, penTagIds, pensFromEnabledTags } = require('../graph/grap
 const mongoTagLogger = require('../logger/mongoTagLogger');
 const { isGraphableTag } = require('../tags/graphableTags');
 const { parseProgram, validateProgram } = require('../engine/parser');
+const { assessStProgramLines } = require('../programs/stProgramLimits');
 const { execute, createContext, collectExpressionTrace } = require('../engine/executor');
 const {
-  updateTimers, updateCounters, updatePids, updateAverages, updateFlowMeters, updateAlternators,
+  updateTimers, updateCounters, updatePids, updateAverages, updateAlternators, updateFlowMeters,
+  updateReversingMotors,
 } = require('../engine/functionBlocks');
-const { waitForParcCmdHealth, waitForParcDeviceTelemetry } = require('../parc/waitForParcDevice');
-const { registry } = require('../parc/deviceRegistry');
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/** Opta needs time after runtime_status before put_program (forced telemetry + cmd drain). */
-function remoteDeploySettleMs(settings) {
-  const raw = settings?.mqttParc?.bootDeployDelayMs;
-  if (raw === 0 || raw === '0') return 0;
-  const n = Number(raw);
-  return Number.isFinite(n) && n >= 0 ? n : 8000;
-}
 
 class ScanEngine {
   constructor(tagStore, driverManager, graphHistory) {
@@ -45,15 +33,13 @@ class ScanEngine {
     this._tickBusy = false;
     this._oneShotFired = new Set();
     this._programTrace = [];
-    this._projectName = undefined;
-    this._startPromise = null;
+    this._starting = null;
   }
 
   loadSettings() {
     const s = persistence.readJson('settings.json', {});
     this.scanMs = s.scanMs || 100;
     this.remoteExecution = s.remoteExecution === true;
-    this._projectName = s?.project?.name || s?.projectName || undefined;
     if (this.graphHistory && s.graphMaxPoints) this.graphHistory.setMaxPoints(s.graphMaxPoints);
     const tagList = this.tagStore.list();
     this._graphPens = normalizePens(s.graphPens, tagList);
@@ -63,12 +49,29 @@ class ScanEngine {
 
   _findRemoteDriver() {
     if (!this.remoteExecution) return null;
-    for (const cfg of this.driverManager.configs) {
-      if (cfg.enabled && (cfg.type === 'opta_remote' || cfg.type === 'mqtt_parc')) {
-        return this.driverManager.instances.get(cfg.id);
-      }
+    const candidates = this.driverManager.configs.filter(
+      (cfg) => cfg.enabled && (cfg.type === 'opta_remote' || cfg.type === 'mqtt_parc'),
+    );
+    if (!candidates.length) return null;
+    if (candidates.length === 1) {
+      return this.driverManager.instances.get(candidates[0].id);
     }
-    return null;
+    const { resolveParcRegistry } = require('../parc/deviceRegistry');
+    const registry = resolveParcRegistry();
+    const scoreDriver = (cfg) => {
+      let score = 0;
+      const deviceId = String(cfg.deviceId || cfg.id || '').trim();
+      const dev = deviceId ? registry.getDevice(deviceId) : null;
+      if (dev && !dev.stale && (dev.ageSec == null || dev.ageSec <= 120)) score += 20;
+      else if (dev) score += 5;
+      if (this.tagStore.list().some((t) => t.driverId === cfg.id)) score += 4;
+      if (cfg.ateccSerial) score += 3;
+      if (this.driverManager.instances.get(cfg.id)?.connected) score += 2;
+      if (deviceId === 'opta_st_01' || cfg.id === 'opta_st_01') score -= 3;
+      return score;
+    };
+    const ranked = [...candidates].sort((a, b) => scoreDriver(b) - scoreDriver(a));
+    return this.driverManager.instances.get(ranked[0].id);
   }
 
   loadProgram() {
@@ -84,6 +87,8 @@ class ScanEngine {
       this.errors = [];
       return { ok: true, errors: [] };
     }
+    const { ensureProgramTags } = require('../programs/ensureProgramTags');
+    ensureProgramTags(this.tagStore, src);
     const { ast, errors: parseErrs } = parseProgram(src);
     if (parseErrs.length) {
       this.ast = null;
@@ -102,125 +107,149 @@ class ScanEngine {
   }
 
   validate(source) {
+    const lineCheck = assessStProgramLines(source, { forParc: false });
     const { ast, errors: parseErrs } = parseProgram(source);
     if (parseErrs.length) return { ok: false, errors: parseErrs, ast: null };
     const errors = validateProgram(ast, this.tagStore.list().map((t) => t.id));
-    return { ok: errors.length === 0, errors, ast };
+    return { ok: errors.length === 0, errors, ast, lineCount: lineCheck };
   }
 
   async start() {
-    if (this._startPromise) return this._startPromise;
-    this._startPromise = this._startCore().finally(() => {
-      this._startPromise = null;
-    });
-    return this._startPromise;
+    if (this._starting) return this._starting;
+    if (this.running) {
+      if (this.paused) this.resume();
+      return;
+    }
+    this._starting = this._startInner();
+    try {
+      await this._starting;
+    } finally {
+      this._starting = null;
+    }
   }
 
-  async _startCore() {
-    const settings = this.loadSettings();
-    const remoteRedeploy = this.running && !this.paused && this.remoteExecution;
-    if (this.running) {
-      if (this.paused) {
-        this.resume();
-        return;
-      }
-      if (!remoteRedeploy) return;
+  _hasRemoteDriverConfigured() {
+    return this.driverManager.configs.some(
+      (cfg) => cfg.enabled && (cfg.type === 'opta_remote' || cfg.type === 'mqtt_parc'),
+    );
+  }
+
+  async _startLocalProgram() {
+    const r = this.loadProgram();
+    if (!r.ok) throw Object.assign(new Error('Program invalid'), { errors: r.errors });
+    await this.driverManager.rebuild({ connectDeferred: false });
+  }
+
+  async _tryStartRemoteExecution() {
+    let remote = this._findRemoteDriver();
+    if (!remote?.connected && !this.driverManager.hasConnectedRtu()) {
+      await this.driverManager.rebuild();
+      remote = this._findRemoteDriver();
     }
-    if (this.remoteExecution) {
-      let remote = this._findRemoteDriver();
-      if (!remote?.connected && !this.driverManager.hasConnectedRtu()) {
-        await this.driverManager.rebuild();
-        remote = this._findRemoteDriver();
-      }
-      if (!remote) {
-        throw Object.assign(
-          new Error(
-            'Remote is on but no mqtt_parc driver. Drivers → Apply template → Arduino Opta — MQTT Parc ST runtime, then Connect.',
-          ),
-          { errors: ['No enabled mqtt_parc driver for remote execution'] },
-        );
-      }
-      const health = await waitForParcCmdHealth(
-        {
-          deviceId: remote.cfg?.deviceId || remote.cfg?.id,
-          ateccSerial: remote.cfg?.ateccSerial,
-        },
-        { attempts: 6, retryDelayMs: 2000, timeoutMs: 10000 },
+    if (!remote) {
+      console.warn('[runtime] Remote is on but mqtt_parc driver is unavailable — running ST on PC');
+      return false;
+    }
+    const { ensureMqttHubConnected } = require('../parc/mqttParcBootstrap');
+    const hubReady = await ensureMqttHubConnected({ persist: false });
+    if (!hubReady.connected) {
+      console.warn(`[runtime] Remote start skipped (${hubReady.error || 'MQTT Parc hub not connected'}) — running ST on PC`);
+      return false;
+    }
+    if (!(await remote.ensureConnected?.())) {
+      const hint = remote._lastError || 'Cannot reach Opta via MQTT Parc';
+      console.warn(`[runtime] Remote start skipped (${hint}) — running ST on PC`);
+      return false;
+    }
+    const driverCfg = remote.cfg || {};
+    const { resolveParcDeviceId } = require('../parc/optaSerial');
+    const deviceId = resolveParcDeviceId(driverCfg);
+    const { waitForParcDeviceTelemetry, waitForParcCmdHealth } = require('../parc/waitForParcDevice');
+    const cmdHealth = await waitForParcCmdHealth(driverCfg, {
+      attempts: 5,
+      timeoutMs: 12000,
+      retryDelayMs: 2000,
+    });
+    if (!cmdHealth.ok) {
+      console.warn(`[runtime] Remote start skipped (${cmdHealth.error}) — running ST on PC`);
+      return false;
+    }
+    const seen = await waitForParcDeviceTelemetry(driverCfg, { timeoutMs: 8000, maxAgeSec: 120 });
+    if (!seen.ok) {
+      console.warn(`[parc-deploy] ${seen.error} — continuing (MQTT cmd link OK)`);
+    }
+    const activeRel = programStore.ensureActiveProgram();
+    const src = programStore.readActive();
+    const rel = activeRel || programStore.activeRel() || '(program)';
+    if (!src || !String(src).trim()) {
+      throw Object.assign(
+        new Error(
+          `No ST program to deploy (activeProgram=${rel || 'unset'}) — open and save ${rel || 'logic/24_motor_tpo_combined.st'} or fix workspace activeProgram`,
+        ),
+        { errors: [`activeProgram empty or missing file: ${rel || 'unset'}`] },
       );
-      if (!health.ok) {
-        throw Object.assign(new Error(health.error), { errors: [health.error] });
-      }
-      remote.connected = true;
-      remote._lastError = '';
-      const deployDelayMs = remoteDeploySettleMs(settings);
-      if (deployDelayMs > 0) {
-        console.log(`[parc-deploy] waiting ${deployDelayMs}ms for Opta cmd link settle`);
-        await sleep(deployDelayMs);
-      }
-      const skipCrcCheck = settings.mqttParc?.skipDeployWhenCrcMatches !== false;
-      if (skipCrcCheck) {
-        const telem = await waitForParcDeviceTelemetry(
-          {
-            deviceId: remote.cfg?.deviceId || remote.cfg?.id,
-            ateccSerial: remote.cfg?.ateccSerial,
-          },
-          { timeoutMs: 15000, maxAgeSec: 120 },
-        );
-        if (!telem.ok) {
-          console.warn(`[parc-deploy] telemetry probe: ${telem.error} — continuing with get_program CRC check`);
-        }
-      }
-      const src = programStore.readActive();
-      const rel = programStore.activeRel() || '(program)';
-      const deviceId = remote.cfg?.deviceId || remote.cfg?.id;
-      console.log(`[parc-deploy] ${rel} → device ${deviceId}`);
+    }
+    console.log(`[parc-deploy] ${rel} → device ${deviceId}`);
+    const { buildOptaProgramBody } = require('../parc/mqttOptaProgram');
+    const { resolveParcRegistry } = require('../parc/deviceRegistry');
+    const registry = resolveParcRegistry();
+    const built = buildOptaProgramBody(src, this.tagStore, remote.cfg?.id);
+    if (!built.ok) {
+      throw Object.assign(new Error(built.errors?.join('; ') || 'Program invalid'), {
+        errors: built.errors || [],
+      });
+    }
+    let deploySkipped = false;
+    if (remote.shouldSkipNvDeploy?.(built, deviceId)) {
+      deploySkipped = true;
+      console.log('[parc-deploy] skipped — Opta NV program CRC matches PC bytecode');
+    } else {
       const deploy = await remote.deployProgram(src, this.tagStore);
       if (!deploy.ok) {
-        const dev = registry.getDevice(deviceId);
-        const msg = deploy.errors?.join('; ') || 'Program deploy failed';
-        if (dev?.runtime?.programOk) {
-          console.warn(
-            `[parc-deploy] deploy failed (${msg}) — NV program still on ${deviceId}; starting runtime`,
-          );
-          try {
-            await remote.startRuntime();
-          } catch (startErr) {
-            throw Object.assign(new Error(`${msg}; runtime_start: ${startErr.message || startErr}`), {
-              errors: [...(deploy.errors || []), startErr.message || String(startErr)],
-            });
-          }
-        } else {
-          console.error(`[parc-deploy] FAILED (${deviceId}): ${msg}`);
-          throw Object.assign(new Error(msg), {
-            errors: deploy.errors || [],
-          });
-        }
-      } else if (deploy.skipped) {
-        console.log(`[parc-deploy] skipped download — ${deploy.reason || 'NV CRC match'}`);
-        if (deploy.needsRuntimeStart) {
-          console.log(`[parc-deploy] starting runtime on device ${deviceId}`);
-          await remote.startRuntime();
-        } else if (typeof remote.ensureRemoteSession === 'function') {
-          await remote.ensureRemoteSession({ deviceId });
+        console.warn(`[runtime] Remote deploy failed (${(deploy.errors || []).join('; ') || 'deploy failed'}) — running ST on PC`);
+        return false;
+      }
+    }
+    const devAfter = registry.getDevice(deviceId);
+    const alreadyRunning = devAfter?.runtime?.running === true;
+    if (deploySkipped && alreadyRunning) {
+      console.log('[parc-deploy] Opta already running ST from NV auto-run');
+    } else {
+      console.log('[parc-deploy] OK — starting runtime on device');
+      await remote.startRuntime();
+    }
+    this.ast = { type: 'program', body: [], remote: true };
+    this.errors = [];
+    this._programTrace = [];
+    return true;
+  }
+
+  async _startInner() {
+    this.loadSettings();
+    let startedRemote = false;
+    if (this.remoteExecution) {
+      if (this._hasRemoteDriverConfigured()) {
+        try {
+          startedRemote = await this._tryStartRemoteExecution();
+        } catch (e) {
+          if (e.errors?.some((x) => /activeProgram empty/i.test(String(x)))) throw e;
+          console.warn(`[runtime] Remote start failed (${e.message || e}) — running ST on PC`);
+          startedRemote = false;
         }
       } else {
-        console.log(`[parc-deploy] OK — starting runtime on device ${deviceId}`);
-        await remote.startRuntime();
+        console.warn(
+          '[runtime] Remote is on but no mqtt_parc driver — running ST on PC (Drivers → Apply Opta template for device deploy)',
+        );
       }
-      this.ast = { type: 'program', body: [], remote: true };
-      this.errors = [];
-      this._programTrace = [];
-    } else {
-      const r = this.loadProgram();
-      if (!r.ok) throw Object.assign(new Error('Program invalid'), { errors: r.errors });
     }
-    if (!this.running) {
-      this._oneShotFired = new Set();
-      this.running = true;
-      this.paused = false;
-      this._lastTick = Date.now();
-      this._schedule();
+    if (!startedRemote) {
+      await this._startLocalProgram();
     }
+    this._oneShotFired = new Set();
+    this.running = true;
+    this.paused = false;
+    this._lastTick = Date.now();
+    this._schedule();
   }
 
   pause() {
@@ -237,11 +266,12 @@ class ScanEngine {
     this._schedule();
   }
 
-  async stop() {
+  async stop(opts = {}) {
     this.running = false;
     this.paused = false;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    if (opts.keepRemote) return;
     const remote = this._findRemoteDriver();
     if (remote) {
       try { await remote.stopRuntime(); } catch { /* ignore */ }
@@ -265,42 +295,58 @@ class ScanEngine {
     this._lastTick = t0;
     try {
       const remote = this._findRemoteDriver();
-      let tagList = this.tagStore.list();
       if (remote && this.ast?.remote) {
         await remote.runScanCycle(this.tagStore);
+        await this.driverManager.readFieldbus();
+        await this.driverManager.readHostApi();
         this.tagStore.applyForcesAfterRead();
-        tagList = this.tagStore.list();
+        // ST logic runs on the Opta, but memory/output forces set on the PC (local
+        // tags not pushed to the Opta) must still be held so forcing tags to test
+        // HMI indications works in remote mode — mirror the local branch.
+        this.tagStore.applyForcesAfterLogic();
+        await this.driverManager.writeFieldbus();
       } else {
         await this.driverManager.readAll();
         this.tagStore.applyForcesAfterRead();
-        tagList = this.tagStore.list();
         if (this.ast && !this.ast.remote) {
           const trace = [];
           const ctx = createContext(this.tagStore, this._oneShotFired);
           execute(this.ast, ctx, trace);
           this._programTrace = trace;
         }
-        updateTimers(tagList, dt);
-        updateCounters(tagList);
-        updateFlowMeters(tagList);
-        updatePids(tagList, dt);
-        updateAverages(tagList);
-        updateAlternators(tagList);
+        updateTimers(this.tagStore.list(), dt);
+        updateCounters(this.tagStore.list());
+        updateFlowMeters(this.tagStore.list());
+        updateAlternators(this.tagStore.list());
+        updateReversingMotors(this.tagStore.list(), dt);
+        updatePids(this.tagStore.list(), dt);
+        for (const t of this.tagStore.list()) {
+          if (t.type === 'PID' && t.alarmsEnabled) this.tagStore._refreshAlarmLevel(t);
+        }
+        updateAverages(this.tagStore.list());
         this.tagStore.applyForcesAfterLogic();
+        try {
+          const { resolveParcRegistry } = require('../parc/deviceRegistry');
+          const { getMqttCentralHub } = require('../parc/mqttCentralHub');
+          const hub = getMqttCentralHub(resolveParcRegistry());
+          if (hub.isLive() && hub.resolveGlobalSiteKey()) {
+            hub.publishDirtyGlobalTags(this.tagStore);
+          }
+        } catch { /* global publish optional */ }
         await this.driverManager.writeAll();
       }
-      const archiveTags = tagList.filter(
+      const archiveTags = this.tagStore.list().filter(
         (t) => t.graphEnabled !== false && isGraphableTag(t),
       );
       if (this.graphHistory && archiveTags.length) {
         this.graphHistory.record(archiveTags);
       }
       if (this.running && !this.paused && archiveTags.length) {
-        const archivePens = pensFromEnabledTags(tagList, this._graphPens);
+        const archivePens = pensFromEnabledTags(this.tagStore.list(), this._graphPens);
         mongoTagLogger.logPenSamples({
           pens: archivePens,
-          tags: tagList,
-          runtime: { running: true, projectName: this._projectName },
+          tags: this.tagStore.list(),
+          runtime: { running: true, projectName: this.status().projectName },
         }).catch(() => {});
       }
     } catch (e) {
@@ -317,13 +363,21 @@ class ScanEngine {
   }
 
   buildProgramTrace() {
-    if (!this.ast || this.ast.remote) return [];
+    if (this.ast?.remote) {
+      if (this.running && !this.paused) {
+        const remote = this._findRemoteDriver();
+        return remote?.getProgramTrace?.() || [];
+      }
+      return [];
+    }
+    if (!this.ast) return [];
     if (this.running && !this.paused) return this._programTrace || [];
     const ctx = createContext(this.tagStore, new Set());
     return collectExpressionTrace(this.ast, ctx);
   }
 
   status() {
+    const settings = persistence.readJson('settings.json', {}) || {};
     const remoteDrv = this._findRemoteDriver();
     let remoteDriverId = null;
     let remoteConnected = false;
@@ -346,16 +400,23 @@ class ScanEngine {
       remoteDriverId,
       remoteConnected,
       remoteScanOnDevice: !!(remoteDrv && this.ast?.remote),
-      projectName: this._projectName,
+      localStExecution: !!(this.running && this.ast && !this.ast.remote),
+      remoteTracePending: !!(
+        remoteDrv
+        && this.ast?.remote
+        && this.running
+        && !this.paused
+        && remoteDrv.isTracePending?.()
+      ),
+      projectName: settings?.project?.name || settings?.projectName || undefined,
       programTrace: this.buildProgramTrace(),
     };
   }
 }
 
-function shouldAutoStartRuntime(settings, configs) {
+function shouldAutoStartRuntime(settings) {
   if (settings?.autoStartRuntime === false) return false;
-  if (settings?.autoStartRuntime === true) return true;
-  return (configs || []).some((c) => c.enabled !== false && c.type === 'nextcentury');
+  return settings?.autoStartRuntime === true;
 }
 
 module.exports = { ScanEngine, shouldAutoStartRuntime };

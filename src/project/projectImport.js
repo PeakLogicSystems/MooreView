@@ -3,12 +3,13 @@
 const persistence = require('../persistence');
 const projectStore = require('./projectStore');
 const { packArchive, isZipBuffer } = require('./projectArchive');
+const { pack } = require('./estFile');
 const { rememberLastOpenedProject } = require('./startupLoader');
 const PACKAGE_VERSION = require('../../package.json').version;
 
 async function finishProjectImport(raw, deps, out) {
   const projectName = String(
-    out.project?.project?.name || out.project?.name || 'project',
+    out.project?.name || out.project?.project?.name || 'project',
   ).trim() || 'project';
   const workspaceBuf = isZipBuffer(raw)
     ? raw
@@ -17,7 +18,8 @@ async function finishProjectImport(raw, deps, out) {
   await persistence.flushConfig();
   let savedProjectId = null;
   try {
-    const saved = projectStore.saveProjectArchive(projectName, workspaceBuf);
+    const doc = pack(deps, { name: projectName });
+    const saved = projectStore.saveProjectDoc(projectName, doc, deps);
     savedProjectId = saved.id;
     await rememberLastOpenedProject(saved.id, projectName);
   } catch (err) {

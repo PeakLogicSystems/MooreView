@@ -4,10 +4,24 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const { parseProgram } = require('../src/engine/parser');
 const { compileProgramBytecode, bytecodeToBase64 } = require('../src/engine/stBytecode');
-const { BC_MAGIC, OP, BUILTIN } = require('../src/engine/stOpcodes');
+const { BC_MAGIC } = require('../src/engine/stOpcodes');
 const { buildOptaProgramBody } = require('../src/parc/mqttOptaProgram');
 
 describe('stBytecode', () => {
+  it('compiles IF with ELSIF chain', () => {
+    const tagStore = {
+      list: () => [
+        { id: 'A', type: 'BOOL', role: 'input' },
+        { id: 'B', type: 'BOOL', role: 'input' },
+        { id: 'Y', type: 'BOOL', role: 'output' },
+      ],
+    };
+    const src = 'IF IsON(A) THEN TurnON(Y); ELSIF IsON(B) THEN TurnOFF(Y); END_IF;';
+    const built = buildOptaProgramBody(src, tagStore, 'opta_st_01');
+    assert.equal(built.ok, true);
+    assert.ok(built.body.bc);
+  });
+
   it('compiles minimal IF program', () => {
     const tagStore = {
       list: () => [
@@ -28,7 +42,7 @@ describe('stBytecode', () => {
     const { ast } = parseProgram('IF IsON(I1) THEN TurnON(R1); END_IF;');
     const tagIds = ['I1', 'R1'];
     const tags = [{ id: 'I1', type: 'BOOL' }, { id: 'R1', type: 'BOOL' }];
-    const buf = compileProgramBytecode(ast, tagIds, tags);
+    const { bytecode: buf } = compileProgramBytecode(ast, tagIds, tags);
     const tagCount = buf.readUInt16LE(6);
     assert.equal(tagCount, 2);
     let off = 10;
@@ -64,50 +78,26 @@ describe('stBytecode', () => {
     assert.ok(built.body.bc);
   });
 
-  it('encodes ALT tag metadata in bytecode header', () => {
-    const { ast } = parseProgram('AltEnable(ALT1, SYS_RUN);');
-    const tags = [{ id: 'ALT1', type: 'ALT', mode: 'ALT2', preset: 2 }, { id: 'SYS_RUN', type: 'BOOL' }];
-    const tagIds = ['ALT1', 'SYS_RUN'];
-    const buf = compileProgramBytecode(ast, tagIds, tags);
+  it('emits TRACE_PEEK ops and traceMap for IF program', () => {
+    const { ast } = parseProgram('IF IsON(I1) THEN TurnON(R1); ELSE TurnOFF(R1); END_IF;');
+    const tagIds = ['I1', 'R1'];
+    const tags = [{ id: 'I1', type: 'BOOL' }, { id: 'R1', type: 'BOOL' }];
+    const { bytecode, traceMap } = compileProgramBytecode(ast, tagIds, tags);
+    assert.ok(traceMap.length > 0);
+    assert.ok(traceMap.every((m) => m.k && m.s != null && m.e != null));
+    const { OP } = require('../src/engine/stOpcodes');
     let off = 10;
-    const nlen = buf.readUInt8(off++);
-    assert.equal(buf.slice(off, off + nlen).toString(), 'ALT1');
-    off += nlen;
-    assert.equal(buf.readUInt8(off++), 8);
-    const flags = buf.readUInt8(off++);
-    assert.equal(flags & 0x01, 0x01);
-    assert.equal(flags & 0x02, 0x02);
-    assert.equal(buf.readUInt32LE(off), 2);
-    off += 4;
-    assert.equal(buf.readUInt8(off), 8);
-  });
-
-  it('compiles INT tag comparisons via CounterValue (HOA hand branch)', () => {
-    const tags = [
-      { id: 'MOTOR1_HOA', type: 'INT', role: 'memory' },
-      { id: 'MOTOR1_RUN', type: 'BOOL', role: 'memory' },
-    ];
-    const tagIds = tags.map((t) => t.id);
-    const { ast } = parseProgram('IF MOTOR1_HOA = 2 THEN TurnON(MOTOR1_RUN); END_IF;');
-    const buf = compileProgramBytecode(ast, tagIds, tags);
-    const codeOff = 10 + tagIds.reduce((o, id) => {
-      const meta = tags.find((t) => t.id === id);
-      let extra = 2;
-      if (meta.preset != null) extra += 4;
-      return o + 1 + Buffer.byteLength(id) + extra;
-    }, 0);
-    const code = buf.slice(codeOff);
-    const hoaIdx = tagIds.indexOf('MOTOR1_HOA');
-    let found = false;
-    for (let i = 0; i < code.length - 6; i++) {
-      if (code[i] === OP.PUSH_TAG
-        && code.readUInt16LE(i + 1) === hoaIdx
-        && code[i + 3] === OP.CALL
-        && code[i + 4] === BUILTIN.CounterValue) {
-        found = true;
-        break;
-      }
+    const tagCount = bytecode.readUInt16LE(6);
+    for (let i = 0; i < tagCount; i++) {
+      const nlen = bytecode.readUInt8(off++);
+      off += nlen + 2;
     }
-    assert.equal(found, true, 'MOTOR1_HOA expr must CALL CounterValue, not push table index');
+    const codeEnd = off + bytecode.readUInt16LE(8);
+    let peekCount = 0;
+    for (let p = off; p < codeEnd; p++) {
+      if (bytecode[p] === OP.TRACE_PEEK) peekCount++;
+    }
+    assert.ok(peekCount > 0);
+    assert.equal(peekCount, traceMap.length);
   });
 });

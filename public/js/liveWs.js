@@ -10,6 +10,7 @@ window.MooreviewLiveWs = (function () {
   let onStatus = null;
   let connected = false;
   let reconnectMs = 1000;
+  let failCount = 0;
 
   function wsUrl() {
     const base = String(window.MOOREVIEW_API_BASE || '').trim().replace(/\/$/, '');
@@ -37,7 +38,12 @@ window.MooreviewLiveWs = (function () {
       reconnectTimer = null;
       connect();
     }, reconnectMs);
-    reconnectMs = Math.min(reconnectMs * 1.5, 15_000);
+    failCount += 1;
+    // Back off quickly so a missing WS upgrade does not spam the console.
+    // HTTP poll (refreshLive / getLive) stays the live path while disconnected.
+    reconnectMs = failCount >= 3
+      ? Math.min(reconnectMs * 2, 60_000)
+      : Math.min(reconnectMs * 1.5, 15_000);
   }
 
   function connect() {
@@ -54,6 +60,7 @@ window.MooreviewLiveWs = (function () {
 
     ws.addEventListener('open', () => {
       reconnectMs = 1000;
+      failCount = 0;
       setConnected(true);
     });
 
@@ -81,6 +88,7 @@ window.MooreviewLiveWs = (function () {
       reconnectTimer = null;
     }
     reconnectMs = 1000;
+    failCount = 0;
     if (ws) {
       ws.close();
       ws = null;

@@ -64,22 +64,12 @@ function positionIdForDevice(drivers, deviceId) {
   return drv?.id || null;
 }
 
-function enrichParcDevicesWithDriverLink(devices, drivers, opts = {}) {
-  const hubBrokerUrl = opts.hubBrokerUrl || '';
-  const { parcCmdPreflight } = require('./cmdFailureHint');
-  const { registry: reg } = require('./deviceRegistry');
-  return (devices || []).map((d) => {
-    const pre = hubBrokerUrl
-      ? parcCmdPreflight(d, { hubBrokerUrl, deviceId: d.deviceId, registry: reg, op: 'runtime_status' })
-      : null;
-    const cmdHint = pre && !pre.ok && d.runtime?.running !== true ? pre.error : '';
-    return {
-      ...d,
-      hasDriver: parcDeviceHasDriver(drivers, d.deviceId),
-      positionId: positionIdForDevice(drivers, d.deviceId),
-      cmdHint,
-    };
-  });
+function enrichParcDevicesWithDriverLink(devices, drivers) {
+  return (devices || []).map((d) => ({
+    ...d,
+    hasDriver: parcDeviceHasDriver(drivers, d.deviceId),
+    positionId: positionIdForDevice(drivers, d.deviceId),
+  }));
 }
 
 async function maybeAutoDiscoverDriver({

@@ -7,6 +7,7 @@ const {
   buildCloudCmmsAlarmPayload,
 } = require('./alarmMessages');
 const authService = require('../services/authService');
+const { resolveAlarmContext } = require('../alarms/alarmContext');
 const { getDb } = require('../db/mongo');
 const { isParcIngestMessage } = require('./ingestMessages');
 const { storeSlimTelemetry } = require('../ingest/storeSlimTelemetry');
@@ -35,11 +36,12 @@ async function handleAlarmTransition(message) {
     return;
   }
 
-  const recipients = await authService.listNotificationRecipients(tenantId, alarm.level);
+  const alarmContext = resolveAlarmContext(alarm, { tenantId });
+  const recipients = await authService.listNotificationRecipients(tenantId, alarm.level, alarmContext);
   if (recipients.length) {
     await sendQueueMessage(
       QUEUES.ALARM_NOTIFY,
-      buildAlarmNotifyJob(tenantId, alarm, recipients),
+      buildAlarmNotifyJob(tenantId, { ...alarm, ...alarmContext }, recipients),
       { subject: 'alarm:notify' },
     );
   }

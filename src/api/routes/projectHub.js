@@ -1,22 +1,19 @@
 'use strict';
 
-const express = require('express');
 const persistence = require('../../persistence');
 const projectStore = require('../../project/projectStore');
 const projectHubStore = require('../../project/projectHubStore');
 const projectHubCloudClient = require('../../project/projectHubCloudClient');
 const { adaptProjectForHost } = require('../../project/adaptProjectForHost');
-const { packArchive, applyArchive, applyImportBuffer, unpackArchive, isZipBuffer, archiveFilename } = require('../../project/projectArchive');
-const PACKAGE_VERSION = require('../../../package.json').version;
+const { pack, apply, exportFilename } = require('../../project/estFile');
 const { rememberLastOpenedProject } = require('../../project/startupLoader');
-const { finishProjectImport } = require('../../project/projectImport');
 
-async function deployArchiveBuffer(buf, deps, opts = {}) {
-  const unpacked = unpackArchive(buf);
-  const { doc: adapted, warnings: adaptWarnings } = adaptProjectForHost(unpacked.project);
-  const out = await applyArchive({ ...unpacked, project: adapted }, deps, opts);
+async function deployEstDoc(doc, deps, opts = {}) {
+  const { doc: adapted, warnings: adaptWarnings } = adaptProjectForHost(doc);
+  const out = await apply(adapted, deps, opts);
   const projectName = String(adapted.project?.name || adapted.settings?.project?.name || 'project').trim() || 'project';
-  persistence.writeBinary('workspace.est.zip', buf);
+  persistence.writeJson('project.est.json', out);
+  persistence.writeJson('workspace.est.json', out);
   await persistence.flushConfig();
   const importWarnings = [...(out.importWarnings || []), ...adaptWarnings];
   return {
@@ -48,10 +45,20 @@ function createProjectHubRoutes(deps) {
 
   router.get('/project-hub/catalog/:id/file', (req, res) => {
     try {
-      const { entry, buffer } = projectHubStore.loadArchiveBuffer(req.params.id);
-      res.setHeader('Content-Type', 'application/zip');
-      res.setHeader('Content-Disposition', `attachment; filename="${archiveFilename(entry.name)}"`);
-      res.send(buffer);
+      const { entry, doc } = projectHubStore.loadEstDoc(req.params.id);
+      const name = String(doc.project?.name || entry.name).trim() || entry.name;
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Disposition', `attachment; filename="${exportFilename(name)}"`);
+      res.send(JSON.stringify(doc, null, 2));
+    } catch (e) {
+      res.status(e.status || 400).json({ error: e.message || String(e) });
+    }
+  });
+
+  router.get('/project-hub/catalog/:id/est', (req, res) => {
+    try {
+      const { entry, doc } = projectHubStore.loadEstDoc(req.params.id);
+      res.json({ entry, doc });
     } catch (e) {
       res.status(e.status || 400).json({ error: e.message || String(e) });
     }
@@ -60,12 +67,12 @@ function createProjectHubRoutes(deps) {
   router.post('/project-hub/publish', async (req, res) => {
     try {
       const name = String(req.body?.name || req.body?.projectName || '').trim()
-        || String(persistence.readJson('settings.json', {})?.project?.name || 'project').trim()
+        || String(deps.persistence.readJson('settings.json', {})?.project?.name || 'project').trim()
         || 'project';
-      const buf = req.body?.archiveBase64
-        ? Buffer.from(String(req.body.archiveBase64), 'base64')
-        : packArchive(deps, { name, exportedBy: PACKAGE_VERSION });
-      const entry = projectHubStore.publishArchive(name, buf, {
+      const doc = req.body?.doc && typeof req.body.doc === 'object'
+        ? req.body.doc
+        : pack({ tagStore: deps.tagStore, driverManager: deps.driverManager, persistence: deps.persistence }, { name });
+      const entry = projectHubStore.publishDoc(name, doc, {
         description: req.body?.description,
         slug: req.body?.slug,
       });
@@ -78,12 +85,12 @@ function createProjectHubRoutes(deps) {
   router.post('/project-hub/cloud/publish', async (req, res) => {
     try {
       const name = String(req.body?.name || '').trim()
-        || String(persistence.readJson('settings.json', {})?.project?.name || 'project').trim()
+        || String(deps.persistence.readJson('settings.json', {})?.project?.name || 'project').trim()
         || 'project';
-      const buf = req.body?.archiveBase64
-        ? Buffer.from(String(req.body.archiveBase64), 'base64')
-        : packArchive(deps, { name, exportedBy: PACKAGE_VERSION });
-      const result = await projectHubCloudClient.publishToCloud(buf, {
+      const doc = req.body?.doc && typeof req.body.doc === 'object'
+        ? req.body.doc
+        : pack({ tagStore: deps.tagStore, driverManager: deps.driverManager, persistence: deps.persistence }, { name });
+      const result = await projectHubCloudClient.publishToCloud(doc, {
         name,
         description: req.body?.description,
       });
@@ -97,47 +104,37 @@ function createProjectHubRoutes(deps) {
     try {
       const source = String(req.body?.source || 'local').trim() || 'local';
       const id = String(req.body?.id || '').trim();
-      let buf;
 
-      if (req.body?.archiveBase64) {
-        buf = Buffer.from(String(req.body.archiveBase64), 'base64');
-      } else if (source === 'cloud') {
+      let doc;
+      if (source === 'cloud') {
         if (!id) return res.status(400).json({ error: 'Missing project id' });
-        buf = await projectHubCloudClient.fetchCloudArchive(id);
+        doc = await projectHubCloudClient.fetchCloudEst(id);
+      } else if (source === 'file') {
+        if (!req.body?.doc || typeof req.body.doc !== 'object') {
+          return res.status(400).json({ error: 'Missing doc for file deploy' });
+        }
+        doc = req.body.doc;
       } else {
         if (!id) return res.status(400).json({ error: 'Missing project id' });
-        ({ buffer: buf } = projectHubStore.loadArchiveBuffer(id));
+        ({ doc } = projectHubStore.loadEstDoc(id));
       }
 
-      if (!isZipBuffer(buf)) {
-        return res.status(400).json({ error: 'Expected a MooreVIEW project archive (.est.zip)' });
-      }
-      const result = await deployArchiveBuffer(buf, deps, { prunePrograms: false });
+      const result = await deployEstDoc(doc, deps, { prunePrograms: false });
       if (source === 'local') {
         try {
-          const saved = projectStore.saveProjectArchive(result.projectName, buf);
+          const saved = await projectStore.saveProjectDoc(
+            result.projectName,
+            pack(
+              { tagStore: deps.tagStore, driverManager: deps.driverManager, persistence: deps.persistence },
+              { name: result.projectName },
+            ),
+          );
           await rememberLastOpenedProject(saved.id, result.projectName);
           result.savedProjectId = saved.id;
         } catch (err) {
           console.warn('[project-hub] deploy saved locally but library save failed:', err.message);
         }
       }
-      res.json(result);
-    } catch (e) {
-      res.status(e.status || 400).json({ error: e.message || String(e) });
-    }
-  });
-
-  router.post('/project-hub/deploy/file', express.raw({
-    type: ['application/zip', 'application/json', 'application/octet-stream', 'application/x-zip-compressed', '*/*'],
-    limit: '64mb',
-  }), async (req, res) => {
-    try {
-      if (!Buffer.isBuffer(req.body) || !req.body.length) {
-        return res.status(400).json({ error: 'Expected a MooreVIEW project file (.est.zip or .est.json)' });
-      }
-      const out = await applyImportBuffer(req.body, deps, { prunePrograms: false });
-      const result = await finishProjectImport(req.body, deps, out);
       res.json(result);
     } catch (e) {
       res.status(e.status || 400).json({ error: e.message || String(e) });
@@ -156,4 +153,4 @@ function createProjectHubRoutes(deps) {
   return router;
 }
 
-module.exports = { createProjectHubRoutes, deployArchiveBuffer };
+module.exports = { createProjectHubRoutes, deployEstDoc };

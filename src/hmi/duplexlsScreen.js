@@ -54,9 +54,9 @@ function buildDuplexlsScreen(composites) {
 function needsDuplexlsUpgrade(hmi) {
   const screen = hmi?.screens?.find((s) => s.id === 'screen_2');
   if (!screen) return true;
-  if (String(screen.svg || '').trim()) return false;
   if (screen.inheritProjectLayout !== false) return true;
-  return screen.tiles?.[0]?.compositeId !== 'duplexls' || screen.name !== 'DUPLEXLS';
+  if (screen.tiles?.[0]?.compositeId !== 'duplexls') return true;
+  return screen.name !== 'DUPLEXLS';
 }
 
 function needsDuplex3dUpgrade(hmi) {

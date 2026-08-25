@@ -15,17 +15,21 @@ function sanitizeMqttJsonText(text) {
 
 /**
  * @param {string} text raw MQTT payload
- * @param {{ dropOnError?: boolean }} [opts]
- * @returns {object|null} parsed object, null when empty or when dropOnError and unparseable
+ * @returns {object|null} parsed object or null when empty
  */
-function parseMqttJson(text, opts = {}) {
-  const sanitized = sanitizeMqttJsonText(text);
-  if (!sanitized) return null;
+function parseMqttJson(text) {
+  const raw = String(text ?? '').trim();
+  if (!raw) return null;
   try {
-    return JSON.parse(sanitized);
-  } catch (err) {
-    if (opts.dropOnError) return null;
-    throw err;
+    return JSON.parse(raw);
+  } catch (firstErr) {
+    const sanitized = sanitizeMqttJsonText(raw);
+    if (sanitized === raw) throw firstErr;
+    try {
+      return JSON.parse(sanitized);
+    } catch {
+      throw firstErr;
+    }
   }
 }
 

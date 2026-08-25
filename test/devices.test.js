@@ -137,22 +137,6 @@ describe('devicePresets', () => {
     assert.equal(tags.length, 0);
   });
 
-  it('builds Opta leak + CT + thermistor demo template', () => {
-    const listed = listPresets().find((p) => p.id === 'arduino_opta_leak_demo');
-    assert.ok(listed, 'arduino_opta_leak_demo template');
-    const { driver, tags } = buildFromPreset('arduino_opta_leak_demo', { driverId: 'opta_mqtt_st' });
-    assert.equal(driver.type, 'mqtt_parc');
-    assert.equal(tags.find((t) => t.id === 'I1').driverAddress.channel, 'I1');
-    assert.equal(tags.find((t) => t.id === 'I2_RAW').scale, 0.4887);
-    assert.equal(tags.find((t) => t.id === 'H2').value, 280);
-    assert.equal(tags.find((t) => t.id === 'I1_RAW').driverAddress.channel, 'I1_RAW');
-    assert.equal(tags.find((t) => t.id === 'MOIST_PCT').role, 'memory');
-    assert.equal(tags.find((t) => t.id === 'H_MOIST_RAW').value, 70);
-    assert.equal(tags.find((t) => t.id === 'H_SUB_RAW').value, 700);
-    assert.equal(tags.find((t) => t.id === 'SUBMERGED_ALM').type, 'BOOL');
-    assert.equal(tags.length, 22);
-  });
-
   it('lists EdgePoint Industrial MQTT template', () => {
     const listed = listPresets().find((p) => p.id === 'edgepoint_industrial');
     assert.ok(listed);
@@ -170,12 +154,10 @@ describe('devicePresets', () => {
     assert.equal(tags.find((t) => t.id === 'NC_STATUS_DEVICES').driverAddress.field, '_deviceCount');
   });
 
-  it('builds EZ Meter DDS-RGB 2.025 holding register map (data + control)', () => {
-    const { ALL_REGISTERS } = require('../src/facilities/ezmeterRegisterMap');
+  it('builds EZ Meter DDS-RGB 2.025 holding register map', () => {
     const listed = listPresets().find((p) => p.id === 'ezmeter_dds_rgb_2025');
     assert.ok(listed);
     assert.equal(listed.sharedBus, false);
-    assert.match(listed.label, /full map/i);
     const { driver, tags } = buildFromPreset('ezmeter_dds_rgb_2025', { serialPort: 'COM8', slaveId: 3 });
     assert.equal(driver.id, 'dds_rgb');
     assert.equal(driver.type, 'modbus_rtu');
@@ -186,8 +168,7 @@ describe('devicePresets', () => {
     assert.equal(tags.find((t) => t.id === 'DDS_W_A').wordWidth, 32);
     assert.equal(tags.find((t) => t.id === 'DDS_W_A').signed, true);
     assert.equal(tags.find((t) => t.id === 'DDS_WH_SUM_IMP').driverAddress.address, 16);
-    assert.equal(tags.find((t) => t.id === 'DDS_CTL_SER_NO').driverAddress.address, 1011);
-    assert.equal(tags.length, ALL_REGISTERS.length);
+    assert.equal(tags.length, 28);
   });
 
   it('builds Icon ProCon IS-750 ion sensor holding register map', () => {
@@ -251,75 +232,6 @@ describe('devicePresets', () => {
     assert.equal(tags.find((t) => t.id === 'DO3500_TEMP_C').scale, 0.1);
     assert.equal(tags.find((t) => t.id === 'DO3500_SAT_PCT').driverAddress.address, 2);
     assert.equal(tags.find((t) => t.id === 'DO3500_CAL_STATUS').driverAddress.address, 13);
-    assert.equal(tags.length, 8);
-  });
-
-  it('builds Waveshare ESP32-S3-Relay-1CH-U Parc template', () => {
-    const listed = listPresets().find((p) => p.id === 'waveshare_esp32s3_relay_1ch_u');
-    assert.ok(listed, 'waveshare_esp32s3_relay_1ch_u template');
-    assert.equal(listed.transport, 'mqtt_parc');
-    assert.equal(listed.doCount, 1);
-    assert.equal(listed.diCount, 1);
-    const { driver, tags } = buildFromPreset('waveshare_esp32s3_relay_1ch_u', {
-      deviceId: 'ws_relay_acid',
-      driverId: 'ws_relay_acid',
-    });
-    assert.equal(driver.type, 'mqtt_parc');
-    assert.equal(driver.deviceId, 'ws_relay_acid');
-    assert.equal(driver.platform, 'waveshare-esp32s3-relay-1ch');
-    assert.equal(driver.remoteExecution, false);
-    assert.equal(tags.find((t) => t.id === 'R1').driverAddress.channel, 'R1');
-    assert.equal(tags.find((t) => t.id === 'I1').role, 'input');
-    assert.equal(tags.length, 2);
-  });
-
-  it('builds DFRobot Edge101 Parc template', () => {
-    const listed = listPresets().find((p) => p.id === 'dfrobot_edge101_parc');
-    assert.ok(listed, 'dfrobot_edge101_parc template');
-    assert.equal(listed.transport, 'mqtt_parc');
-    assert.equal(listed.vendor, 'DFRobot');
-    const { driver, tags } = buildFromPreset('dfrobot_edge101_parc', {
-      deviceId: 'edge101_pad',
-      driverId: 'edge101_pad',
-    });
-    assert.equal(driver.type, 'mqtt_parc');
-    assert.equal(driver.deviceId, 'edge101_pad');
-    assert.equal(driver.platform, 'dfrobot-edge101');
-    assert.equal(driver.remoteExecution, false);
-    assert.equal(tags.find((t) => t.id === 'PH_AI').type, 'REAL');
-    assert.equal(tags.find((t) => t.id === 'ORP_AI').driverAddress.channel, 'ORP_AI');
-    assert.equal(tags.find((t) => t.id === 'I1').role, 'input');
-    assert.equal(tags.find((t) => t.id === 'CHEM_OK').type, 'BOOL');
-    assert.equal(tags.length, 8);
-  });
-
-  it('lists Pentair IntelliValve ×4 shared-bus template', () => {
-    const listed = listPresets().find((p) => p.id === 'pentair_intellivalves_4');
-    assert.ok(listed, 'pentair_intellivalves_4 template');
-    assert.equal(listed.transport, 'pentair_rs485');
-    assert.equal(listed.sharedBus, true);
-    const { driver, tags } = buildFromPreset('pentair_intellivalves_4', { driverId: 'pentair_bus' });
-    assert.equal(driver.type, 'pentair_rs485');
-    assert.equal(driver.id, 'pentair_bus');
-    const iv1 = tags.find((t) => t.id === 'IV1_CMD');
-    const bw = tags.find((t) => t.id === 'BW_VLV1_CMD');
-    assert.equal(iv1.driverAddress.deviceClass, 'intellivalve');
-    assert.equal(iv1.driverAddress.deviceAddr, 12);
-    assert.equal(bw.driverAddress.deviceAddr, 15);
-    assert.equal(tags.length, 12);
-  });
-
-  it('lists Res-Pool-Link ESP32 4-valve template', () => {
-    const listed = listPresets().find((p) => p.id === 'esp32_res_pool_valves');
-    assert.ok(listed, 'esp32_res_pool_valves template');
-    assert.equal(listed.transport, 'mqtt_parc');
-    const { driver, tags } = buildFromPreset('esp32_res_pool_valves', { driverId: 'res_pool_valves' });
-    assert.equal(driver.type, 'mqtt_parc');
-    assert.equal(driver.platform, 'esp32-res-pool-link');
-    assert.equal(driver.remoteExecution, false);
-    assert.equal(tags.find((t) => t.id === 'FILT_INLET').driverAddress.channel, 'R1');
-    assert.equal(tags.find((t) => t.id === 'BW_WASTE').driverAddress.channel, 'R3');
-    assert.equal(tags.find((t) => t.id === 'BW_SPARE').driverAddress.channel, 'R4');
     assert.equal(tags.length, 8);
   });
 });

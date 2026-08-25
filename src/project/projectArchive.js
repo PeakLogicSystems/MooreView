@@ -20,7 +20,8 @@ function sha256(buf) {
 }
 
 function archiveFilename(name) {
-  return exportFilename(name);
+  const base = String(name || 'project').trim().replace(/[^\w.-]+/g, '_').replace(/^\.+/, '') || 'project';
+  return `${base}${ZIP_EXT}`;
 }
 
 function isZipBuffer(buf) {
@@ -273,15 +274,26 @@ function unpackArchive(buf) {
     throw Object.assign(new Error(`Invalid project archive: ${e.message || e}`), { status: 400 });
   }
 
-  const manifest = parseJsonMember(files, 'manifest.json');
+  const project = parseJsonMember(files, 'project.json');
+  let manifest = parseJsonMember(files, 'manifest.json');
+  // Older ensure-bundled / export zips omitted format/version — accept if project.json is EST.
+  if ((!manifest || !manifest.format) && project?.format === EST_FORMAT) {
+    manifest = {
+      format: ARCHIVE_FORMAT,
+      version: ARCHIVE_VERSION,
+      projectName: project.project?.name || manifest?.projectName || 'project',
+      exportedAt: project.savedAt || manifest?.exportedAt || null,
+      exportedBy: manifest?.exportedBy || null,
+      members: manifest?.members || Object.keys(files),
+    };
+  }
   if (!manifest || manifest.format !== ARCHIVE_FORMAT) {
     throw Object.assign(new Error(`Expected archive format "${ARCHIVE_FORMAT}"`), { status: 400 });
   }
-  if (manifest.version !== ARCHIVE_VERSION) {
+  if (manifest.version != null && Number(manifest.version) !== ARCHIVE_VERSION) {
     throw Object.assign(new Error(`Unsupported archive version ${manifest.version}`), { status: 400 });
   }
 
-  const project = parseJsonMember(files, 'project.json');
   const programsManifest = parseJsonMember(files, 'programs/manifest.json', { active: '', files: [] });
   const hostHints = parseJsonMember(files, 'meta/host-hints.json', null);
   const parc = parseJsonMember(files, 'parc.json', null);

@@ -5,7 +5,6 @@ const {
   buildEzMeterDriver,
   liveAnalogRegisterCount,
 } = require('./ezmeterRegisterMap');
-const { buildEzMeterThdTagDefs } = require('./ezmeterThd');
 
 const EZMETER_DRIVER_ID = 'dds_rgb';
 const EZMETER_PRESET_ID = 'ezmeter_dds_rgb_2025';
@@ -41,47 +40,7 @@ function pqThresholds(assistedLiving) {
     freqMaxHz: Number(ez.freqMaxHz) || DEFAULT_FREQ_MAX_HZ,
     vImbalPct: Number(ez.vImbalancePct) || DEFAULT_V_IMBAL_PCT,
     loadedIA: Number(ez.loadedCurrentA) || DEFAULT_LOADED_I_A,
-    thdAlarmPct: Number(ez.thdAlarmPct) || undefined,
   };
-}
-
-/** PQ thresholds from mqttParc.ezMeter with assistedLiving.ezMeter fallback. */
-function mqttParcEzMeterThresholds(settings = {}) {
-  const mp = settings?.mqttParc?.ezMeter || {};
-  const al = settings?.assistedLiving || {};
-  const merged = { ...al, ezMeter: { ...(al.ezMeter || {}), ...mp } };
-  return pqThresholds(merged);
-}
-
-function setTagReal(tagStore, tagId, value) {
-  if (tagStore.get(tagId)) tagStore.setValue(tagId, Number(value));
-}
-
-/** Push MECH_PQ_CFG_* memory tags from cloud settings (lift station + EZ Meter PQ). */
-function syncEzMeterThresholdTags(tagStore, settings, opts = {}) {
-  if (!tagStore || typeof tagStore.list !== 'function') return { changed: false };
-  const tagIds = new Set(tagStore.list().map((t) => t.id));
-  if (!tagIds.has('MECH_PQ_CFG_UV_V')) return { changed: false };
-
-  const th = mqttParcEzMeterThresholds(settings);
-  setTagReal(tagStore, 'MECH_PQ_CFG_NOM_V', th.nominalV);
-  setTagReal(tagStore, 'MECH_PQ_CFG_UV_V', th.undervoltV);
-  setTagReal(tagStore, 'MECH_PQ_CFG_OV_V', th.overvoltV);
-  setTagReal(tagStore, 'MECH_PQ_CFG_LOW_PF', th.lowPf);
-  setTagReal(tagStore, 'MECH_PQ_CFG_FREQ_MIN', th.freqMinHz);
-  setTagReal(tagStore, 'MECH_PQ_CFG_FREQ_MAX', th.freqMaxHz);
-  setTagReal(tagStore, 'MECH_PQ_CFG_IMBAL_PCT', th.vImbalPct);
-  setTagReal(tagStore, 'MECH_PQ_CFG_LOAD_I', th.loadedIA);
-  if (th.thdAlarmPct != null && tagIds.has('MECH_PQ_CFG_THD_PCT')) {
-    setTagReal(tagStore, 'MECH_PQ_CFG_THD_PCT', th.thdAlarmPct);
-  }
-
-  const push = opts.pushRemote && typeof opts.scheduleRemoteTagForce === 'function';
-  if (push) {
-    const uv = tagStore.get('MECH_PQ_CFG_UV_V');
-    if (uv) opts.scheduleRemoteTagForce(uv);
-  }
-  return { changed: true, undervoltV: th.undervoltV };
 }
 
 /**
@@ -143,7 +102,6 @@ function buildEzMeterPqDerivedTagDefs(thresholds = pqThresholds()) {
     { id: 'MECH_PQ_CFG_FREQ_MAX', label: 'PQ max frequency Hz', type: 'REAL', role: 'memory', default: t.freqMaxHz },
     { id: 'MECH_PQ_CFG_IMBAL_PCT', label: 'PQ max voltage imbalance %', type: 'REAL', role: 'memory', default: t.vImbalPct },
     { id: 'MECH_PQ_CFG_LOAD_I', label: 'PQ loaded current threshold A', type: 'REAL', role: 'memory', default: t.loadedIA },
-    ...buildEzMeterThdTagDefs(t),
   ];
 }
 
@@ -246,8 +204,6 @@ module.exports = {
   defaultEzMeterDriverId,
   isEzMeterFacility,
   pqThresholds,
-  mqttParcEzMeterThresholds,
-  syncEzMeterThresholdTags,
   defaultEzMeterSemanticMap,
   mergedEzMeterSemanticMap,
   buildEzMeterPqDerivedTagDefs,

@@ -9,7 +9,7 @@ describe('projectConfigPrint', () => {
   it('buildHtml includes project sections for documentation', () => {
     const html = buildHtml({
       projectName: 'demo_plant',
-      appVersion: '2.3.7',
+      appVersion: '2.3.8',
       printedAt: '2026-07-22T12:00:00.000Z',
       settings: {
         scanMs: 100,

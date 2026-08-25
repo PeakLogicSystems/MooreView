@@ -9,16 +9,20 @@ const mongoTagLogger = require('../../logger/mongoTagLogger');
 const hardwareHistoryStore = require('../../hardware/hardwareHistoryStore');
 const mongoSysLog = require('../../logger/mongoSysLog');
 const { normalizePdmSettings } = require('../../settings/pdmSettings');
-const { normalizeInferenceSettings } = require('../../settings/inferenceSettings');
-const { normalizeMongoLogger } = require('../../settings/mongoLoggerSettings');
+const { normalizeMongoLogger, resolveMongoLoggerForDeployment } = require('../../settings/mongoLoggerSettings');
+const { DEPLOYMENT_MODE } = require('../../config');
 const { normalizeStartup } = require('../../settings/startupSettings');
 const { normalizeReportConfig } = require('../../reports/reportConfig');
 const { normalizeCmmsIntegration } = require('../../settings/cmmsIntegrationSettings');
-const { normalizeCmmsSettings } = require('../../settings/cmmsSettings');
 const { reloadConfig: reloadCmmsPublisher } = require('../../integrations/cmmsAlarmPublisher');
 const { registry } = require('../../parc/deviceRegistry');
 const { getMqttCentralHub } = require('../../parc/mqttCentralHub');
-const { defaultMqttParcSettings, mqttParcHubConnectionKey } = require('../../parc/mqttParcBootstrap');
+const {
+  defaultMqttParcSettings,
+  mqttParcHubConnectionKey,
+  applyCloudMqttParcEnv,
+  tenantMqttParcMayReloadHub,
+} = require('../../parc/mqttParcBootstrap');
 const { normalizeSiteKey } = require('../../parc/globalAddressKey');
 const { normalizeCloudRemote } = require('../../settings/cloudRemoteSettings');
 const { reloadConfig: reloadCloudRemote } = require('../../integrations/applianceCloudRelay');
@@ -26,9 +30,8 @@ const { normalizeCellularSimsSettings } = require('../../cellular/cellularSettin
 const { normalizeCloudSimsSettings } = require('../../cloud/cloudSettings');
 const { normalizeRoiSettings } = require('../../settings/roiSettings');
 const { normalizeAssistedLiving, syncAssistedLivingTags } = require('../../settings/assistedLivingSettings');
-const { syncEzMeterThresholdTags } = require('../../facilities/ezmeterPq');
-const { scheduleRemoteTagForce } = require('../pushRemoteTagForce');
-const { stripLegacyProjectHwDefaults } = require('../../settings/portableSettings');
+const { normalizeTimezone, readTimezoneFromSettings } = require('../../settings/timezoneSettings');
+const { setConsoleTimezone } = require('../../logger/consoleTimestamp');
 const simManager = require('../../cloud/simManager');
 const { isCloudSimsEnabled } = require('../../cloud/cloudSimsEnabled');
 
@@ -39,7 +42,7 @@ function createSettingsRoutes(deps) {
   const router = require('express').Router();
 
   router.put('/settings', async (req, res) => {
-    const prev = stripLegacyProjectHwDefaults(persistence.readJson('settings.json', {}));
+    const prev = persistence.readJson('settings.json', {});
     const tagList = tagStore.list();
     const graphPens = req.body.graphPens != null
       ? normalizePens(req.body.graphPens, tagList)
@@ -53,11 +56,30 @@ function createSettingsRoutes(deps) {
     if (req.body.project) next.project = { ...(prev.project || {}), ...req.body.project };
     if (req.body.scanMs != null) next.scanMs = +req.body.scanMs;
     if (req.body.graphMaxPoints != null) next.graphMaxPoints = +req.body.graphMaxPoints;
+    if (req.body.defaults && typeof req.body.defaults === 'object') {
+      next.defaults = { ...(prev.defaults || {}), ...req.body.defaults };
+    }
     if (Object.prototype.hasOwnProperty.call(req.body, 'mongoLogger')) {
-      const ml = normalizeMongoLogger(req.body.mongoLogger, prev);
+      const normalized = normalizeMongoLogger(req.body.mongoLogger, prev);
+      const ml = resolveMongoLoggerForDeployment(normalized, DEPLOYMENT_MODE);
       next.mongoLogger = ml;
-      const { applyMongoLoggerConfig } = require('../../logger/mongoServicesInit');
-      await applyMongoLoggerConfig(ml, prev);
+      if (ml.uri) {
+        await mongoTagLogger.setConfig(ml);
+        await hardwareHistoryStore.setConfig(ml);
+        await mongoSysLog.setConfig(ml);
+      } else {
+        const envMl = resolveMongoLoggerForDeployment({}, DEPLOYMENT_MODE);
+        if (envMl.uri) {
+          next.mongoLogger = envMl;
+          await mongoTagLogger.setConfig(envMl);
+          await hardwareHistoryStore.setConfig(envMl);
+          await mongoSysLog.setConfig(envMl);
+        } else {
+          await mongoTagLogger.clearConfig();
+          await hardwareHistoryStore.setConfig(null);
+          await mongoSysLog.setConfig(null);
+        }
+      }
     }
     if (Object.prototype.hasOwnProperty.call(req.body, 'autoStartRuntime')) {
       next.autoStartRuntime = req.body.autoStartRuntime !== false;
@@ -78,9 +100,6 @@ function createSettingsRoutes(deps) {
     }
     if (Object.prototype.hasOwnProperty.call(req.body, 'pdm')) {
       next.pdm = normalizePdmSettings(req.body.pdm, prev);
-    }
-    if (Object.prototype.hasOwnProperty.call(req.body, 'inference')) {
-      next.inference = normalizeInferenceSettings(req.body.inference, prev);
     }
     if (Object.prototype.hasOwnProperty.call(req.body, 'roi')) {
       next.roi = normalizeRoiSettings(req.body.roi, prev);
@@ -109,19 +128,13 @@ function createSettingsRoutes(deps) {
           next.mqttParc.globalSiteKey = defaultMqttParcSettings(prev.mqttParc || {}).globalSiteKey;
         }
       }
-      if (Object.prototype.hasOwnProperty.call(patch, 'ezMeter') && patch.ezMeter && typeof patch.ezMeter === 'object') {
-        next.mqttParc.ezMeter = {
-          ...defaultMqttParcSettings(prev.mqttParc || {}).ezMeter,
-          ...(prev.mqttParc?.ezMeter || {}),
-          ...patch.ezMeter,
-        };
+      if (DEPLOYMENT_MODE === 'cloud') {
+        const pinned = applyCloudMqttParcEnv({ mqttParc: next.mqttParc });
+        next.mqttParc = pinned.settings.mqttParc;
       }
     }
     if (Object.prototype.hasOwnProperty.call(req.body, 'cmmsIntegration')) {
       next.cmmsIntegration = normalizeCmmsIntegration(req.body.cmmsIntegration, prev.cmmsIntegration);
-    }
-    if (Object.prototype.hasOwnProperty.call(req.body, 'cmms')) {
-      next.cmms = normalizeCmmsSettings(req.body.cmms, prev);
     }
     if (Object.prototype.hasOwnProperty.call(req.body, 'cloudRemote')) {
       next.cloudRemote = normalizeCloudRemote(req.body.cloudRemote, prev.cloudRemote);
@@ -136,19 +149,39 @@ function createSettingsRoutes(deps) {
     if (Object.prototype.hasOwnProperty.call(req.body, 'assistedLiving')) {
       next.assistedLiving = normalizeAssistedLiving(req.body.assistedLiving, prev.assistedLiving);
     }
-    persistence.writeJson('settings.json', stripLegacyProjectHwDefaults(next));
+    const prevTimezone = readTimezoneFromSettings(prev);
+    if (Object.prototype.hasOwnProperty.call(req.body, 'timezone')) {
+      next.timezone = normalizeTimezone(req.body.timezone, prev.timezone);
+    } else {
+      next.timezone = prevTimezone;
+    }
+    persistence.writeJson('settings.json', next);
     await persistence.flushConfig();
     syncAssistedLivingTags(tagStore, next.assistedLiving);
-    syncEzMeterThresholdTags(tagStore, next, {
-      pushRemote: req.body.mqttParc !== undefined && !!driverManager,
-      scheduleRemoteTagForce: (tag) => scheduleRemoteTagForce(tagStore, driverManager, scanEngine, tag),
-    });
     if (req.body.mqttParc !== undefined) {
-      const prevKey = mqttParcHubConnectionKey(prev.mqttParc);
-      const nextKey = mqttParcHubConnectionKey(next.mqttParc);
-      if (prevKey !== nextKey) {
-        await getMqttCentralHub(registry).reload(next.mqttParc).catch((e) => {
-          console.warn('[mqtt-parc] hub reload:', e.message || e);
+      if (tenantMqttParcMayReloadHub()) {
+        const prevKey = mqttParcHubConnectionKey(prev.mqttParc);
+        const nextKey = mqttParcHubConnectionKey(next.mqttParc);
+        if (prevKey !== nextKey) {
+          await getMqttCentralHub(registry).reload(next.mqttParc).catch((e) => {
+            console.warn('[mqtt-parc] hub reload:', e.message || e);
+          });
+        }
+      } else {
+        try {
+          const { bootstrapCloudParcMqttHub } = require('../../parc/cloudParcHubBoot');
+          const hubBoot = await bootstrapCloudParcMqttHub(registry);
+          if (hubBoot.error) {
+            console.warn('[mqtt-parc] cloud hub ensure after settings:', hubBoot.error);
+          }
+        } catch (e) {
+          console.warn('[mqtt-parc] cloud hub ensure after settings:', e.message || e);
+        }
+      }
+      if (next.mqttParc?.enabled === true && driverManager) {
+        const { ensureParcDriversFromRegistry } = require('../../parc/parcDriverSync');
+        await ensureParcDriversFromRegistry({ driverManager, registry, tagStore }).catch((e) => {
+          console.warn('[mqtt-parc] registry driver sync:', e.message || e);
         });
       }
     }
@@ -161,6 +194,13 @@ function createSettingsRoutes(deps) {
     if (Object.prototype.hasOwnProperty.call(req.body, 'cloudSims') && !prevCloudSimsEnabled && isCloudSimsEnabled()) {
       await simManager.init().catch((e) => {
         console.warn('[cloud-sims] init after settings enable:', e.message || e);
+      });
+    }
+    setConsoleTimezone(next.timezone);
+    if (next.timezone !== prevTimezone && driverManager) {
+      const { syncOptaClocks } = require('../../parc/mqttOptaTimeSync');
+      syncOptaClocks(driverManager).catch((e) => {
+        console.warn('[timezone] Opta re-sync after timezone change:', e.message || e);
       });
     }
     scanEngine.loadSettings();

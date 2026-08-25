@@ -8,7 +8,7 @@
  * Architecture (single UART / transceiver):
  *   - Modbus RTU master OR Pentair proprietary stack — one role at a time on the wire.
  *   - Modbus RTU slave (PC polls Opta) cannot run concurrently on the same port as master.
- *   - Preferred: MooreviewOptaMqttSt polls Pentair/Modbus slaves and publishes tags via MQTT Parc.
+ *   - Preferred: PC USB–RS485 masters field devices; Opta publishes ST + I/O via MQTT Parc.
  *
  * Enable with MV_FIELDBUS=1 in build flags (stub in v2.3.49+).
  */

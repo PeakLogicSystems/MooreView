@@ -47,7 +47,7 @@ function generateMotorStartSimDocs({
   projectName = 'motor_start_sim',
   now = Date.now(),
 }) {
-  const dayCount = Math.min(Math.max(Number(days) || 90, 7), 360);
+  const dayCount = Math.min(Math.max(Number(days) || 90, 7), 180);
   const rate = Math.min(Math.max(Number(startsPerDay) || 3, 1), 12);
   const endMs = now;
   const startMs = endMs - dayCount * DAY_MS;

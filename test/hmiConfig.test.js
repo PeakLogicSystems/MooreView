@@ -12,6 +12,10 @@ const {
   reindexHmiScreens,
   HMI_MAX_LAYERS,
   HMI_OBJ_KINDS,
+  MAX_SCREENS,
+  MAX_ROOM_NUM,
+  normalizeRoomPopup,
+  normalizeRoomNum,
 } = require('../src/hmi/hmiConfig');
 const { listHmiComposites } = require('../src/hmi/hmiComposites');
 
@@ -63,18 +67,6 @@ describe('hmiConfig', () => {
     assert.equal(screens[1].id, 'screen_2');
     assert.equal(bindings[0].screenId, 'screen_1');
     assert.equal(bindings[1].screenId, 'screen_2');
-  });
-
-  it('reindexHmiScreens supports more than 16 screens', () => {
-    const screensIn = Array.from({ length: 20 }, (_, i) => ({
-      id: `legacy_${i + 1}`,
-      name: `Page ${i + 1}`,
-      svg: '/a.svg',
-    }));
-    const { screens } = reindexHmiScreens(screensIn, [], 'legacy_18');
-    assert.equal(screens.length, 20);
-    assert.equal(screens[16].id, 'screen_17');
-    assert.equal(screens[19].id, 'screen_20');
   });
 
   it('defaultDemoHmi includes demo screens and DI1/Q1 bindings', () => {
@@ -732,6 +724,212 @@ describe('hmiConfig', () => {
     assert.equal(offlineLabel?.offValue, 'ONLINE');
   });
 
+  it('listHmiComposites includes pool faceplate composites', () => {
+    const publicRoot = path.join(__dirname, '..', 'public');
+    const composites = listHmiComposites(publicRoot);
+    const overview = composites.find((c) => c.composite?.id === 'pool_overview');
+    assert.ok(overview, 'pool_overview composite');
+    assert.match(overview.composite.preview, /pool_overview\.svg$/);
+    assert.match(overview.composite.parts[0].svg, /pool_overview\.svg$/);
+    const orpSp = overview.composite.defaultBindings.find((b) => b.elementId === 'orp_sp_value');
+    assert.equal(orpSp?.interaction, 'edit');
+    assert.equal(orpSp?.format, 'fixed1');
+    const bwSta = overview.composite.defaultBindings.find((b) => b.elementId === 'bw_state');
+    assert.equal(bwSta?.format, 'poolBwSta');
+    assert.equal(bwSta?.tagRole, 'bwSta');
+
+    const pump = composites.find((c) => c.composite?.id === 'pool_pump');
+    assert.ok(pump, 'pool_pump composite');
+    assert.equal(pump.composite.tagRoles?.pumpSpeed?.tagId, 'PUMP_SPEED');
+
+    const chem = composites.find((c) => c.composite?.id === 'pool_chemistry');
+    assert.ok(chem, 'pool_chemistry composite');
+    const phAuto = chem.composite.defaultBindings.find((b) => b.elementId === 'btn_ph_auto');
+    assert.equal(phAuto?.tagRole, 'phAuto');
+    assert.equal(phAuto?.interaction, 'toggle');
+
+    const bw = composites.find((c) => c.composite?.id === 'pool_backwash');
+    assert.ok(bw, 'pool_backwash composite');
+    const bwTimer = bw.composite.defaultBindings.find((b) => b.elementId === 'bw_timer');
+    assert.equal(bwTimer?.tagField, 'elapsed');
+    assert.equal(bwTimer?.tagRole, 'tmrBw');
+  });
+
+  it('normalizeHmi preserves pool_overview compositeId on faceplate tile', () => {
+    const hmi = normalizeHmi({
+      activeScreen: 's1',
+      screens: [{
+        id: 's1',
+        name: 'Pool',
+        svg: '/hmi/svg/demos/demo_process.svg',
+        tiles: [{
+          col: 0,
+          row: 0,
+          colSpan: 5,
+          rowSpan: 5,
+          compositeId: 'pool_overview',
+          layers: [{
+            kind: 'staticImage',
+            z: 0,
+            svg: '/hmi/svg/library/pool-faceplates/mooreview/pool_controller.svg',
+          }],
+        }],
+      }],
+      bindings: [],
+    }, []);
+    const tile = hmi.screens[0].tiles[0];
+    assert.equal(tile.layers[0].kind, 'staticImage');
+    assert.equal(tile.compositeId, 'pool_overview');
+  });
+
+  it('normalizeHmi preserves pool_controller compositeId on stationary faceplate tile', () => {
+    const hmi = normalizeHmi({
+      activeScreen: 's1',
+      screens: [{
+        id: 's1',
+        name: 'Pool',
+        svg: '/hmi/svg/demos/demo_process.svg',
+        tiles: [{
+          col: 0,
+          row: 0,
+          colSpan: 5,
+          rowSpan: 5,
+          layers: [{
+            kind: 'staticImage',
+            z: 0,
+            svg: '/hmi/svg/library/pool-faceplates/mooreview/pool_controller.svg',
+          }],
+        }],
+      }],
+      bindings: [],
+    }, []);
+    const tile = hmi.screens[0].tiles[0];
+    assert.equal(tile.compositeId, 'pool_controller');
+  });
+
+  it('normalizeHmi infers pool_pump compositeId from modular faceplate svg', () => {
+    const hmi = normalizeHmi({
+      activeScreen: 's1',
+      screens: [{
+        id: 's1',
+        name: 'Pool mobile',
+        svg: '/hmi/svg/demos/demo_process.svg',
+        tiles: [{
+          col: 0,
+          row: 0,
+          layers: [{
+            kind: 'staticImage',
+            z: 0,
+            svg: '/hmi/svg/library/pool-faceplates/mooreview/pool_pump.svg',
+          }],
+        }],
+      }],
+      bindings: [],
+    }, []);
+    assert.equal(hmi.screens[0].tiles[0].compositeId, 'pool_pump');
+  });
+
+  it('normalizeHmi repairs pool_overview bindings from composite manifest', () => {
+    const publicRoot = path.join(__dirname, '..', 'public');
+    const hmi = normalizeHmi({
+      activeScreen: 's1',
+      screens: [{
+        id: 's1',
+        name: 'Pool',
+        svg: '/hmi/svg/demos/demo_process.svg',
+        tiles: [{
+          col: 1,
+          row: 2,
+          colSpan: 5,
+          rowSpan: 4,
+          compositeId: 'pool_overview',
+          layers: [{
+            kind: 'staticImage',
+            z: 0,
+            svg: '/hmi/svg/library/pool-faceplates/mooreview/pool_controller.svg',
+          }],
+        }],
+      }],
+      bindings: [{
+        screenId: 's1',
+        elementId: 't2_3_z0__orp_sp_value',
+        tagId: 'ORP_SP',
+        property: 'text',
+        format: '',
+      }],
+    }, [], publicRoot);
+    const orpSp = hmi.bindings.find((b) => b.elementId === 't2_3_z0__orp_sp_value');
+    assert.equal(orpSp?.format, 'fixed1');
+    assert.equal(orpSp?.interaction, 'edit');
+    const bwState = hmi.bindings.find((b) => b.elementId === 't2_3_z0__bw_state');
+    assert.equal(bwState?.format, 'poolBwSta');
+    assert.equal(bwState?.tagId, 'POOL_BW_STA');
+  });
+
+  it('listHmiComposites includes pool mobile composites and pool_overview alias', () => {
+    const publicRoot = path.join(__dirname, '..', 'public');
+    const composites = listHmiComposites(publicRoot);
+    const ids = composites.map((c) => c.composite?.id).filter(Boolean);
+    for (const id of ['pool_pump', 'pool_chemistry', 'pool_backwash', 'pool_lighting', 'pool_overview', 'pool_controller', 'pool_filter_schedule']) {
+      assert.ok(ids.includes(id), `${id} composite`);
+    }
+
+    const pump = composites.find((c) => c.composite?.id === 'pool_pump');
+    assert.match(pump.composite.preview, /pool_pump\.svg$/);
+    const flowLamp = pump.composite.defaultBindings.find((b) => b.elementId === 'flow_lamp');
+    assert.equal(flowLamp?.tagRole, 'flowOk');
+    const pumpSpeed = pump.composite.defaultBindings.find((b) => b.elementId === 'pump_speed_sp');
+    assert.equal(pumpSpeed?.interaction, 'edit');
+
+    const chem = composites.find((c) => c.composite?.id === 'pool_chemistry');
+    assert.match(chem.composite.preview, /pool_chemistry\.svg$/);
+    const phAuto = chem.composite.defaultBindings.find((b) => b.elementId === 'btn_ph_auto');
+    assert.equal(phAuto?.interaction, 'toggle');
+    assert.equal(phAuto?.tagRole, 'phAuto');
+    const condAuto = chem.composite.defaultBindings.find((b) => b.elementId === 'btn_cond_auto');
+    assert.equal(condAuto?.tagRole, 'condAuto');
+
+    const bw = composites.find((c) => c.composite?.id === 'pool_backwash');
+    assert.match(bw.composite.preview, /pool_backwash\.svg$/);
+    const bwSta = bw.composite.defaultBindings.find((b) => b.elementId === 'bw_state');
+    assert.equal(bwSta?.format, 'poolBwSta');
+    const bwDone = bw.composite.defaultBindings.find((b) => b.elementId === 'bw_done_lamp');
+    assert.equal(bwDone?.tagRole, 'bwDone');
+
+    const overview = composites.find((c) => c.composite?.id === 'pool_overview');
+    assert.match(overview.composite.preview, /pool_overview\.svg$/);
+    assert.match(overview.composite.parts[0].svg, /pool_overview\.svg$/);
+  });
+
+  it('normalizeHmi infers mobile pool compositeId from faceplate svg', () => {
+    const cases = [
+      { svg: '/hmi/svg/library/pool-faceplates/mooreview/pool_pump.svg', compositeId: 'pool_pump' },
+      { svg: '/hmi/svg/library/pool-faceplates/mooreview/pool_chemistry.svg', compositeId: 'pool_chemistry' },
+      { svg: '/hmi/svg/library/pool-faceplates/mooreview/pool_backwash.svg', compositeId: 'pool_backwash' },
+      { svg: '/hmi/svg/library/pool-faceplates/mooreview/pool_lighting.svg', compositeId: 'pool_lighting' },
+      { svg: '/hmi/svg/library/pool-faceplates/mooreview/pool_controller.svg', compositeId: 'pool_controller' },
+    ];
+    for (const { svg, compositeId } of cases) {
+      const hmi = normalizeHmi({
+        activeScreen: 's1',
+        screens: [{
+          id: 's1',
+          name: 'Pool',
+          svg: '/hmi/svg/demos/demo_process.svg',
+          tiles: [{
+            col: 0,
+            row: 0,
+            colSpan: 3,
+            rowSpan: 3,
+            layers: [{ kind: 'staticImage', z: 0, svg }],
+          }],
+        }],
+        bindings: [],
+      }, []);
+      assert.equal(hmi.screens[0].tiles[0].compositeId, compositeId, svg);
+    }
+  });
+
   it('listHmiComposites includes PID loop faceplate manifest', () => {
     const publicRoot = path.join(__dirname, '..', 'public');
     const composites = listHmiComposites(publicRoot);
@@ -741,6 +939,53 @@ describe('hmiConfig', () => {
     assert.ok(pid.composite?.defaultBindings?.some((b) => b.tagField === 'label' && b.elementId === 'loop_label'));
     assert.ok(pid.composite?.defaultBindings?.some((b) => b.elementId === 'mode_auto' && b.tagField === 'auto'));
     assert.ok(pid.composite?.defaultBindings?.some((b) => b.elementId === 'alarm_hi' && b.tagField === 'alarmHi'));
+  });
+
+  it('listHmiComposites includes alternator faceplate manifest', () => {
+    const publicRoot = path.join(__dirname, '..', 'public');
+    const composites = listHmiComposites(publicRoot);
+    const alt = composites.find((c) => c.composite?.id === 'alternator');
+    assert.ok(alt, 'alternator composite');
+    assert.equal(alt.composite.tagRoles?.alt?.pick, 'firstAlt');
+    assert.ok(alt.composite?.defaultBindings?.some((b) => b.tagField === 'activeUnit' && b.elementId === 'lead_unit'));
+    assert.ok(alt.composite?.defaultBindings?.some((b) => b.tagField === 'pumpStage' && b.format === 'altStage'));
+    assert.ok(alt.composite?.defaultBindings?.some((b) => b.tagField === 'fault' && b.elementId === 'lamp_fault'));
+    assert.ok(alt.composite?.defaultBindings?.some((b) => b.tagField === 'offActive' && b.elementId === 'lamp_off'));
+  });
+
+  it('listHmiComposites includes alarm list composite manifest', () => {
+    const publicRoot = path.join(__dirname, '..', 'public');
+    const composites = listHmiComposites(publicRoot);
+    const alarmList = composites.find((c) => c.composite?.id === 'alarm_list');
+    assert.ok(alarmList, 'alarm_list composite');
+    assert.equal(alarmList.composite.parts[0].kind, 'alarmList');
+    assert.match(alarmList.composite.preview, /alarm_list\.svg$/);
+  });
+
+  it('normalizeTile upgrades alarm list layer to alarmList kind with compositeId', () => {
+    const hmi = normalizeHmi({
+      screens: [{
+        id: 'screen_1',
+        svg: '/hmi/svg/demos/demo_process.svg',
+        tiles: [{
+          col: 0,
+          row: 0,
+          colSpan: 2,
+          rowSpan: 3,
+          layers: [{
+            kind: 'alarmList',
+            z: 0,
+            svg: '/hmi/svg/composites/alarm_list.svg',
+            alarmList: { showAcked: false },
+          }],
+        }],
+      }],
+      bindings: [],
+    }, []);
+    const tile = hmi.screens[0].tiles[0];
+    assert.equal(tile.compositeId, 'alarm_list');
+    assert.equal(tile.layers[0].kind, 'alarmList');
+    assert.equal(tile.layers[0].alarmList.showAcked, false);
   });
 
   it('listSvgAssets exposes only three canonical pilot lights', () => {
@@ -758,6 +1003,159 @@ describe('hmiConfig', () => {
     assert.ok(pilots.every((a) => !a.path.includes('/animated/')));
     assert.ok(pilots.every((a) => !a.path.includes('/labelled/')));
     assert.ok(pilots.every((a) => !a.path.includes('/system-')));
+  });
+
+  it('listSvgAssets exposes only four canonical push buttons', () => {
+    const publicRoot = path.join(__dirname, '..', 'public');
+    const assets = listSvgAssets(publicRoot);
+    const buttons = assets.filter((a) => a.group === 'Controls — Push buttons');
+    assert.equal(buttons.length, 4);
+    const names = buttons.map((a) => a.name).sort();
+    assert.deepEqual(names, [
+      'push_button_oblong.svg',
+      'push_button_rectangle.svg',
+      'push_button_round.svg',
+      'push_button_square.svg',
+    ]);
+    assert.ok(buttons.every((a) => a.subgroup === 'canonical'));
+    assert.ok(buttons.every((a) => a.path.includes('/pb-canonical/')));
+  });
+
+  it('listSvgAssets exposes only canonical strip chart in strip-charts subgroup', () => {
+    const publicRoot = path.join(__dirname, '..', 'public');
+    const assets = listSvgAssets(publicRoot);
+    const charts = assets.filter((a) => a.group === 'Charts & trends' && a.subgroup === 'canonical');
+    const strip = charts.filter((a) => a.name === 'strip_chart.svg');
+    assert.equal(strip.length, 1);
+    assert.match(strip[0].path, /\/chart-strip\/strip_chart\.svg$/);
+    assert.equal(strip[0].label, 'Strip chart');
+    const legacyStrip = assets.filter((a) =>
+      a.group === 'Charts & trends'
+      && a.subgroup === 'strip-charts'
+      && /strip_chart/i.test(a.name)
+      && a.name !== 'strip_chart.svg');
+    assert.equal(legacyStrip.length, 0);
+  });
+
+  it('listSvgAssets exposes only canonical gauge column in column subgroup', () => {
+    const publicRoot = path.join(__dirname, '..', 'public');
+    const assets = listSvgAssets(publicRoot);
+    const columns = assets.filter((a) => a.group === 'Gauges & meters' && a.subgroup === 'canonical');
+    const gaugeCol = columns.filter((a) => a.name === 'gauge_column.svg');
+    assert.equal(gaugeCol.length, 1);
+    assert.match(gaugeCol[0].path, /\/gauge-column\/gauge_column\.svg$/);
+    assert.equal(gaugeCol[0].label, 'Gauge column');
+    const legacyCols = assets.filter((a) =>
+      a.group === 'Gauges & meters'
+      && a.subgroup === 'column'
+      && /gauge_column/i.test(a.name)
+      && a.name !== 'gauge_column.svg');
+    assert.equal(legacyCols.length, 0);
+  });
+
+  it('listSvgAssets exposes only canonical dial background and pointer', () => {
+    const publicRoot = path.join(__dirname, '..', 'public');
+    const assets = listSvgAssets(publicRoot);
+    const canonical = assets.filter((a) => a.group === 'Gauges & meters' && a.subgroup === 'canonical');
+    const dialBg = canonical.filter((a) => a.name === 'gauge_dialbg.svg');
+    const dialPtr = canonical.filter((a) => a.name === 'gauge_dialpointer.svg');
+    assert.equal(dialBg.length, 1);
+    assert.equal(dialPtr.length, 1);
+    assert.match(dialBg[0].path, /\/gd-canonical\/gauge_dialbg\.svg$/);
+    assert.match(dialPtr[0].path, /\/gd-canonical\/gauge_dialpointer\.svg$/);
+    assert.equal(dialBg[0].label, 'Dial background');
+    assert.equal(dialPtr[0].label, 'Dial pointer');
+    const legacyBg = assets.filter((a) =>
+      a.group === 'Gauges & meters'
+      && a.subgroup === 'dial-backgrounds'
+      && /gauge_dialbg/i.test(a.name));
+    const legacyPtr = assets.filter((a) =>
+      a.group === 'Gauges & meters'
+      && a.subgroup === 'dial-pointers'
+      && /gauge_dialpointer/i.test(a.name));
+    assert.equal(legacyBg.length, 0);
+    assert.equal(legacyPtr.length, 0);
+  });
+
+  it('listSvgAssets trims Gauges & meters to canonical symbols only', () => {
+    const publicRoot = path.join(__dirname, '..', 'public');
+    const assets = listSvgAssets(publicRoot);
+    const gauges = assets.filter((a) => a.group === 'Gauges & meters');
+    assert.equal(gauges.length, 18);
+    const canonical = gauges.filter((a) => a.subgroup === 'canonical');
+    assert.equal(canonical.length, 16);
+    assert.equal(gauges.filter((a) => a.subgroup === 'composites').length, 2);
+    assert.equal(gauges.filter((a) => a.subgroup === 'animated').length, 0);
+    assert.equal(gauges.filter((a) => a.subgroup === 'column-backgrounds').length, 0);
+    assert.equal(gauges.filter((a) => a.subgroup === 'tank-column').length, 0);
+    assert.equal(gauges.filter((a) => a.subgroup === 'tank-backgrounds').length, 0);
+    assert.equal(gauges.filter((a) => a.subgroup === 'standard' && a.subgroup !== 'canonical').length, 0);
+    const canonNames = canonical.map((a) => a.name).sort();
+    assert.ok(canonNames.includes('gauge_columnbg.svg'));
+    assert.ok(canonNames.includes('tank_column.svg'));
+    assert.ok(canonNames.includes('tank_gauge_bg.svg'));
+    assert.ok(canonNames.includes('bargraph.svg'));
+  });
+
+  it('listSvgAssets exposes only canonical text labels in labels subgroup', () => {
+    const publicRoot = path.join(__dirname, '..', 'public');
+    const assets = listSvgAssets(publicRoot);
+    const labels = assets.filter((a) => a.group === 'Text & labels' && a.subgroup === 'canonical');
+    assert.equal(labels.length, 9);
+    const names = labels.map((a) => a.name).sort();
+    assert.deepEqual(names, [
+      'text_digits_float.svg',
+      'text_digits_int.svg',
+      'text_label_centred.svg',
+      'text_label_left.svg',
+      'text_list_centred.svg',
+      'text_list_left.svg',
+      'text_msgid.svg',
+      'text_serverid_centred.svg',
+      'text_serverid_left.svg',
+    ]);
+    const legacyLabels = assets.filter((a) =>
+      a.group === 'Text & labels'
+      && a.subgroup === 'labels'
+      && /^(text_left|text_centred|digits_int|digits_float)_/i.test(a.name));
+    const legacyMsgId = assets.filter((a) =>
+      a.group === 'Text & labels'
+      && a.subgroup === 'message-id'
+      && /^digits_msgid_/i.test(a.name));
+    const legacyServerId = assets.filter((a) =>
+      a.group === 'Text & labels'
+      && a.subgroup === 'server-id'
+      && /^(textleft|textcentre)_serverid_/i.test(a.name));
+    const legacyLists = assets.filter((a) =>
+      a.group === 'Text & labels'
+      && a.subgroup === 'lists'
+      && /^textlist_(left|centred)_/i.test(a.name));
+    assert.equal(legacyLabels.length, 0);
+    assert.equal(legacyMsgId.length, 0);
+    assert.equal(legacyServerId.length, 0);
+    assert.equal(legacyLists.length, 0);
+  });
+
+  it('listSvgAssets exposes only canonical numeric bezels and keypad entry', () => {
+    const publicRoot = path.join(__dirname, '..', 'public');
+    const assets = listSvgAssets(publicRoot);
+    const canonical = assets.filter((a) => a.group === 'Numeric displays' && a.subgroup === 'canonical');
+    const names = canonical.map((a) => a.name).sort();
+    assert.deepEqual(names, [
+      'numeric_bezel_simple.svg',
+      'numeric_display.svg',
+      'numeric_keypad.svg',
+    ]);
+    const legacyBezels = assets.filter((a) =>
+      a.group === 'Numeric displays'
+      && a.subgroup === 'bezels'
+      && /^bezel_/i.test(a.name));
+    const legacyEntry = assets.filter((a) =>
+      a.group === 'Numeric displays'
+      && a.subgroup === 'entry'
+      && /^(numeric_pad|pb_numeric_)/i.test(a.name));
+    assert.equal(legacyBezels.length, 0);
+    assert.equal(legacyEntry.length, 0);
   });
 
   it('normalizeHmi migrates legacy demo svg paths', () => {
@@ -870,101 +1268,93 @@ describe('hmiConfig', () => {
     assert.equal(hmi.screens[1].height, 480);
   });
 
-  it('normalizeHmi keeps inheritProjectLayout screens off global layout and tiles', () => {
-    const hmi = normalizeHmi({
+  it('normalizeHmiLayout preserves composerMode grid vs 3d', () => {
+    const grid = normalizeHmi({ activeScreen: 'screen_1', screens: [{ id: 'screen_1', svg: '/a.svg', tiles: [] }], bindings: [] }, [], path.join(__dirname, '..', 'public'));
+    assert.equal(grid.layout.composerMode, 'grid');
+    const threeD = normalizeHmi({
       activeScreen: 'screen_1',
-      layout: {
-        gridCols: 16,
-        gridRows: 12,
-        cellWidth: 64,
-        cellHeight: 64,
-        width: 1024,
-        height: 768,
-        displayMaxWidth: 1024,
-        displayMaxHeight: 768,
-        fit: 'contain',
-      },
-      screens: [
-        {
-          id: 'screen_1',
-          number: 1,
-          name: 'Plant',
-          tiles: [],
-          gridCols: 16,
-          gridRows: 12,
-        },
-        {
-          id: 'screen_ls_yelvington-triplex',
-          number: 7,
-          name: 'Yelvington',
-          inheritProjectLayout: false,
-          facility3dUrl: '/samples/putnam-county-fleet-3d.html',
-          gridCols: 16,
-          gridRows: 13,
-          width: 1385,
-          height: 620,
-          background: '#1a1a1a',
-          tiles: [{
-            col: 0,
-            row: 0,
-            colSpan: 16,
-            rowSpan: 13,
-            compositeId: 'triplexls',
-            compositeTagPrefix: 'YELV',
-            layers: [{
-              kind: 'staticImage',
-              z: 0,
-              svg: '/hmi/svg/library/lift-station-faceplates/mooreview/triplexls.svg',
-            }],
-          }],
-        },
-      ],
+      layout: { composerMode: '3d' },
+      screens: [{ id: 'screen_1', svg: '/a.svg', tiles: [] }],
       bindings: [],
     }, [], path.join(__dirname, '..', 'public'));
-    const lift = hmi.screens.find((s) => s.id === 'screen_2');
-    assert.ok(lift);
-    assert.equal(lift.inheritProjectLayout, false);
-    assert.equal(lift.gridRows, 13);
-    assert.equal(lift.width, 1385);
-    assert.equal(lift.height, 620);
-    assert.equal(lift.tiles.length, 1);
-    assert.equal(lift.tiles[0].rowSpan, 13);
-    assert.equal(lift.tiles[0].compositeTagPrefix, 'YELV');
-    assert.match(lift.facility3dUrl || '', /putnam-county-fleet-3d/);
-    assert.equal(hmi.screens[0].gridRows, 12);
+    assert.equal(threeD.layout.composerMode, '3d');
+    const invalid = normalizeHmi({
+      activeScreen: 'screen_1',
+      layout: { composerMode: 'vr' },
+      screens: [{ id: 'screen_1', svg: '/a.svg', tiles: [] }],
+      bindings: [],
+    }, [], path.join(__dirname, '..', 'public'));
+    assert.equal(invalid.layout.composerMode, 'grid');
   });
 
-  it('normalizeHmi pins layout facility3dUrl onto home when screen has no tiles', () => {
+  it('MAX_SCREENS allows up to 500 screens', () => {
+    assert.equal(MAX_SCREENS, 500);
+    assert.equal(MAX_ROOM_NUM, 500);
+    assert.ok(HMI_OBJ_KINDS.includes('roomHotspot'));
+  });
+
+  it('normalizeHmiLayout preserves facility3dUrl for 3d projects', () => {
     const hmi = normalizeHmi({
       activeScreen: 'screen_1',
       layout: {
-        composerMode: 'grid',
+        composerMode: '3d',
         facility3dUrl: '/samples/mle-wastewater-ortho-3d.html',
-        gridCols: 16,
-        gridRows: 12,
       },
-      screens: [
-        {
-          id: 'screen_1',
-          number: 1,
-          name: 'Plant Overview',
-          tiles: [],
-        },
-        {
-          id: 'screen_fleet_3d',
-          number: 6,
-          name: 'Fleet',
-          inheritProjectLayout: false,
-          facility3dUrl: '/samples/putnam-county-fleet-3d.html',
-          tiles: [],
-        },
-      ],
+      screens: [{ id: 'screen_1', svg: '/a.svg', tiles: [] }],
       bindings: [],
     }, [], path.join(__dirname, '..', 'public'));
-    const home = hmi.screens.find((s) => s.number === 1);
-    const fleet = hmi.screens.find((s) => /putnam-county-fleet-3d/.test(s.facility3dUrl || ''));
-    assert.match(home?.facility3dUrl || '', /mle-wastewater/);
-    assert.match(fleet?.facility3dUrl || '', /putnam-county-fleet-3d/);
+    assert.equal(hmi.layout.composerMode, '3d');
+    assert.equal(hmi.layout.facility3dUrl, '/samples/mle-wastewater-ortho-3d.html');
+  });
+
+  it('normalizeHmiLayout preserves roomPopup defaults', () => {
+    const hmi = normalizeHmi({
+      activeScreen: 'screen_1',
+      screens: [{ id: 'screen_1', svg: '/a.svg', tiles: [] }],
+      bindings: [],
+    }, [], path.join(__dirname, '..', 'public'));
+    assert.equal(hmi.layout.roomPopup.enabled, true);
+    assert.match(hmi.layout.roomPopup.roomSvg, /room/);
+    assert.match(hmi.layout.roomPopup.condenserSvg, /condenser/);
+    const custom = normalizeRoomPopup({
+      enabled: false,
+      roomSvg: '/custom/room.svg',
+      condenserSvg: '/custom/cond.svg',
+    });
+    assert.equal(custom.enabled, false);
+    assert.equal(custom.roomSvg, '/custom/room.svg');
+    assert.equal(normalizeRoomNum(42), 42);
+    assert.equal(normalizeRoomNum(9999), 500);
+    assert.equal(normalizeRoomNum(0), null);
+  });
+
+  it('normalizeHmi preserves roomHotspot layers on tiles', () => {
+    const hmi = normalizeHmi({
+      activeScreen: 'screen_1',
+      screens: [{
+        id: 'screen_1',
+        svg: '/a.svg',
+        tiles: [{
+          col: 2,
+          row: 3,
+          colSpan: 3,
+          rowSpan: 2,
+          layers: [{
+            kind: 'roomHotspot',
+            z: 1,
+            roomNum: 17,
+            label: 'Room 017',
+            hotspotCol: 2,
+            hotspotRow: 3,
+          }],
+        }],
+      }],
+      bindings: [],
+    }, [], path.join(__dirname, '..', 'public'));
+    const layer = hmi.screens[0].tiles[0].layers[0];
+    assert.equal(layer.kind, 'roomHotspot');
+    assert.equal(layer.roomNum, 17);
+    assert.equal(layer.label, 'Room 017');
   });
 
   it('normalizeScreen preserves layout fields and tiles', () => {
@@ -994,5 +1384,255 @@ describe('hmiConfig', () => {
     assert.equal(hmi.screens[0].tiles[0].col, 0);
     assert.equal(hmi.screens[0].tiles[0].row, 0);
     assert.ok(hmi.screens[0].tiles[0].svg.includes('demo_controls.svg'));
+  });
+
+  it('normalizeTile accepts pageHotspot on Z1-4 with target screen', () => {
+    const tile = normalizeHmi({
+      screens: [{
+        id: 'screen_1',
+        svg: '/hmi/svg/demos/demo_process.svg',
+        tiles: [{
+          col: 2,
+          row: 1,
+          colSpan: 2,
+          rowSpan: 2,
+          layers: [
+            { kind: 'staticImage', z: 0, svg: '/hmi/svg/base.svg' },
+            {
+              kind: 'pageHotspot',
+              z: 2,
+              targetScreenId: 'screen_3',
+              label: 'Go alarms',
+            },
+          ],
+        }],
+      }],
+      bindings: [],
+    }, []).screens[0].tiles[0];
+    assert.equal(tile.colSpan, 2);
+    assert.equal(tile.rowSpan, 2);
+    assert.equal(tile.layers.length, 2);
+    const hotspot = tile.layers.find((l) => l.kind === 'pageHotspot');
+    assert.ok(hotspot);
+    assert.equal(hotspot.z, 2);
+    assert.equal(hotspot.targetScreenId, 'screen_3');
+    assert.equal(hotspot.label, 'Go alarms');
+    assert.ok(HMI_OBJ_KINDS.includes('pageHotspot'));
+  });
+
+  it('normalizeTile preserves pageHotspot region independent of tile span', () => {
+    const tile = normalizeHmi({
+      screens: [{
+        id: 'screen_1',
+        svg: '/hmi/svg/demos/demo_process.svg',
+        tiles: [{
+          col: 0,
+          row: 0,
+          colSpan: 4,
+          rowSpan: 3,
+          layers: [
+            { kind: 'staticImage', z: 0, svg: '/hmi/svg/base.svg' },
+            {
+              kind: 'pageHotspot',
+              z: 1,
+              targetScreenId: 'screen_2',
+              hotspotCol: 2,
+              hotspotRow: 1,
+              hotspotColSpan: 2,
+              hotspotRowSpan: 1,
+            },
+          ],
+        }],
+      }],
+      bindings: [],
+    }, []).screens[0].tiles[0];
+    assert.equal(tile.colSpan, 4);
+    assert.equal(tile.rowSpan, 3);
+    const hotspot = tile.layers.find((l) => l.kind === 'pageHotspot');
+    assert.equal(hotspot.hotspotCol, 2);
+    assert.equal(hotspot.hotspotRow, 1);
+    assert.equal(hotspot.hotspotColSpan, 2);
+    assert.equal(hotspot.hotspotRowSpan, undefined);
+  });
+
+  it('normalizeTile keeps 10x10 graphic tile with 10x1 pageHotspot band', () => {
+    const tile = normalizeHmi({
+      screens: [{
+        id: 'screen_1',
+        svg: '/hmi/svg/demos/demo_process.svg',
+        gridCols: 10,
+        gridRows: 10,
+        tiles: [{
+          col: 0,
+          row: 0,
+          colSpan: 10,
+          rowSpan: 10,
+          layers: [
+            { kind: 'staticImage', z: 0, svg: '/hmi/svg/base.svg' },
+            {
+              kind: 'pageHotspot',
+              z: 1,
+              targetScreenId: 'screen_2',
+              hotspotCol: 0,
+              hotspotRow: 0,
+              hotspotColSpan: 10,
+            },
+          ],
+        }],
+      }],
+      bindings: [],
+    }, []).screens[0].tiles[0];
+    assert.equal(tile.colSpan, 10);
+    assert.equal(tile.rowSpan, 10);
+    const hotspot = tile.layers.find((l) => l.kind === 'pageHotspot');
+    assert.equal(hotspot.hotspotCol, 0);
+    assert.equal(hotspot.hotspotRow, 0);
+    assert.equal(hotspot.hotspotColSpan, 10);
+    assert.equal(hotspot.hotspotRowSpan, undefined);
+  });
+
+  it('normalizeTile clamps pageHotspot Z0 to Z1 and drops missing target', () => {
+    const hmi = normalizeHmi({
+      screens: [{
+        id: 'screen_1',
+        svg: '/hmi/svg/demos/demo_process.svg',
+        tiles: [{
+          col: 0,
+          row: 0,
+          layers: [
+            { kind: 'pageHotspot', z: 0, targetScreenId: 'screen_2' },
+            { kind: 'pageHotspot', z: 3, targetScreenId: '' },
+          ],
+        }],
+      }],
+      bindings: [],
+    }, []);
+    const layers = hmi.screens[0].tiles[0].layers;
+    assert.equal(layers.length, 1);
+    assert.equal(layers[0].z, 1);
+    assert.equal(layers[0].targetScreenId, 'screen_2');
+  });
+
+  it('reindexHmiScreens remaps pageHotspot targetScreenId', () => {
+    const hmi = normalizeHmi({
+      screens: [
+        { id: 'home', svg: '/a.svg', tiles: [] },
+        {
+          id: 'alarms',
+          svg: '/b.svg',
+          tiles: [{
+            col: 1,
+            row: 1,
+            layers: [{ kind: 'pageHotspot', z: 1, targetScreenId: 'home' }],
+          }],
+        },
+      ],
+      bindings: [],
+    }, []);
+    assert.equal(hmi.screens[1].tiles[0].layers[0].targetScreenId, 'screen_1');
+  });
+
+  it('normalizeTile accepts flashOverlay on Z1-4 with color and region', () => {
+    const tile = normalizeHmi({
+      screens: [{
+        id: 'screen_1',
+        svg: '/hmi/svg/demos/demo_process.svg',
+        tiles: [{
+          col: 1,
+          row: 2,
+          colSpan: 3,
+          rowSpan: 2,
+          layers: [
+            { kind: 'staticImage', z: 0, svg: '/hmi/svg/base.svg' },
+            {
+              kind: 'flashOverlay',
+              z: 3,
+              color: 'amber',
+              tagId: 'ALM1',
+              hotspotCol: 2,
+              hotspotRow: 2,
+              hotspotColSpan: 2,
+              hotspotRowSpan: 1,
+            },
+          ],
+        }],
+      }],
+      bindings: [],
+    }, []).screens[0].tiles[0];
+    assert.equal(tile.layers.length, 2);
+    const overlay = tile.layers.find((l) => l.kind === 'flashOverlay');
+    assert.ok(overlay);
+    assert.equal(overlay.z, 3);
+    assert.equal(overlay.color, 'amber');
+    assert.equal(overlay.tagId, 'ALM1');
+    assert.equal(overlay.hotspotCol, 2);
+    assert.equal(overlay.hotspotRow, 2);
+    assert.equal(overlay.hotspotColSpan, 2);
+    assert.ok(HMI_OBJ_KINDS.includes('flashOverlay'));
+  });
+
+  it('normalizeTile clamps flashOverlay Z0 to Z1 and defaults color to red', () => {
+    const tile = normalizeHmi({
+      screens: [{
+        id: 'screen_1',
+        svg: '/hmi/svg/demos/demo_process.svg',
+        tiles: [{
+          col: 0,
+          row: 0,
+          layers: [
+            { kind: 'flashOverlay', z: 0, color: 'invalid' },
+          ],
+        }],
+      }],
+      bindings: [],
+    }, []).screens[0].tiles[0];
+    const overlay = tile.layers.find((l) => l.kind === 'flashOverlay');
+    assert.ok(overlay);
+    assert.equal(overlay.z, 1);
+    assert.equal(overlay.color, 'red');
+  });
+
+  it('normalizeTile preserves cellFraction on pageHotspot and flashOverlay', () => {
+    const hmi = normalizeHmi({
+      screens: [{
+        id: 'screen_1',
+        svg: '/hmi/svg/demos/demo_process.svg',
+        tiles: [{
+          col: 0,
+          row: 0,
+          layers: [
+            { kind: 'pageHotspot', z: 1, targetScreenId: 'screen_2', cellFraction: 0.5 },
+            { kind: 'flashOverlay', z: 2, color: 'red', cellFraction: 0.25 },
+            { kind: 'pageHotspot', z: 3, targetScreenId: 'screen_2', cellFraction: 1 },
+            { kind: 'flashOverlay', z: 4, color: 'amber', cellFraction: 0.33 },
+          ],
+        }],
+      }],
+      bindings: [],
+    }, []);
+    const layers = hmi.screens[0].tiles[0].layers;
+    assert.equal(layers[0].cellFraction, 0.5);
+    assert.equal(layers[1].cellFraction, 0.25);
+    assert.equal(layers[2].cellFraction, undefined);
+    assert.equal(layers[3].cellFraction, undefined);
+  });
+
+  it('normalizeBinding accepts flashState on flash_overlay element id', () => {
+    const hmi = normalizeHmi({
+      screens: [{ id: 'screen_1', svg: '/hmi/svg/demos/demo_process.svg', tiles: [] }],
+      bindings: [{
+        screenId: 'screen_1',
+        elementId: 't10_4_z1__flash_overlay',
+        tagId: 'ALM1',
+        property: 'flashState',
+        onValue: 'amber',
+        offValue: 'hidden',
+      }],
+    }, [{ id: 'ALM1' }]);
+    assert.equal(hmi.bindings.length, 1);
+    assert.equal(hmi.bindings[0].elementId, 't10_4_z1__flash_overlay');
+    assert.equal(hmi.bindings[0].property, 'flashState');
+    assert.equal(hmi.bindings[0].onValue, 'amber');
+    assert.equal(hmi.bindings[0].offValue, 'hidden');
   });
 });

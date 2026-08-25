@@ -58,9 +58,7 @@ function roomNumFromScreen(screen) {
 }
 
 function roomPrefixFromNum(roomNum) {
-  const n = Math.trunc(Number(roomNum));
-  const width = n >= 10000 ? 5 : (n >= 1000 ? 4 : 3);
-  return `RM${String(n).padStart(width, '0')}`;
+  return `RM${String(roomNum).padStart(3, '0')}`;
 }
 
 function roomPrefixFromScreen(screen, bindings = []) {

@@ -10,6 +10,7 @@ function registerCloudAlarmNotifications() {
   const { on } = require('../runtime/eventBus');
   const { getRequestContext } = require('../runtime/requestContext');
   const authService = require('../services/authService');
+  const { resolveAlarmContext } = require('../alarms/alarmContext');
   const { deliverAlarmNotifications } = require('../notifications/alarmDelivery');
 
   on('alarm:transition', (evt) => {
@@ -21,12 +22,13 @@ function registerCloudAlarmNotifications() {
       .then(async () => {
         const tenant = await authService.getTenantById(tenantId);
         if (!tenant) return;
-        const recipients = await authService.listNotificationRecipients(tenantId, evt.level);
+        const alarmContext = resolveAlarmContext(evt, { tenantId });
+        const recipients = await authService.listNotificationRecipients(tenantId, evt.level, alarmContext);
         if (!recipients.length) return;
         await deliverAlarmNotifications({
           tenantId,
           tenantName: tenant.name,
-          alarm: evt,
+          alarm: { ...evt, ...alarmContext },
           recipients,
         });
       })

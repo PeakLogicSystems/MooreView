@@ -27,9 +27,4 @@ describe('parseMqttJson', () => {
     const s = sanitizeMqttJsonText('{\n "a": 1\n}');
     assert.equal(JSON.parse(s).a, 1);
   });
-
-  it('returns null for truncated payloads when dropOnError', () => {
-    const truncated = '{"deviceId":"mv_x","tags":[{"id":"I1","value":false}';
-    assert.equal(parseMqttJson(truncated, { dropOnError: true }), null);
-  });
 });

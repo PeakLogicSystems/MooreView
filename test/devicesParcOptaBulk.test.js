@@ -69,14 +69,14 @@ describe('bulkAddParcOpta helper', () => {
   it('isParcRegistryNoiseId detects test, debug, and template ids', () => {
     assert.equal(isParcRegistryNoiseId('test-01'), true);
     assert.equal(isParcRegistryNoiseId('dbg-01'), true);
-    assert.equal(isParcRegistryNoiseId('off-01'), true);
-    assert.equal(isParcRegistryNoiseId('mv_test_hmi_write'), true);
     assert.equal(isParcRegistryNoiseId('opta_bulk_a'), true);
     assert.equal(isParcRegistryNoiseId('opta_sync_01'), true);
-    assert.equal(isParcRegistryNoiseId('opta_force_clear_1'), true);
     assert.equal(isParcRegistryNoiseId('opta_st_01'), true);
     assert.equal(isParcRegistryNoiseId('opta_st_02'), true);
+    assert.equal(isParcRegistryNoiseId('mv_test_hand'), true);
+    assert.equal(isParcRegistryNoiseId('opta_wait_test'), true);
     assert.equal(isParcRegistryNoiseId('opta_0123b636f1c23964ee'), false);
+    assert.equal(isParcRegistryNoiseId('mv_f2e689fd60d96bab'), false);
   });
 
   it('stripParcNoiseDrivers removes mqtt_parc and opta_remote noise drivers', () => {
@@ -119,6 +119,25 @@ describe('bulkAddParcOpta helper', () => {
     };
     const ids = parseDeviceIds({ fromRegistry: true }, reg);
     assert.deepEqual(ids, ['opta_0123b636f1c23964ee']);
+  });
+
+  it('parseDeviceIds fromRegistry on cloud keeps only field ATECC device ids', () => {
+    const prev = process.env.MOOREVIEW_DEPLOYMENT;
+    process.env.MOOREVIEW_DEPLOYMENT = 'cloud';
+    try {
+      const reg = {
+        listDevices: () => [
+          { deviceId: 'mv_6a5d39e90a82fb61' },
+          { deviceId: 'opta_0123b636f1c23964ee' },
+          { deviceId: 'opta_st_01' },
+        ],
+      };
+      const ids = parseDeviceIds({ fromRegistry: true }, reg);
+      assert.deepEqual(ids.sort(), ['mv_6a5d39e90a82fb61', 'opta_0123b636f1c23964ee'].sort());
+    } finally {
+      if (prev === undefined) delete process.env.MOOREVIEW_DEPLOYMENT;
+      else process.env.MOOREVIEW_DEPLOYMENT = prev;
+    }
   });
 
   it('parseDeviceIds builds range with pad', () => {
@@ -198,12 +217,10 @@ describe('POST /drivers/parc-opta/bulk', () => {
     const deps = mockDeps();
     const r = await postBulk(deps, { fromRegistry: true, syncTags: false });
     assert.equal(r.status, 200);
-    assert.ok(!deps._drivers.some((d) => /^opta_st_\d+$/i.test(String(d.deviceId || ''))));
+    assert.equal(r.data.added.length, 1);
     const snDrv = deps._drivers.find((d) => d.deviceId === 'opta_012355b52d66a109ee');
-    assert.ok(snDrv, `expected field device among added=${JSON.stringify(r.data.added)}`);
-    assert.notEqual(snDrv.id, snDrv.deviceId);
-    const live = registry.getDevice('opta_012355b52d66a109ee');
-    assert.equal(live?.meta?.ateccSerial || snDrv.ateccSerial, '012355b52d66a109ee');
+    assert.equal(snDrv?.ateccSerial, '012355b52d66a109ee');
+    assert.notEqual(snDrv?.id, snDrv?.deviceId);
   });
 
   it('fromRegistry with includeRegistryNoise adds test ids', async () => {
@@ -216,19 +233,14 @@ describe('POST /drivers/parc-opta/bulk', () => {
 
   it('syncs tags for fresh registry telemetry', async () => {
     registry.ingestReport({
-      deviceId: 'opta_0123b636f1c23964ee',
-      ateccSerial: '0123b636f1c23964ee',
+      deviceId: 'opta_sync_01',
       tags: [{ id: 'I1', type: 'BOOL', value: true }],
     });
     const deps = mockDeps();
-    const r = await postBulk(deps, {
-      deviceIds: ['opta_0123b636f1c23964ee'],
-      syncTags: true,
-      usePositionIds: false,
-    });
+    const r = await postBulk(deps, { deviceIds: ['opta_sync_01'], syncTags: true, usePositionIds: false });
     assert.equal(r.status, 200);
     assert.equal(r.data.syncResults?.[0]?.ok, true);
     assert.equal(deps._tags.length, 1);
-    assert.equal(deps._tags[0].driverId, 'opta_0123b636f1c23964ee');
+    assert.equal(deps._tags[0].driverId, 'opta_sync_01');
   });
 });

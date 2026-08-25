@@ -1,12 +1,12 @@
 # ST test programs
 
-Default program folder for mooreVIEW. Active file is set in `data/settings.json` as `activeProgram` (default: `program.st`).
+Default program folder for MooreVIEW. Active file is set in `data/settings.json` as `activeProgram` (default: `program.st`).
 
 ## Layout
 
 | Folder | Purpose |
 |--------|---------|
-| `logic/` | Basic ST: IsON/IsOFF, IF/ELSE, AND/OR/NOT, compares, WithInLimits, timer/counter, PID, AVG |
+| `logic/` | Basic ST: IsON/IsOFF, IF/ELSIF/ELSE, AND/OR/NOT, compares, WithInLimits, timer/counter, PID, AVG |
 | `mqtt/` | Logic using MQTT-mapped tags (load with `fixtures/mqtt.*.json`) |
 | `modbus/` | Same **generic I/O** names as `logic/`; Modbus tables/registers are in `fixtures/tags.modbus.json` |
 | `opta/` | Arduino Opta base-unit I/O over Modbus RTU (load with `fixtures/*opta*.json`) |
@@ -55,8 +55,6 @@ Example: `logic/01_ison_turn_on.st` and `modbus/01_di_to_q.st` use the same ST (
 ## Waveshare Modbus RTU IO 8CH (PC)
 
 On the **Drivers** tab, choose **Waveshare Modbus RTU IO 8CH** from **Device template**, set serial port (9600,N,8,1 default) and slave ID (default 1), then **Apply device template**. Creates driver `ws_rtu_8` with tags **DI1–DI8** (discrete 0–7) and **Q1–Q8** (coils 0–7). Sample program: `logic/17_waveshare_di1_q1.st`.
-
-**Waveshare ESP32-S3-Relay-1CH-U** (Wi-Fi pool satellite, not Modbus): template **Waveshare ESP32-S3-Relay-1CH-U — MQTT Parc**. One isolated relay per board (`R1`) plus aux `I1`. See `docs/WAVESHARE_ESP32S3_RELAY_POOL.md`.
 
 ## Arduino Opta Modbus RTU (PC)
 

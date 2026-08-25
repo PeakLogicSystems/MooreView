@@ -3,29 +3,39 @@
 const fs = require('fs');
 const path = require('path');
 const persistence = require('../persistence');
-const { packArchive, unpackArchive, ZIP_EXT } = require('./projectArchive');
-const { EST_FORMAT } = require('./estFile');
+const { safeId } = require('./projectIds');
+const { getProjectTenantId } = require('./projectTenantContext');
+const { globalProjectsDir, tenantProjectsDir } = require('../tenants/tenantPaths');
+
+// Lazy requires avoid circular load: projectArchive → estFile → parc → persistence → configStore
+function projectArchive() {
+  return require('./projectArchive');
+}
+function estFormat() {
+  return require('./estFile').EST_FORMAT;
+}
+const ZIP_EXT = '.est.zip';
 
 /** @type {Map<string, { mtimeMs: number, size: number, meta: object }>} */
 const fileMetaCache = new Map();
 
 function projectsDir() {
-  const dir = persistence.filePath('projects');
+  const tid = getProjectTenantId();
+  const dir = tid ? tenantProjectsDir(tid) : globalProjectsDir();
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
 
-function safeId(name) {
-  const s = String(name || '').trim().toLowerCase();
-  const id = s
-    .replace(/[^\w.-]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .slice(0, 80);
-  return id || 'project';
+function projectsStorageLabel() {
+  return projectsDir();
 }
 
 function projectPath(id) {
   return path.join(projectsDir(), `${safeId(id)}${ZIP_EXT}`);
+}
+
+function projectJsonPath(id) {
+  return path.join(projectsDir(), `${safeId(id)}.est.json`);
 }
 
 function invalidateProjectListCache(filePath) {
@@ -46,7 +56,7 @@ function readProjectMeta(fp, id) {
   }
   let meta;
   try {
-    const unpacked = unpackArchive(fs.readFileSync(fp));
+    const unpacked = projectArchive().unpackArchive(fs.readFileSync(fp));
     const raw = unpacked.project;
     meta = {
       name: raw?.project?.name || unpacked.manifest?.projectName || id,
@@ -132,16 +142,39 @@ function readImportableProjectBuffer(filename) {
 
 function listProjects() {
   const dir = projectsDir();
-  const files = fs.readdirSync(dir).filter((f) => f.toLowerCase().endsWith(ZIP_EXT));
-  const livePaths = new Set(files.map((f) => path.join(dir, f)));
+  const names = fs.readdirSync(dir);
+  const zipIds = new Set();
+  const projects = [];
+
+  for (const f of names) {
+    if (!f.toLowerCase().endsWith(ZIP_EXT)) continue;
+    const fp = path.join(dir, f);
+    const id = f.slice(0, -ZIP_EXT.length);
+    zipIds.add(id);
+    projects.push({ id, format: 'zip', ...readProjectMeta(fp, id) });
+  }
+
+  // Legacy library entries: .est.json with no matching .est.zip
+  for (const f of names) {
+    if (!/\.est\.json$/i.test(f)) continue;
+    const id = f.replace(/\.est\.json$/i, '');
+    if (zipIds.has(id) || zipIds.has(safeId(id))) continue;
+    const fp = path.join(dir, f);
+    projects.push({ id: safeId(id), format: 'json', ...readJsonProjectMeta(fp, id) });
+  }
+
+  const livePaths = new Set(projects.map((p) => (
+    p.format === 'zip' ? projectPath(p.id) : projectJsonPath(p.id)
+  )));
   for (const fp of fileMetaCache.keys()) {
     if (!livePaths.has(fp)) fileMetaCache.delete(fp);
   }
-  return files.map((f) => {
-    const fp = path.join(dir, f);
-    const id = f.slice(0, -ZIP_EXT.length);
-    return { id, ...readProjectMeta(fp, id) };
-  }).sort((a, b) => String(b.savedAt || '').localeCompare(String(a.savedAt || '')));
+
+  return projects.sort((a, b) => String(b.savedAt || '').localeCompare(String(a.savedAt || '')));
+}
+
+async function listProjectsFresh() {
+  return listProjects();
 }
 
 function saveProjectArchive(nameOrId, archiveBuffer) {
@@ -152,16 +185,30 @@ function saveProjectArchive(nameOrId, archiveBuffer) {
   fs.writeFileSync(tmp, buf);
   fs.renameSync(tmp, fp);
   invalidateProjectListCache(fp);
-  return { id, path: fp };
+  return { id, path: fp, savedAt: new Date().toISOString() };
 }
 
 function saveProjectDoc(nameOrId, doc, deps) {
-  if (!deps) {
-    throw Object.assign(new Error('saveProjectDoc requires runtime deps to pack archive'), { status: 500 });
-  }
   const name = doc?.project?.name || nameOrId || 'project';
-  const archiveBuffer = packArchive(deps, { name, exportedBy: require('../../package.json').version });
-  return saveProjectArchive(nameOrId || name, archiveBuffer);
+  const id = safeId(nameOrId || name);
+  const arch = projectArchive();
+  let archiveBuffer;
+  if (deps) {
+    const PACKAGE_VERSION = require('../../package.json').version;
+    archiveBuffer = arch.packArchive(deps, { name, exportedBy: PACKAGE_VERSION });
+  } else {
+    const programs = arch.collectProgramSources();
+    const parc = persistence.readJson('parc.json', null);
+    archiveBuffer = arch.packArchiveFromParts({
+      project: doc,
+      programs,
+      activeProgram: doc?.activeProgram || '',
+      parc,
+      mvDraw: doc?.mvDraw || null,
+      meta: { name },
+    });
+  }
+  return saveProjectArchive(id, archiveBuffer);
 }
 
 function loadProjectArchive(id) {
@@ -169,32 +216,72 @@ function loadProjectArchive(id) {
   if (!fs.existsSync(fp)) {
     throw Object.assign(new Error(`Project not found: ${safeId(id)}`), { status: 404 });
   }
-  return unpackArchive(fs.readFileSync(fp));
+  return projectArchive().unpackArchive(fs.readFileSync(fp));
 }
 
-/** @deprecated use loadProjectArchive */
 function loadProjectDoc(id) {
-  const unpacked = loadProjectArchive(id);
-  if (!unpacked.project || unpacked.project.format !== EST_FORMAT) {
-    throw Object.assign(new Error('Invalid project archive'), { status: 400 });
+  const zipFp = projectPath(id);
+  const jsonFp = projectJsonPath(id);
+  const format = estFormat();
+  if (fs.existsSync(zipFp)) {
+    try {
+      const unpacked = loadProjectArchive(id);
+      if (!unpacked.project || unpacked.project.format !== format) {
+        throw Object.assign(new Error('Invalid project archive'), { status: 400 });
+      }
+      return unpacked.project;
+    } catch (e) {
+      if (!fs.existsSync(jsonFp)) throw e;
+      console.warn(`[project] zip load failed for ${safeId(id)}, falling back to .est.json:`, e.message || e);
+    }
   }
-  return unpacked.project;
-}
-
-function deleteProjectDoc(id) {
-  const fp = projectPath(id);
-  if (!fs.existsSync(fp)) return false;
-  fs.unlinkSync(fp);
-  invalidateProjectListCache(fp);
-  return true;
+  if (fs.existsSync(jsonFp)) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(jsonFp, 'utf8'));
+      if (raw?.format && raw.format !== format) {
+        throw Object.assign(new Error('Invalid project file'), { status: 400 });
+      }
+      return raw;
+    } catch (e) {
+      if (e.status) throw e;
+      throw Object.assign(new Error(`Invalid project JSON: ${safeId(id)}`), { status: 400 });
+    }
+  }
+  throw Object.assign(new Error(`Project not found: ${safeId(id)}`), { status: 404 });
 }
 
 function readProjectArchiveBuffer(id) {
   const fp = projectPath(id);
-  if (!fs.existsSync(fp)) {
-    throw Object.assign(new Error(`Project not found: ${safeId(id)}`), { status: 404 });
+  if (fs.existsSync(fp)) return fs.readFileSync(fp);
+  const arch = projectArchive();
+  const doc = loadProjectDoc(id);
+  return arch.packArchiveFromParts({
+    project: doc,
+    programs: typeof doc.program === 'string' && doc.activeProgram
+      ? { [doc.activeProgram]: doc.program }
+      : {},
+    activeProgram: doc.activeProgram || '',
+    mvDraw: doc.mvDraw || null,
+    meta: { name: doc?.project?.name || id },
+  });
+}
+
+function deleteProjectDoc(id) {
+  const sid = safeId(id);
+  const zipFp = projectPath(sid);
+  const jsonFp = projectJsonPath(sid);
+  let removed = false;
+  if (fs.existsSync(zipFp)) {
+    fs.unlinkSync(zipFp);
+    invalidateProjectListCache(zipFp);
+    removed = true;
   }
-  return fs.readFileSync(fp);
+  if (fs.existsSync(jsonFp)) {
+    fs.unlinkSync(jsonFp);
+    invalidateProjectListCache(jsonFp);
+    removed = true;
+  }
+  return removed;
 }
 
 module.exports = {
@@ -202,6 +289,8 @@ module.exports = {
   projectsDir,
   safeId,
   listProjects,
+  listProjectsFresh,
+  projectsStorageLabel,
   listImportableProjects,
   readImportableProjectBuffer,
   resolveImportableProjectPath,

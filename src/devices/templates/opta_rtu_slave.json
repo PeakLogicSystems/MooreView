@@ -28,6 +28,5 @@
       { "prefix": "HM", "suffix": "", "count": 8, "start": 8 }
     ],
     "holding": [{ "prefix": "H", "count": 8, "start": 0 }]
-  },
-  "notes": "Base map (IR 0–7 raw, IR 8–15 HM mirror). For Dragino + pseudo-AI use opta_parc_modbus_dragino and firmware/arduino-opta-rtu-slave."
+  }
 }

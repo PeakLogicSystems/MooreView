@@ -5,10 +5,6 @@
   const EXPORT_ORIENTATION_KEY = 'mvDrawExportOrientation';
   const DEFAULT_PPU = 8;
   const MAX_UNDO = 50;
-  /** Must match mv-draw/src/symbolLibrary.js OPTA_PANEL_* footprint. */
-  const OPTA_TB_WIDTH = 50;
-  const OPTA_TB_HEIGHT = 45;
-  let bgLoadGen = 0;
 
   const state = {
     project: null,
@@ -55,6 +51,8 @@
     stretching: null,
     stretchUndoPushed: false,
     librarySearch: '',
+    openListProjects: [],
+    openListSort: { key: 'date', dir: 'desc' },
   };
 
   const hmiImageCache = new Map();
@@ -151,8 +149,6 @@
   }
 
   function shapeHasBuiltinCaption(s) {
-    const shape = s?.shape || '';
-    if (shape.startsWith('sld_')) return true;
     const builtIn = new Set([
       'treatment_tank',
       'integrated_mle_tank',
@@ -165,7 +161,7 @@
       'drip_field',
       'drip_irrigation_4leg',
     ]);
-    return builtIn.has(shape);
+    return builtIn.has(s?.shape);
   }
 
   const undoStack = [];
@@ -204,48 +200,15 @@
     statusEl.className = isErr ? 'muted cell-mono err-text' : 'muted cell-mono';
   }
 
-  async function api(method, path, body, options = {}) {
-    const timeoutMs = Number.isFinite(+options.timeoutMs) ? +options.timeoutMs : 60000;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    let res;
-    try {
-      res = await fetch(`${API}${path}`, {
-        method,
-        headers: body != null ? { 'Content-Type': 'application/json' } : undefined,
-        body: body != null ? JSON.stringify(body) : undefined,
-        signal: controller.signal,
-      });
-    } catch (e) {
-      if (e?.name === 'AbortError') {
-        throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
-      }
-      throw e;
-    } finally {
-      clearTimeout(timer);
-    }
+  async function api(method, path, body) {
+    const res = await fetch(`${API}${path}`, {
+      method,
+      headers: body != null ? { 'Content-Type': 'application/json' } : undefined,
+      body: body != null ? JSON.stringify(body) : undefined,
+    });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || res.statusText);
     return data;
-  }
-
-  function blankLocalProject(name = 'untitled') {
-    return {
-      format: 'mooreview-mvdraw',
-      version: 1,
-      savedAt: new Date().toISOString(),
-      name: String(name || 'untitled').trim() || 'untitled',
-      units: 'ft',
-      scale: null,
-      extents: null,
-      background: null,
-      nodes: [],
-      edges: [],
-      groups: [],
-      annotations: [],
-      meta: { client: '', site: '', notes: '' },
-      libraryFile: null,
-    };
   }
 
   async function downloadExport(path, project, options = {}) {
@@ -307,11 +270,6 @@
 
   function sym(type) {
     return state.symbolByType.get(type) || null;
-  }
-
-  function isOptaTbSymbol(s) {
-    const shape = s?.shape;
-    return shape === 'sld_opta' || shape === 'sld_expansion' || shape === 'sld_dc_supply';
   }
 
   function preloadHmiSymbolImages(symbols) {
@@ -750,12 +708,8 @@
   function nodeSymbolSize(node, s) {
     const symDef = s || sym(node?.type);
     const { scaleX, scaleY } = nodeScale(node);
-    let baseW = symDef?.width || 4;
-    let baseH = symDef?.height || 4;
-    if (isOptaTbSymbol(symDef)) {
-      baseW = OPTA_TB_WIDTH;
-      baseH = OPTA_TB_HEIGHT;
-    }
+    const baseW = symDef?.width || 4;
+    const baseH = symDef?.height || 4;
     return { w: baseW * scaleX, h: baseH * scaleY, baseW, baseH, scaleX, scaleY };
   }
 
@@ -798,20 +752,17 @@
     if (!s) return null;
     const port = (s.ports || []).find((p) => p.id === portId);
     if (!port) return null;
-    const symPort = isOptaTbSymbol(s)
-      ? { ...s, width: OPTA_TB_WIDTH, height: OPTA_TB_HEIGHT }
-      : s;
     let pos = null;
     if (typeof MvDrawPorts !== 'undefined') {
-      pos = MvDrawPorts.portWorldPosition(node, symPort, port);
+      pos = MvDrawPorts.portWorldPosition(node, s, port);
     }
     if (!pos) {
       const { scaleX, scaleY } = nodeScale(node);
       const rad = ((node.rotation || 0) * Math.PI) / 180;
       const cos = Math.cos(rad);
       const sin = Math.sin(rad);
-      const lx = (port.x - symPort.width / 2) * scaleX;
-      const ly = (port.y - symPort.height / 2) * scaleY;
+      const lx = (port.x - s.width / 2) * scaleX;
+      const ly = (port.y - s.height / 2) * scaleY;
       pos = {
         x: node.x + lx * cos - ly * sin,
         y: node.y + lx * sin + ly * cos,
@@ -1552,7 +1503,6 @@
       'Tanks',
       'Lift & ATU panels',
       'Power panels',
-      'Electrical single line',
       'Drainfield',
       'Distribution',
       'Piping',
@@ -1563,7 +1513,7 @@
       'HMI — Valves',
       'HMI — Process equipment',
     ];
-    const DEFAULT_OPEN = new Set(['Tanks', 'Lift & ATU panels', 'Power panels', 'Electrical single line', 'Drainfield', 'Site plan (MV Draw)']);
+    const DEFAULT_OPEN = new Set(['Tanks', 'Lift & ATU panels', 'Power panels', 'Drainfield', 'Site plan (MV Draw)']);
     const q = String(state.librarySearch || '').trim().toLowerCase();
     let expanded = null;
     try {
@@ -1648,37 +1598,18 @@
   }
 
   async function loadBackground() {
-    const gen = ++bgLoadGen;
     const bg = state.project?.background;
     state.bgImage = null;
-    if (bg?.type !== 'image' || !bg.path) {
-      draw();
-      return;
-    }
+    if (bg?.type !== 'image' || !bg.path) return;
     const file = bg.path.replace(/^uploads[/\\]/, '');
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    const timeoutMs = 15000;
-    try {
-      await Promise.race([
-        new Promise((resolve, reject) => {
-          img.onload = resolve;
-          img.onerror = () => reject(new Error('Background image failed to load'));
-          img.src = `${API}/background/${encodeURIComponent(file)}`;
-        }),
-        new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('Background image load timed out')), timeoutMs);
-        }),
-      ]);
-    } catch {
-      if (gen !== bgLoadGen) return;
-      state.bgImage = null;
-      draw();
-      return;
-    }
-    if (gen !== bgLoadGen) return;
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = reject;
+      img.src = `${API}/background/${encodeURIComponent(file)}`;
+    });
     state.bgImage = img;
-    draw();
   }
 
   function drawGrid() {
@@ -1891,662 +1822,6 @@
     ctx.restore();
   }
 
-  function drawSldShape(shape, s, tl, br, rw, rh, cx, cy, sc, fs, stroke, fill) {
-    const lw = ctx.lineWidth;
-    const topY = tl.y + rh * 0.08;
-    const botY = br.y - rh * 0.08;
-    const midY = (topY + botY) / 2;
-
-    function drawVerticalStem() {
-      ctx.beginPath();
-      ctx.moveTo(cx, topY);
-      ctx.lineTo(cx, botY);
-      ctx.stroke();
-    }
-
-    function sldPortPosition(port) {
-      const isOptaTb = shape === 'sld_opta' || shape === 'sld_expansion' || shape === 'sld_dc_supply';
-      let baseW = s?.width || rw;
-      let baseH = s?.height || rh;
-      if (shape === 'sld_opta' || shape === 'sld_expansion') {
-        baseW = OPTA_TB_WIDTH;
-        baseH = OPTA_TB_HEIGHT;
-      }
-      const scaleX = baseW > 0 ? rw / baseW : 1;
-      const scaleY = baseH > 0 ? rh / baseH : 1;
-      let lx = (port.x - baseW / 2) * scaleX;
-      let ly = (port.y - baseH / 2) * scaleY;
-      if (typeof MvDrawPorts !== 'undefined' && !isOptaTb) {
-        const off = MvDrawPorts.portLocalOffset(s, port);
-        lx = off.lx * scaleX;
-        ly = off.ly * scaleY;
-      }
-      // Opta TB: match portWorld (+y = north on plan) under scale(s, -sc).
-      const y = isOptaTb ? (cy + ly) : (cy - ly);
-      return { x: cx + lx, y };
-    }
-
-    function drawPortStem(portId) {
-      const port = (s?.ports || []).find((p) => p.id === portId);
-      if (!port) return;
-      const { x: px, y: py } = sldPortPosition(port);
-      ctx.beginPath();
-      ctx.moveTo(px, py);
-      switch (port.dir) {
-        case 'n':
-          ctx.lineTo(px, topY);
-          break;
-        case 's':
-          ctx.lineTo(px, botY);
-          break;
-        case 'w':
-          ctx.lineTo(tl.x, py);
-          break;
-        case 'e':
-          ctx.lineTo(br.x, py);
-          break;
-        default:
-          break;
-      }
-      ctx.stroke();
-    }
-
-    function sldStemEnd(port, px, py) {
-      switch (port.dir) {
-        case 'n':
-          return { x: px, y: topY };
-        case 's':
-          return { x: px, y: botY };
-        case 'w':
-          return { x: tl.x, y: py };
-        case 'e':
-          return { x: br.x, y: py };
-        default:
-          return { x: px, y: py };
-      }
-    }
-
-    function sldLabelAnchor(port, px, py, noStem) {
-      if (!noStem) return sldStemEnd(port, px, py);
-      const outward = Math.max(rw * 0.045, rh * 0.022, 0.9 / sc);
-      switch (port.dir) {
-        case 'n':
-          return { x: px, y: py - outward };
-        case 's':
-          return { x: px, y: py + outward };
-        case 'w':
-          return { x: px - outward, y: py };
-        case 'e':
-          return { x: px + outward, y: py };
-        default:
-          return { x: px, y: py };
-      }
-    }
-
-    function drawSldTerminalGraphic(portId) {
-      const port = (s?.ports || []).find((p) => p.id === portId);
-      if (!port) return;
-      const { x: px, y: py } = sldPortPosition(port);
-      const isOptaTb = shape === 'sld_opta' || shape === 'sld_expansion' || shape === 'sld_dc_supply';
-      const tw = Math.max((isOptaTb ? rw * 0.038 : rw * 0.11), (isOptaTb ? 1.1 : 3.5) / sc);
-      const th = Math.max((isOptaTb ? rh * 0.019 : rh * 0.055), (isOptaTb ? 0.85 : 2.5) / sc);
-      const horiz = port.dir === 'w' || port.dir === 'e';
-      const bw = horiz ? th : tw;
-      const bh = horiz ? tw : th;
-      const termFill = isOptaTb ? '#cbd5e1' : '#f8fafc';
-      ctx.fillStyle = termFill;
-      ctx.fillRect(px - bw / 2, py - bh / 2, bw, bh);
-      ctx.strokeRect(px - bw / 2, py - bh / 2, bw, bh);
-      ctx.beginPath();
-      const slot = tw * (isOptaTb ? 0.32 : 0.22);
-      if (horiz) {
-        ctx.moveTo(px, py - slot);
-        ctx.lineTo(px, py + slot);
-      } else {
-        ctx.moveTo(px - slot, py);
-        ctx.lineTo(px + slot, py);
-      }
-      ctx.stroke();
-    }
-
-    function drawSldTerminalLabel(portId, labelOverride, labelBase = 5.5) {
-      const port = (s?.ports || []).find((p) => p.id === portId);
-      if (!port) return;
-      const label = labelOverride ?? port.label ?? port.id;
-      if (!label) return;
-      const { x: px, y: py } = sldPortPosition(port);
-      const isOptaTb = shape === 'sld_opta' || shape === 'sld_expansion' || shape === 'sld_dc_supply';
-      const anchor = sldLabelAnchor(port, px, py, isOptaTb);
-      const termLabelColor = isOptaTb ? '#f8fafc' : stroke;
-      const gap = isOptaTb
-        ? Math.max(fs(labelBase) * 0.35, 0.55 / sc)
-        : Math.max(rh * 0.07, 2 / sc);
-      const labelPad = isOptaTb ? fs(labelBase) * 0.62 + gap : gap;
-      ctx.fillStyle = termLabelColor;
-      ctx.font = `${fs(labelBase)}px Segoe UI, sans-serif`;
-      ctx.textBaseline = 'middle';
-      if (port.dir === 'n') {
-        ctx.textAlign = 'center';
-        drawSymbolText(label, anchor.x, anchor.y - labelPad);
-      } else if (port.dir === 's') {
-        ctx.textAlign = 'center';
-        drawSymbolText(label, anchor.x, anchor.y + labelPad);
-      } else if (port.dir === 'w') {
-        ctx.textAlign = 'right';
-        drawSymbolText(label, anchor.x - labelPad, anchor.y);
-      } else if (port.dir === 'e') {
-        ctx.textAlign = 'left';
-        drawSymbolText(label, anchor.x + labelPad, anchor.y);
-      }
-      ctx.textAlign = 'center';
-      ctx.fillStyle = stroke;
-    }
-
-    function drawAllSldDevicePorts() {
-      const ports = s?.ports || [];
-      const isOptaTb = shape === 'sld_opta' || shape === 'sld_expansion' || shape === 'sld_dc_supply';
-      let labelBase = ports.length > 18 ? 3.6 : ports.length > 12 ? 4 : ports.length > 8 ? 4.5 : 5.5;
-      if (isOptaTb) labelBase *= 3;
-      if (!isOptaTb) {
-        for (const port of ports) drawPortStem(port.id);
-      }
-      for (const port of ports) drawSldTerminalGraphic(port.id);
-      for (const port of ports) drawSldTerminalLabel(port.id, port.label, labelBase);
-    }
-
-    function drawSldEwBusBar(bodyL, bodyR, busY) {
-      const barH = Math.max(rh * 0.022, 2 / sc);
-      ctx.fillStyle = '#cbd5e1';
-      ctx.fillRect(bodyL, busY - barH / 2, bodyR - bodyL, barH);
-      ctx.strokeRect(bodyL, busY - barH / 2, bodyR - bodyL, barH);
-    }
-
-    function drawSldBusRail(bodyT, bodyB) {
-      const pad = rw * 0.06;
-      const busW = rw * 0.07;
-      ctx.fillStyle = '#cbd5e1';
-      ctx.fillRect(tl.x + pad * 0.35, bodyT, busW, bodyB - bodyT);
-      ctx.strokeRect(tl.x + pad * 0.35, bodyT, busW, bodyB - bodyT);
-    }
-
-    function drawLineLoadBreak(open = false) {
-      drawVerticalStem();
-      if (open) {
-        const gap = rh * 0.12;
-        ctx.beginPath();
-        ctx.moveTo(cx - rw * 0.22, midY - gap);
-        ctx.lineTo(cx + rw * 0.22, midY + gap);
-        ctx.stroke();
-      } else {
-        ctx.beginPath();
-        ctx.arc(cx, midY, rw * 0.14, Math.PI * 0.15, Math.PI * 0.85);
-        ctx.stroke();
-      }
-    }
-
-    ctx.strokeStyle = stroke;
-    ctx.fillStyle = fill;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-
-    if (shape === 'sld_service') {
-      drawVerticalStem();
-      ctx.beginPath();
-      ctx.arc(cx, topY, Math.min(rw, rh) * 0.22, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = stroke;
-      ctx.font = `bold ${fs(7)}px Segoe UI, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      drawSymbolText('UTILITY', cx, botY + rh * 0.14);
-      return;
-    }
-
-    if (shape === 'sld_disconnect') {
-      drawLineLoadBreak(true);
-      ctx.fillStyle = stroke;
-      ctx.font = `bold ${fs(7)}px Segoe UI, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      drawSymbolText('DISC', cx, midY - rh * 0.22);
-      return;
-    }
-
-    if (shape === 'sld_breaker') {
-      const bx = cx - rw * 0.28;
-      const by = midY - rh * 0.18;
-      const bw = rw * 0.56;
-      const bh = rh * 0.36;
-      drawVerticalStem();
-      ctx.fillRect(bx, by, bw, bh);
-      ctx.strokeRect(bx, by, bw, bh);
-      ctx.beginPath();
-      ctx.moveTo(cx, topY);
-      ctx.lineTo(cx, by);
-      ctx.moveTo(cx, by + bh);
-      ctx.lineTo(cx, botY);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(cx, by + bh * 0.35, rw * 0.12, Math.PI * 0.1, Math.PI * 0.9);
-      ctx.stroke();
-      ctx.fillStyle = stroke;
-      ctx.font = `bold ${fs(7)}px Segoe UI, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      drawSymbolText('CB', cx, by + bh * 0.72);
-      return;
-    }
-
-    if (shape === 'sld_fuse') {
-      drawVerticalStem();
-      const fx = cx - rw * 0.18;
-      const fy = midY - rh * 0.14;
-      ctx.fillRect(fx, fy, rw * 0.36, rh * 0.28);
-      ctx.strokeRect(fx, fy, rw * 0.36, rh * 0.28);
-      ctx.fillStyle = stroke;
-      ctx.font = `bold ${fs(7)}px Segoe UI, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      drawSymbolText('F', cx, midY);
-      return;
-    }
-
-    if (shape === 'sld_no_contact' || shape === 'sld_nc_contact') {
-      const gap = rh * 0.1;
-      const arm = rw * 0.3;
-      ctx.beginPath();
-      ctx.moveTo(cx, topY);
-      ctx.lineTo(cx, midY - gap);
-      ctx.moveTo(cx, midY + gap);
-      ctx.lineTo(cx, botY);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(cx - arm, midY - gap);
-      ctx.lineTo(cx - arm, midY + gap);
-      ctx.moveTo(cx + arm, midY - gap);
-      ctx.lineTo(cx + arm, midY + gap);
-      ctx.stroke();
-      ctx.beginPath();
-      if (shape === 'sld_no_contact') {
-        ctx.moveTo(cx - arm * 0.9, midY - gap * 2.2);
-        ctx.lineTo(cx + arm * 0.55, midY + gap * 1.6);
-      } else {
-        ctx.moveTo(cx - arm * 0.9, midY - gap * 1.6);
-        ctx.lineTo(cx + arm * 0.9, midY + gap * 1.6);
-      }
-      ctx.stroke();
-      ctx.fillStyle = stroke;
-      ctx.font = `bold ${fs(7)}px Segoe UI, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      drawSymbolText(shape === 'sld_no_contact' ? 'NO' : 'NC', cx, midY - rh * 0.28);
-      return;
-    }
-
-    if (shape === 'sld_coil') {
-      const bx = cx - rw * 0.32;
-      const by = midY - rh * 0.2;
-      const bw = rw * 0.64;
-      const bh = rh * 0.4;
-      ctx.beginPath();
-      ctx.moveTo(cx, topY);
-      ctx.lineTo(cx, by);
-      ctx.moveTo(cx, by + bh);
-      ctx.lineTo(cx, botY);
-      ctx.stroke();
-      ctx.fillRect(bx, by, bw, bh);
-      ctx.strokeRect(bx, by, bw, bh);
-      const waves = 4;
-      const step = bw / waves;
-      ctx.beginPath();
-      for (let i = 0; i <= waves; i += 1) {
-        const x = bx + step * i;
-        const y = by + bh * (i % 2 === 0 ? 0.32 : 0.68);
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-      ctx.fillStyle = stroke;
-      ctx.font = `bold ${fs(7)}px Segoe UI, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      drawSymbolText('CR', cx, by + bh + rh * 0.12);
-      return;
-    }
-
-    if (shape === 'sld_motor') {
-      const r = Math.min(rw, rh) * 0.38;
-      drawVerticalStem();
-      ctx.beginPath();
-      ctx.arc(cx, midY, r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = stroke;
-      ctx.font = `bold ${fs(11)}px Segoe UI, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      drawSymbolText('M', cx, midY);
-      return;
-    }
-
-    if (shape === 'sld_light') {
-      const r = Math.min(rw, rh) * 0.32;
-      drawVerticalStem();
-      ctx.beginPath();
-      ctx.arc(cx, midY, r, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(cx - r * 0.65, midY - r * 0.65);
-      ctx.lineTo(cx + r * 0.65, midY + r * 0.65);
-      ctx.moveTo(cx + r * 0.65, midY - r * 0.65);
-      ctx.lineTo(cx - r * 0.65, midY + r * 0.65);
-      ctx.stroke();
-      return;
-    }
-
-    if (shape === 'sld_horn') {
-      drawVerticalStem();
-      const bellW = rw * 0.58;
-      const bellH = rh * 0.42;
-      const bellTop = midY - bellH * 0.12;
-      const bellArcY = midY + bellH * 0.72;
-      ctx.beginPath();
-      ctx.moveTo(cx - bellW / 2, bellTop);
-      ctx.lineTo(cx - bellW / 2, bellArcY);
-      ctx.arc(cx, bellArcY, bellW / 2, Math.PI, 0, false);
-      ctx.lineTo(cx + bellW / 2, bellTop);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(cx, bellArcY);
-      ctx.lineTo(cx, bellArcY + bellH * 0.18);
-      ctx.stroke();
-      ctx.fillStyle = stroke;
-      ctx.font = `bold ${fs(7)}px Segoe UI, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      drawSymbolText('H', cx, midY - rh * 0.02);
-      return;
-    }
-
-    if (shape === 'sld_starter') {
-      const bx = cx - rw * 0.28;
-      const by = midY - rh * 0.2;
-      const bw = rw * 0.56;
-      const bh = rh * 0.4;
-      drawVerticalStem();
-      ctx.fillRect(bx, by, bw, bh);
-      ctx.strokeRect(bx, by, bw, bh);
-      ctx.strokeStyle = stroke;
-      ctx.beginPath();
-      ctx.moveTo(bx + bw * 0.2, by + bh * 0.35);
-      ctx.lineTo(bx + bw * 0.45, by + bh * 0.35);
-      ctx.lineTo(bx + bw * 0.45, by + bh * 0.65);
-      ctx.lineTo(bx + bw * 0.7, by + bh * 0.65);
-      ctx.stroke();
-      ctx.fillStyle = stroke;
-      ctx.font = `bold ${fs(7)}px Segoe UI, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      drawSymbolText('MS', cx, by + bh * 0.82);
-      return;
-    }
-
-    if (shape === 'sld_vfd') {
-      const bx = cx - rw * 0.3;
-      const by = midY - rh * 0.2;
-      const bw = rw * 0.6;
-      const bh = rh * 0.4;
-      drawVerticalStem();
-      ctx.fillRect(bx, by, bw, bh);
-      ctx.strokeRect(bx, by, bw, bh);
-      ctx.fillStyle = stroke;
-      ctx.font = `bold ${fs(8)}px Segoe UI, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      drawSymbolText('VFD', cx, midY);
-      return;
-    }
-
-    if (shape === 'sld_transformer') {
-      const r = Math.min(rw, rh) * 0.22;
-      drawVerticalStem();
-      ctx.beginPath();
-      ctx.arc(cx, midY - r * 0.55, r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(cx, midY + r * 0.55, r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = stroke;
-      ctx.font = `${fs(7)}px Segoe UI, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      drawSymbolText('XFMR', cx, botY + rh * 0.12);
-      return;
-    }
-
-    if (shape === 'sld_bus') {
-      const barY = cy;
-      ctx.lineWidth = Math.max(lw * 2.2, 3 / sc);
-      ctx.beginPath();
-      ctx.moveTo(tl.x, barY);
-      ctx.lineTo(br.x, barY);
-      ctx.stroke();
-      ctx.lineWidth = lw;
-      const circuitPorts = (s?.ports || []).filter((p) => /^c\d+$/.test(p.id));
-      for (const port of circuitPorts) {
-        let lx = port.x - (s?.width || rw) / 2;
-        if (typeof MvDrawPorts !== 'undefined') {
-          lx = MvDrawPorts.portLocalOffset(s, port).lx;
-        }
-        const px = cx + lx;
-        ctx.beginPath();
-        ctx.moveTo(px, barY);
-        ctx.lineTo(px, barY + rh * 0.35);
-        ctx.stroke();
-      }
-      ctx.fillStyle = stroke;
-      ctx.font = `bold ${fs(7)}px Segoe UI, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      drawSymbolText('BUS', cx, barY - rh * 0.45);
-      return;
-    }
-
-    if (shape === 'sld_meter') {
-      const r = Math.min(rw, rh) * 0.34;
-      drawVerticalStem();
-      ctx.beginPath();
-      ctx.arc(cx, midY, r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = stroke;
-      ctx.font = `bold ${fs(7)}px Segoe UI, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      drawSymbolText('kWh', cx, midY);
-      return;
-    }
-
-    if (shape === 'sld_ground') {
-      ctx.beginPath();
-      ctx.moveTo(cx, topY);
-      ctx.lineTo(cx, midY);
-      ctx.stroke();
-      const w1 = rw * 0.42;
-      const w2 = rw * 0.28;
-      const w3 = rw * 0.14;
-      const y1 = midY + rh * 0.08;
-      const y2 = y1 + rh * 0.1;
-      const y3 = y2 + rh * 0.1;
-      ctx.beginPath();
-      ctx.moveTo(cx - w1 / 2, y1);
-      ctx.lineTo(cx + w1 / 2, y1);
-      ctx.moveTo(cx - w2 / 2, y2);
-      ctx.lineTo(cx + w2 / 2, y2);
-      ctx.moveTo(cx - w3 / 2, y3);
-      ctx.lineTo(cx + w3 / 2, y3);
-      ctx.stroke();
-      return;
-    }
-
-    if (shape === 'sld_panel') {
-      const pad = rw * 0.08;
-      ctx.fillRect(tl.x, tl.y, rw, rh);
-      ctx.strokeRect(tl.x, tl.y, rw, rh);
-      drawVerticalStem();
-      const circuits = Math.max(1, s.circuits || (s.ports || []).filter((p) => /^c\d+$/.test(p.id)).length || 1);
-      const circuitPorts = (s.ports || []).filter((p) => /^c\d+$/.test(p.id));
-      ctx.fillStyle = stroke;
-      ctx.font = `bold ${fs(7)}px Segoe UI, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      drawSymbolText(`MCC×${circuits}`, cx, tl.y + pad + rh * 0.18);
-      const dotR = Math.max(1, rw * 0.025);
-      ctx.fillStyle = '#eab308';
-      for (const port of circuitPorts) {
-        let lx = port.x - (s?.width || rw) / 2;
-        let ly = port.y - (s?.height || rh) / 2;
-        if (typeof MvDrawPorts !== 'undefined') {
-          const off = MvDrawPorts.portLocalOffset(s, port);
-          lx = off.lx;
-          ly = off.ly;
-        }
-        ctx.beginPath();
-        ctx.arc(cx + lx, cy - ly, dotR, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.strokeStyle = stroke;
-      return;
-    }
-
-    if (shape === 'sld_ats') {
-      ctx.beginPath();
-      ctx.moveTo(tl.x + rw * 0.12, midY);
-      ctx.lineTo(cx, topY + rh * 0.18);
-      ctx.lineTo(br.x - rw * 0.12, midY);
-      ctx.lineTo(cx, botY);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = stroke;
-      ctx.font = `bold ${fs(7)}px Segoe UI, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      drawSymbolText('N', tl.x + rw * 0.18, midY);
-      drawSymbolText('E', br.x - rw * 0.18, midY);
-      drawSymbolText('ATS', cx, midY);
-      return;
-    }
-
-    if (shape === 'sld_generator') {
-      const r = Math.min(rw, rh) * 0.34;
-      drawVerticalStem();
-      ctx.beginPath();
-      ctx.arc(cx, midY, r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = stroke;
-      ctx.font = `bold ${fs(10)}px Segoe UI, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      drawSymbolText('G', cx, midY);
-      return;
-    }
-
-    if (shape === 'sld_dc_supply') {
-      const pad = rw * 0.1;
-      const bx = cx - rw * 0.28;
-      const by = cy - rh * 0.18;
-      const bw = rw * 0.56;
-      const bh = rh * 0.36;
-      ctx.fillRect(bx, by, bw, bh);
-      ctx.strokeRect(bx, by, bw, bh);
-      ctx.fillStyle = stroke;
-      ctx.font = `bold ${fs(7)}px Segoe UI, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      drawSymbolText('AC/DC', cx, cy);
-      ctx.font = `${fs(6)}px Segoe UI, sans-serif`;
-      drawSymbolText('24V', cx, by - pad * 0.35);
-      drawAllSldDevicePorts();
-      return;
-    }
-
-    function optaFamilyBodyRect() {
-      const padT = rh * 0.14;
-      const padB = rh * 0.14;
-      const padX = rw * 0.06;
-      return {
-        padT,
-        padB,
-        padX,
-        bodyL: tl.x + padX,
-        bodyR: br.x - padX,
-        bodyT: tl.y + padT,
-        bodyB: br.y - padB,
-      };
-    }
-
-    function drawOptaFamilyFrame() {
-      ctx.strokeRect(tl.x, tl.y, rw, rh);
-    }
-
-    function drawOptaFamilyBody(bodyL, bodyT, bodyR, bodyB) {
-      ctx.fillStyle = fill;
-      ctx.fillRect(bodyL, bodyT, bodyR - bodyL, bodyB - bodyT);
-      ctx.strokeRect(bodyL, bodyT, bodyR - bodyL, bodyB - bodyT);
-      const bandH = Math.max((bodyB - bodyT) * 0.14, 2.5 / sc);
-      ctx.fillStyle = '#0ea5e9';
-      ctx.fillRect(bodyL, bodyT, bodyR - bodyL, bandH);
-      ctx.strokeStyle = stroke;
-    }
-
-    function drawOptaFamilyLabel(text, x, y, size, bold = false) {
-      ctx.fillStyle = '#f8fafc';
-      ctx.font = `${bold ? 'bold ' : ''}${fs(size)}px Segoe UI, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      drawSymbolText(text, x, y);
-      ctx.fillStyle = stroke;
-    }
-
-    if (shape === 'sld_opta') {
-      const { bodyL, bodyR, bodyT, bodyB } = optaFamilyBodyRect();
-      drawOptaFamilyFrame();
-      drawOptaFamilyBody(bodyL, bodyT, bodyR, bodyB);
-      drawOptaFamilyLabel('OPTA', cx, cy - rh * 0.05, 9, true);
-      drawOptaFamilyLabel('PLC', cx, cy + rh * 0.06, 7);
-      drawOptaFamilyLabel('IN', cx - rw * 0.38, bodyB + rh * 0.03, 6);
-      drawOptaFamilyLabel('OUT', cx - rw * 0.38, bodyT - rh * 0.03, 6);
-      drawOptaFamilyLabel('EXP', bodyR + rw * 0.05, cy, 6);
-      drawAllSldDevicePorts();
-      return;
-    }
-
-    if (shape === 'sld_expansion') {
-      const { bodyL, bodyR, bodyT, bodyB } = optaFamilyBodyRect();
-      const symType = String(s?.type || '').toLowerCase();
-      const mod = String(s?.expansion || (symType.includes('a0602') ? 'A0602' : symType.includes('d1608') ? 'D1608E' : 'EXP')).trim() || 'EXP';
-      const slot = s?.slot ? `S${s.slot}` : (symType.includes('a0602') ? 'S2' : symType.includes('d1608') ? 'S1' : '');
-      const isA0602 = mod === 'A0602';
-      drawOptaFamilyFrame();
-      drawOptaFamilyBody(bodyL, bodyT, bodyR, bodyB);
-      drawSldEwBusBar(bodyL, bodyR, cy);
-      drawOptaFamilyLabel(mod, cx, cy - (slot ? rh * 0.06 : 0), 8, true);
-      if (slot) drawOptaFamilyLabel(slot, cx, cy + rh * 0.1, 6);
-      drawOptaFamilyLabel('IN', cx - rw * 0.38, bodyB + rh * 0.03, 6);
-      drawOptaFamilyLabel(isA0602 ? 'AO' : 'OUT', cx - rw * 0.38, bodyT - rh * 0.03, 6);
-      drawAllSldDevicePorts();
-      return;
-    }
-
-    ctx.fillRect(tl.x, tl.y, rw, rh);
-    ctx.strokeRect(tl.x, tl.y, rw, rh);
-  }
-
   function drawSymbolShape(node, s, tl, br, rw, rh, localScale) {
     const sc = localScale || 1;
     const fs = (base) => Math.max(base * 0.85, base * state.zoom) / sc;
@@ -2554,17 +1829,11 @@
     const cy = tl.y + rh / 2;
     const stroke = isNodeSelected(node.id) ? '#fbbf24' : (s?.stroke || '#334155');
     const fill = s?.fill || '#64748b';
-    const shapeName = s?.shape || 'rect';
-    ctx.lineWidth = (isNodeSelected(node.id) ? 3 : (shapeName === 'sld_opta' || shapeName === 'sld_expansion' ? 2.5 : 2)) / sc;
+    ctx.lineWidth = (isNodeSelected(node.id) ? 3 : 2) / sc;
     ctx.strokeStyle = stroke;
     ctx.fillStyle = fill;
 
     const shape = s?.shape || 'rect';
-
-    if (shape.startsWith('sld_')) {
-      drawSldShape(shape, s, tl, br, rw, rh, cx, cy, sc, fs, stroke, fill);
-      return;
-    }
 
     if (shape === 'treatment_tank') {
       const r = Math.min(rw, rh) * 0.44;
@@ -3259,7 +2528,6 @@
     if (data?.storage) state.storage = data.storage;
     if (data?.project?.libraryFile) state.activeFile = data.project.libraryFile;
     else if (data?.file) state.activeFile = data.file;
-    else state.activeFile = null;
     fillProjectFields();
   }
 
@@ -3300,11 +2568,11 @@
 
   function mooreviewProjectLabel() {
     const name = state.mooreviewContext?.projectName;
-    if (!name) return 'MooreVIEW project: —';
+    if (!name) return 'MooreView project: —';
     const synced = state.project?.meta?.mooreviewProject === name;
     const est = state.estProjectPath || state.mooreviewContext?.estPath;
     const estNote = synced && est ? ` · ${est}` : '';
-    return `MooreVIEW project: ${name}${synced ? ' (synced)' : ''}${estNote}`;
+    return `MooreView project: ${name}${synced ? ' (synced)' : ''}${estNote}`;
   }
 
   function closeFileMenu() {
@@ -3357,150 +2625,16 @@
     updateProjectStatus();
   }
 
-  let unsavedPromptResolve = null;
-  let unsavedOverlayKeyHandler = null;
-  let openListCache = null;
-  let openDirtyConfirmed = false;
-
-  function isOpenOverlayOpen() {
-    const overlay = document.getElementById('mv-open-overlay');
-    return !!overlay && !overlay.classList.contains('view-hidden');
-  }
-
-  function isUnsavedOverlayOpen() {
-    const overlay = document.getElementById('mv-unsaved-overlay');
-    return !!overlay && !overlay.classList.contains('view-hidden');
-  }
-
-  function hideUnsavedOverlay() {
-    const overlay = document.getElementById('mv-unsaved-overlay');
-    overlay?.classList.add('view-hidden');
-    overlay?.setAttribute('aria-hidden', 'true');
-    if (unsavedOverlayKeyHandler) {
-      window.removeEventListener('keydown', unsavedOverlayKeyHandler, true);
-      unsavedOverlayKeyHandler = null;
-    }
-  }
-
-  function showUnsavedOverlay() {
-    const overlay = document.getElementById('mv-unsaved-overlay');
-    if (!overlay) return;
-    closeFileMenu();
-    overlay.classList.remove('view-hidden');
-    overlay.setAttribute('aria-hidden', 'false');
-    if (!unsavedOverlayKeyHandler) {
-      unsavedOverlayKeyHandler = (ev) => {
-        if (!isUnsavedOverlayOpen()) return;
-        if (ev.key === 'Escape') {
-          ev.preventDefault();
-          ev.stopPropagation();
-          finishUnsavedPrompt('cancel');
-        }
-      };
-      window.addEventListener('keydown', unsavedOverlayKeyHandler, true);
-    }
-    document.getElementById('mv-unsaved-discard')?.focus();
-  }
-
-  function finishUnsavedPrompt(result) {
-    hideUnsavedOverlay();
-    document.getElementById('mv-unsaved-save')?.removeAttribute('disabled');
-    const resolve = unsavedPromptResolve;
-    unsavedPromptResolve = null;
-    if (resolve) resolve(result);
-  }
-
-  function bindUnsavedDialog() {
-    const overlay = document.getElementById('mv-unsaved-overlay');
-    if (!overlay || overlay.dataset.bound === '1') return;
-    overlay.dataset.bound = '1';
-    overlay.addEventListener('click', (ev) => {
-      if (ev.target === overlay) finishUnsavedPrompt('cancel');
-    });
-    overlay.addEventListener('click', (ev) => {
-      const btn = ev.target.closest('button');
-      if (!btn) return;
-      if (btn.id === 'mv-unsaved-cancel') {
-        ev.preventDefault();
-        finishUnsavedPrompt('cancel');
-      } else if (btn.id === 'mv-unsaved-discard') {
-        ev.preventDefault();
-        finishUnsavedPrompt('proceed');
-      }
-    });
-    document.getElementById('mv-unsaved-form')?.addEventListener('submit', async (ev) => {
-      ev.preventDefault();
-      const saveBtn = document.getElementById('mv-unsaved-save');
-      if (saveBtn) saveBtn.disabled = true;
-      try {
-        await saveProject();
-        finishUnsavedPrompt('proceed');
-      } catch (e) {
-        setStatus(e.message, true);
-        if (saveBtn) saveBtn.disabled = false;
-      }
-    });
-  }
-
-  function unsavedPromptCopy(action) {
-    const name = displayProjectName();
-    switch (action) {
-      case 'close':
-        return {
-          title: 'Save changes before closing?',
-          message: `"${name}" has unsaved changes. Save your layout before closing MV Draw?`,
-        };
-      case 'new':
-        return {
-          title: 'Save changes before creating a new project?',
-          message: `"${name}" has unsaved changes. Save before creating a new blank layout?`,
-        };
-      case 'open':
-        return {
-          title: 'Save changes before opening?',
-          message: `"${name}" has unsaved changes. Save before opening another layout?`,
-        };
-      case 'load':
-        return {
-          title: 'Save changes before loading?',
-          message: `"${name}" has unsaved changes. Save before loading from the MooreVIEW project?`,
-        };
-      default:
-        return {
-          title: 'Save changes?',
-          message: `"${name}" has unsaved changes.`,
-        };
-    }
-  }
-
-  function promptUnsavedChanges(options = {}) {
-    if (!state.dirty) return Promise.resolve('proceed');
-    const overlay = document.getElementById('mv-unsaved-overlay');
-    if (!overlay) {
-      return Promise.resolve(window.confirm('Discard unsaved changes?') ? 'proceed' : 'cancel');
-    }
-    if (unsavedPromptResolve) finishUnsavedPrompt('cancel');
-    const copy = unsavedPromptCopy(options.action);
-    const titleEl = document.getElementById('mv-unsaved-title');
-    const msgEl = document.getElementById('mv-unsaved-message');
-    if (titleEl) titleEl.textContent = copy.title;
-    if (msgEl) msgEl.textContent = copy.message;
-    return new Promise((resolve) => {
-      unsavedPromptResolve = resolve;
-      showUnsavedOverlay();
-    });
-  }
-
-  async function confirmProceedIfDirty(options = {}) {
-    const result = await promptUnsavedChanges(options);
-    return result === 'proceed';
+  function confirmDiscard() {
+    if (!state.dirty) return true;
+    return window.confirm('Discard unsaved changes?');
   }
 
   async function loadProject(project, file, options = {}) {
-    state.project = project ? JSON.parse(JSON.stringify(project)) : null;
-    if (!state.project) return;
-    state.activeFile = file || state.project.libraryFile || null;
-    state.localFilePath = options.localPath || null;
+    state.project = project;
+    state.activeFile = file || project?.libraryFile || null;
+    if (options.localPath) state.localFilePath = options.localPath;
+    else if (file || project?.libraryFile) state.localFilePath = null;
     undoStack.length = 0;
     redoStack.length = 0;
     clearConnectState();
@@ -3512,12 +2646,7 @@
     state.snapGuides = [];
     state.dragging = null;
     state.calibrate = null;
-    state.bgImage = null;
-    try {
-      await loadBackground();
-    } catch {
-      /* missing or broken background must not block load */
-    }
+    await loadBackground();
     fillProjectFields();
     fillInspector();
     updateScaleLabel();
@@ -3535,50 +2664,13 @@
   }
 
   async function newProject() {
-    try {
-      closeFileMenu();
-      if (!(await confirmProceedIfDirty({ action: 'new' }))) return;
-      ++bgLoadGen;
-      state.activeFile = null;
-      state.localFilePath = null;
-      const localBlank = blankLocalProject('untitled');
-      await loadProject(localBlank, null);
-      if (!state.project?.extents && sheetApi) {
-        applySheetWorkspace('D');
-      }
-      const localExtents = state.project?.extents
-        ? JSON.parse(JSON.stringify(state.project.extents))
-        : null;
-      setStatus('New project — syncing…');
-      try {
-        const data = await api('POST', '/project/new', { name: 'untitled' }, { timeoutMs: 20000 });
-        if (data?.project) {
-          state.project = data.project;
-          if (localExtents && !state.project.extents) {
-            state.project.extents = localExtents;
-            state.dirty = true;
-          } else {
-            state.dirty = false;
-          }
-          if (data.storage) state.storage = data.storage;
-          state.activeFile = data.project.libraryFile || data.file || null;
-          fillProjectFields();
-          updateExtentsPanel();
-          updateProjectStatus();
-          draw();
-        }
-      } catch (e) {
-        state.dirty = true;
-        updateProjectStatus();
-        setStatus(`${e.message || 'Server sync failed'} — blank layout kept on screen`, true);
-        return;
-      }
-      setStatus(state.project?.extents
-        ? 'New project — Arch D (1 in = 10 ft). Place symbols, or pick another sheet in Workspace.'
-        : 'New project');
-    } catch (e) {
-      setStatus(e.message || 'New project failed', true);
-    }
+    if (!confirmDiscard()) return;
+    closeFileMenu();
+    setStatus('Creating project…');
+    const data = await api('POST', '/project/new', { name: 'untitled' });
+    applyProjectPayload(data);
+    await loadProject(data.project, null);
+    setStatus('New project');
   }
 
   function formatSavedAt(iso) {
@@ -3590,140 +2682,124 @@
     }
   }
 
-  function renderOpenListFromData(projects) {
+  function mvProjectTypeLabel(p) {
+    const file = String(p?.file || p?.path || '');
+    if (/\.mvbundle$/i.test(file)) return 'mvbundle';
+    if (/\.mvdraw\.json$/i.test(file)) return 'mvdraw.json';
+    if (/\.json$/i.test(file)) return 'json';
+    return 'project';
+  }
+
+  function sortMvOpenProjects(items) {
+    const { key, dir } = state.openListSort;
+    const mul = dir === 'asc' ? 1 : -1;
+    const value = (p) => {
+      if (key === 'date') return String(p.savedAt || '');
+      if (key === 'type') return mvProjectTypeLabel(p);
+      return String(p.name || p.file || '').toLowerCase();
+    };
+    return [...items].sort((a, b) => {
+      const va = value(a);
+      const vb = value(b);
+      if (va < vb) return -1 * mul;
+      if (va > vb) return 1 * mul;
+      return String(a.name || a.file || '').localeCompare(String(b.name || b.file || ''));
+    });
+  }
+
+  function syncMvOpenSortButtons() {
+    const { key, dir } = state.openListSort;
+    document.querySelectorAll('[data-mv-project-sort]').forEach((btn) => {
+      const k = btn.getAttribute('data-mv-project-sort');
+      const active = k === key;
+      btn.classList.toggle('active', active);
+      const label = btn.getAttribute('data-sort-label') || btn.textContent.replace(/\s*[▲▼]\s*$/, '').trim();
+      btn.setAttribute('data-sort-label', label);
+      btn.textContent = active ? `${label}${dir === 'asc' ? ' ▲' : ' ▼'}` : label;
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+  }
+
+  function paintOpenList() {
     const list = document.getElementById('mv-open-list');
     const empty = document.getElementById('mv-open-empty');
     if (!list) return;
-    const rows = Array.isArray(projects) ? projects : [];
+    const projects = sortMvOpenProjects(state.openListProjects);
+    syncMvOpenSortButtons();
     list.innerHTML = '';
-    if (empty) empty.classList.toggle('view-hidden', rows.length > 0);
-    if (!rows.length) {
-      list.innerHTML = '<p class="panel-hint">No saved projects yet — use Save as… or Open from file…</p>';
-      return;
-    }
-    for (const p of rows) {
+    if (empty) empty.classList.toggle('view-hidden', projects.length > 0);
+    if (!projects.length) return;
+    for (const p of projects) {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'mv-project-item';
       btn.dataset.file = p.file;
       const path = p.path || `data/mv-draw/projects/${p.file}`;
-      btn.innerHTML = `<span class="mv-project-item-name">${p.name || p.file}</span><span class="mv-project-item-path cell-mono">${path}</span><span class="mv-project-item-meta">${formatSavedAt(p.savedAt)}</span>`;
+      const type = mvProjectTypeLabel(p);
+      btn.innerHTML = `<span class="mv-project-item-name">${p.name || p.file}</span><span class="mv-project-item-path cell-mono">${path}</span><span class="mv-project-item-meta">${type} · ${formatSavedAt(p.savedAt)}</span>`;
       btn.addEventListener('click', () => {
         if (btn.disabled) return;
         btn.disabled = true;
-        openServerProject(p.file, { skipDirtyConfirm: openDirtyConfirmed })
-          .catch((e) => setStatus(e.message, true))
-          .finally(() => {
-            btn.disabled = false;
-          });
+        openServerProject(p.file).catch((e) => setStatus(e.message, true)).finally(() => {
+          btn.disabled = false;
+        });
       });
       list.appendChild(btn);
     }
   }
 
-  async function prefetchOpenList() {
-    try {
-      const data = await api('GET', '/projects', null, { timeoutMs: 10000 });
-      openListCache = data.projects || [];
-      return openListCache;
-    } catch {
-      return openListCache;
-    }
-  }
-
   async function renderOpenList() {
     const list = document.getElementById('mv-open-list');
+    const empty = document.getElementById('mv-open-empty');
     if (!list) return;
-    if (!openListCache) {
-      list.innerHTML = '<p class="panel-hint mv-open-loading">Loading projects…</p>';
+    list.innerHTML = '<p class="panel-hint mv-open-loading">Loading projects…</p>';
+    if (empty) empty.classList.add('view-hidden');
+    const data = await api('GET', '/projects');
+    state.openListProjects = data.projects || [];
+    paintOpenList();
+  }
+
+  function showMvOpenOverlay(show) {
+    const overlay = document.getElementById('mv-open-overlay');
+    const dlg = document.getElementById('mv-open-dialog');
+    if (dlg && typeof dlg.showModal === 'function' && typeof dlg.close === 'function') {
+      if (show) {
+        if (!dlg.open) dlg.showModal();
+      } else if (dlg.open) dlg.close();
+      return;
     }
-    const data = await api('GET', '/projects', null, { timeoutMs: 10000 });
-    openListCache = data.projects || [];
-    renderOpenListFromData(openListCache);
-  }
-
-  function hideOpenOverlay(options = {}) {
-    const overlay = document.getElementById('mv-open-overlay');
-    overlay?.classList.add('view-hidden');
-    overlay?.setAttribute('aria-hidden', 'true');
-    if (!options.keepDirtyConfirm) openDirtyConfirmed = false;
-  }
-
-  function showOpenOverlay() {
-    const overlay = document.getElementById('mv-open-overlay');
     if (!overlay) return;
-    closeFileMenu();
-    overlay.classList.remove('view-hidden');
-    overlay.setAttribute('aria-hidden', 'false');
-  }
-
-  function bindOpenOverlay() {
-    const overlay = document.getElementById('mv-open-overlay');
-    if (!overlay || overlay.dataset.bound === '1') return;
-    overlay.dataset.bound = '1';
-    overlay.addEventListener('click', (ev) => {
-      if (ev.target === overlay) hideOpenOverlay();
-    });
-    document.getElementById('mv-open-cancel')?.addEventListener('click', () => {
-      hideOpenOverlay();
-    });
-    document.getElementById('mv-open-browse')?.addEventListener('click', () => {
-      hideOpenOverlay({ keepDirtyConfirm: true });
-      document.getElementById('mv-open-file')?.click();
-    });
-    document.getElementById('mv-open-file')?.addEventListener('change', async (ev) => {
-      const file = ev.target.files?.[0];
-      ev.target.value = '';
-      if (!file) {
-        openDirtyConfirmed = false;
-        return;
-      }
-      try {
-        const text = await file.text();
-        const raw = JSON.parse(text);
-        await openLocalProject(raw, file.name, { skipDirtyConfirm: openDirtyConfirmed });
-      } catch (e) {
-        setStatus(e.message, true);
-      } finally {
-        openDirtyConfirmed = false;
-      }
-    });
+    overlay.classList.toggle('view-hidden', !show);
+    overlay.setAttribute('aria-hidden', show ? 'false' : 'true');
   }
 
   async function showOpenDialog() {
     closeFileMenu();
-    if (!(await confirmProceedIfDirty({ action: 'open' }))) return;
-    openDirtyConfirmed = true;
-    showOpenOverlay();
-    if (openListCache) renderOpenListFromData(openListCache);
+    showMvOpenOverlay(true);
     try {
       await renderOpenList();
     } catch (e) {
-      if (!openListCache?.length) {
-        const list = document.getElementById('mv-open-list');
-        if (list) list.innerHTML = `<p class="panel-hint">${e.message || 'Could not load project list'}</p>`;
-      }
+      const list = document.getElementById('mv-open-list');
+      if (list) list.innerHTML = '';
       setStatus(e.message, true);
     }
   }
 
-  async function openServerProject(file, options = {}) {
-    if (!options.skipDirtyConfirm && !(await confirmProceedIfDirty({ action: 'open' }))) return;
-    hideOpenOverlay();
-    openDirtyConfirmed = false;
+  async function openServerProject(file) {
+    if (!confirmDiscard()) return;
     setStatus('Opening…');
-    const data = await api('POST', '/project/open', { file }, { timeoutMs: 20000 });
+    const data = await api('POST', '/project/open', { file });
+    showMvOpenOverlay(false);
     applyProjectPayload(data);
     await loadProject(data.project, data.file || file);
     setStatus(`Opened ${data.project?.name || file}`);
   }
 
-  async function openLocalProject(raw, localPath, options = {}) {
-    if (!options.skipDirtyConfirm && !(await confirmProceedIfDirty({ action: 'open' }))) return;
-    hideOpenOverlay();
-    openDirtyConfirmed = false;
+  async function openLocalProject(raw, localPath) {
+    if (!confirmDiscard()) return;
     setStatus('Opening…');
-    const data = await api('POST', '/project/import', raw, { timeoutMs: 20000 });
+    const data = await api('POST', '/project/import', raw);
+    showMvOpenOverlay(false);
     applyProjectPayload(data);
     await loadProject(data.project, null, { localPath: localPath || null });
     const warn = Array.isArray(data.importWarnings) && data.importWarnings.length
@@ -3793,13 +2869,13 @@
   async function saveToMooreviewProject() {
     closeFileMenu();
     readProjectFields();
-    const mooreviewName = String(state.mooreviewContext?.projectName || '').trim() || 'MooreVIEW project';
+    const mooreviewName = String(state.mooreviewContext?.projectName || '').trim() || 'MooreView project';
     const linkComposer = window.confirm(
-      `Save site plan to MooreVIEW project "${mooreviewName}"?\n\n`
-      + 'This aligns the layout name with the MooreVIEW project, embeds it in the .est snapshot, and links the HMI composer (Plan mode).',
+      `Save site plan to MooreView project "${mooreviewName}"?\n\n`
+      + 'This aligns the layout name with the MooreView project, embeds it in the .est snapshot, and links the HMI composer (Plan mode).',
     );
     if (!linkComposer) return;
-    setStatus('Saving to MooreVIEW project…');
+    setStatus('Saving to MooreView project…');
     const data = await api('POST', '/project/save-to-project', {
       project: state.project,
       linkComposer: true,
@@ -3854,7 +2930,7 @@
     }
     const apply = window.confirm(
       `Compile HMI faceplates from this site plan?\n\n${formatCompileSummary(preview)}\n\n`
-      + 'Apply will merge the screen into MooreVIEW settings (Composer grid).',
+      + 'Apply will merge the screen into MooreView settings (Composer grid).',
     );
     if (!apply) {
       setStatus('Compile preview — not applied.');
@@ -3877,12 +2953,12 @@
     }
   }
 
-  async function loadFromMooreviewProject(options = {}) {
+  async function loadFromMooreviewProject() {
     closeFileMenu();
-    if (!options.skipDirtyConfirm && !(await confirmProceedIfDirty({ action: 'load' }))) return;
-    setStatus('Loading from MooreVIEW project…');
-    const data = await api('POST', '/project/load-from-project', null, { timeoutMs: 20000 });
-    hideOpenOverlay();
+    if (!confirmDiscard()) return;
+    setStatus('Loading from MooreView project…');
+    const data = await api('POST', '/project/load-from-project');
+    showMvOpenOverlay(false);
     applyProjectPayload(data);
     if (data.context) state.mooreviewContext = data.context;
     if (data.estPath) state.estProjectPath = data.estPath;
@@ -3897,13 +2973,8 @@
     const isUntitled = !String(state.project?.name || '').trim()
       || String(state.project?.name || '').trim().toLowerCase() === 'untitled';
     if (!isBlank || !isUntitled || context.synced) return false;
-    try {
-      await loadFromMooreviewProject({ skipDirtyConfirm: true });
-      return true;
-    } catch (e) {
-      setStatus(e.message || 'Could not load MooreVIEW project layout', true);
-      return false;
-    }
+    await loadFromMooreviewProject();
+    return true;
   }
 
   function updateCanvasCursor() {
@@ -4402,14 +3473,6 @@
   }
 
   function onKeyDown(ev) {
-    if (isUnsavedOverlayOpen()) return;
-    if (isOpenOverlayOpen()) {
-      if (ev.key === 'Escape') {
-        ev.preventDefault();
-        hideOpenOverlay();
-      }
-      return;
-    }
     const tag = ev.target?.tagName;
     const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || ev.target?.isContentEditable;
     if (ev.key === 'F1') {
@@ -4713,9 +3776,9 @@
   }
 
   /** Prefer history.back() when opened from the dashboard — avoids a full reload and blank HMI. */
-  async function returnToDashboard(ev) {
+  function returnToDashboard(ev) {
     if (ev) ev.preventDefault();
-    if (!(await confirmProceedIfDirty({ action: 'close' }))) return;
+    if (!confirmDiscard()) return;
     try {
       const ref = document.referrer;
       if (ref) {
@@ -4792,8 +3855,6 @@
   function bindUi() {
     restoreExportOrientation();
     bindComposerModeUi();
-    bindUnsavedDialog();
-    bindOpenOverlay();
     document.querySelectorAll('.page-close, .standalone-home-link').forEach((el) => {
       el.addEventListener('click', returnToDashboard);
     });
@@ -4833,16 +3894,11 @@
       toggleFileMenu();
     });
     document.addEventListener('click', (ev) => {
-      if (ev.target.closest('#mv-unsaved-overlay')) return;
-      if (ev.target.closest('#mv-open-overlay')) return;
-      if (ev.target.closest('dialog[open]')) return;
       const wrap = document.querySelector('.mv-file-menu-wrap');
       if (!state.fileMenuOpen || !wrap || wrap.contains(ev.target)) return;
       closeFileMenu();
     });
-    document.getElementById('mv-menu-new')?.addEventListener('click', (ev) => {
-      ev.preventDefault();
-      closeFileMenu();
+    document.getElementById('mv-menu-new')?.addEventListener('click', () => {
       newProject().catch((e) => setStatus(e.message, true));
     });
     document.getElementById('mv-menu-open')?.addEventListener('click', () => {
@@ -4868,6 +3924,38 @@
     document.getElementById('mv-btn-help')?.addEventListener('click', () => openHelp());
     document.getElementById('mv-help-close')?.addEventListener('click', () => {
       window.MvDrawHelp?.close();
+    });
+    document.getElementById('mv-open-cancel')?.addEventListener('click', () => {
+      showMvOpenOverlay(false);
+    });
+    document.querySelectorAll('[data-mv-project-sort]').forEach((btn) => {
+      btn.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        const key = btn.getAttribute('data-mv-project-sort');
+        if (!key) return;
+        if (state.openListSort.key === key) {
+          state.openListSort.dir = state.openListSort.dir === 'asc' ? 'desc' : 'asc';
+        } else {
+          state.openListSort.key = key;
+          state.openListSort.dir = key === 'date' ? 'desc' : 'asc';
+        }
+        paintOpenList();
+      });
+    });
+    document.getElementById('mv-open-browse')?.addEventListener('click', () => {
+      document.getElementById('mv-open-file')?.click();
+    });
+    document.getElementById('mv-open-file')?.addEventListener('change', async (ev) => {
+      const file = ev.target.files?.[0];
+      ev.target.value = '';
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const raw = JSON.parse(text);
+        await openLocalProject(raw, file.name);
+      } catch (e) {
+        setStatus(e.message, true);
+      }
     });
     document.getElementById('mv-save-as-cancel')?.addEventListener('click', () => {
       document.getElementById('mv-save-as-dialog')?.close();
@@ -5052,7 +4140,6 @@
         api('GET', '/project'),
         api('GET', '/symbols?includeHmi=1'),
         fetchMooreviewContext().catch(() => null),
-        prefetchOpenList(),
       ]);
       state.project = projData.project;
       state.storage = projData.storage || state.storage || null;
@@ -5077,11 +4164,11 @@
       if (context && await maybeAutoLoadFromMooreviewProject(context)) {
         draw();
         requestAnimationFrame(() => fitViewToContent());
-      } else {
-        draw();
-        requestAnimationFrame(() => fitViewToContent());
-        setStatus('Ready');
+        return;
       }
+      draw();
+      requestAnimationFrame(() => fitViewToContent());
+      setStatus('Ready');
     } catch (e) {
       setStatus(e.message, true);
     }

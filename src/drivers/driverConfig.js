@@ -11,10 +11,15 @@ function sanitizeDriverConfig(raw) {
   switch (t) {
     case 'modbus_rtu':
     case 'vgreen_epc':
-      ['serialPort', 'baud', 'slaveId', 'parity', 'stopBits', 'timeoutMs'].forEach((k) => keep.add(k));
+    case 'pentair_rs485':
+    case 'jandy_rs485':
+      ['serialPort', 'baud', 'slaveId', 'deviceAddr', 'deviceClass', 'parity', 'stopBits', 'timeoutMs', 'pollIntervalMs', 'frameDelayMs', 'busGapMs'].forEach((k) => keep.add(k));
+      break;
+    case 'hayward_rs485':
+      ['serialPort', 'baud', 'slaveId', 'deviceAddr', 'hua', 'deviceClass', 'parity', 'stopBits', 'timeoutMs', 'pollIntervalMs', 'frameDelayMs', 'keepaliveMs', 'maxRpm', 'useSimpleFrames'].forEach((k) => keep.add(k));
       break;
     case 'modbus_tcp':
-      ['host', 'port', 'slaveId', 'timeoutMs'].forEach((k) => keep.add(k));
+      ['host', 'port', 'slaveId', 'timeoutMs', 'pollIntervalMs'].forEach((k) => keep.add(k));
       break;
     case 'modbus_bridge':
       ['serialPort', 'baud', 'listenPort', 'rtu', 'timeoutMs'].forEach((k) => keep.add(k));
@@ -25,26 +30,20 @@ function sanitizeDriverConfig(raw) {
     case 'mqtt':
       ['brokerUrl', 'broker', 'clientId', 'subscriptions', 'timeoutMs'].forEach((k) => keep.add(k));
       break;
-    case 'mqtt_sim':
-      ['brokerUrl', 'broker', 'intervalMs', 'samplePath', 'stations', 'publishToBroker', 'timeoutMs'].forEach((k) => keep.add(k));
-      break;
     case 'https':
       ['baseUrl', 'url', 'pollIntervalMs', 'bearerToken', 'timeoutMs'].forEach((k) => keep.add(k));
       break;
     case 'nextcentury':
-      ['email', 'password', 'reportId', 'pollIntervalMs', 'propertyIds', 'propertyDelayMs', 'autoSyncTags', 'timeoutMs'].forEach((k) => keep.add(k));
+      ['email', 'password', 'reportId', 'pollIntervalMs', 'propertyIds', 'propertyDelayMs', 'autoSyncTags', 'devicesPerSite', 'timeoutMs'].forEach((k) => keep.add(k));
       break;
     case 'opta_remote':
       ['host', 'port', 'scanMs', 'bearerToken', 'deviceId', 'timeoutMs'].forEach((k) => keep.add(k));
       break;
     case 'mqtt_parc':
-      ['deviceId', 'scanMs', 'reportIntervalSec', 'timeoutMs', 'remoteExecution', 'telemetryOnly', 'draginoModbus'].forEach((k) => keep.add(k));
+      ['deviceId', 'scanMs', 'reportIntervalSec', 'ateccSerial', 'name', 'vendor', 'model', 'platform', 'hardwareHistory', 'timeoutMs'].forEach((k) => keep.add(k));
       break;
     case 'hal':
       ['backend', 'pluginPath', 'halConfig', 'timeoutMs'].forEach((k) => keep.add(k));
-      break;
-    case 'bacnet':
-      ['interface', 'bindInterface', 'port', 'broadcastAddress', 'broadcast', 'apduTimeout', 'timeoutMs', 'pollIntervalMs', 'defaultHost', 'deviceInstance', 'writeEnabled', 'writePriority', 'discoverTimeoutMs'].forEach((k) => keep.add(k));
       break;
     case 'native_so':
       ['library', 'timeoutMs'].forEach((k) => keep.add(k));
@@ -60,7 +59,55 @@ function sanitizeDriverConfig(raw) {
 }
 
 function driverUsesSerialPort(type) {
-  return type === 'modbus_rtu' || type === 'vgreen_epc' || type === 'modbus_bridge' || type === 'serial';
+  return type === 'modbus_rtu' || type === 'vgreen_epc' || type === 'pentair_rs485'
+    || type === 'jandy_rs485' || type === 'hayward_rs485' || type === 'modbus_bridge' || type === 'serial';
 }
 
-module.exports = { sanitizeDriverConfig, driverUsesSerialPort };
+function isBlankSecret(value) {
+  const s = String(value ?? '').trim();
+  return !s || /^•+$/.test(s) || s === '********';
+}
+
+/** Keep stored secrets when the client omits or masks them (e.g. blank password field on save). */
+function mergeDriverSecrets(incoming, existingList) {
+  if (!Array.isArray(incoming)) return incoming;
+  const byId = new Map((existingList || []).map((d) => [d.id, d]));
+  return incoming.map((d) => {
+    const prev = byId.get(d.id);
+    if (!prev) return d;
+    const out = { ...d };
+    if (out.type === 'nextcentury' || prev.type === 'nextcentury') {
+      if (isBlankSecret(out.password) && prev.password) out.password = prev.password;
+    }
+    if ((out.type === 'https' || prev.type === 'https') && isBlankSecret(out.bearerToken) && prev.bearerToken) {
+      out.bearerToken = prev.bearerToken;
+    }
+    return out;
+  });
+}
+
+function publicDriverRow(d) {
+  if (!d || typeof d !== 'object') return d;
+  if (d.type === 'nextcentury') {
+    const { password, ...rest } = d;
+    return { ...rest, hasPassword: Boolean(password) };
+  }
+  if (d.type === 'https' && d.bearerToken) {
+    const { bearerToken, ...rest } = d;
+    return { ...rest, hasBearerToken: true };
+  }
+  return d;
+}
+
+function publicDriverList(list) {
+  return (list || []).map(publicDriverRow);
+}
+
+module.exports = {
+  sanitizeDriverConfig,
+  driverUsesSerialPort,
+  mergeDriverSecrets,
+  isBlankSecret,
+  publicDriverRow,
+  publicDriverList,
+};

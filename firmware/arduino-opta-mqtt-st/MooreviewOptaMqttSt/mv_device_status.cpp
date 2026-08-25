@@ -15,6 +15,7 @@
 #include "mv_ahu_env_cal.h"
 #include "mv_mcsa_m7.h"
 #include "mv_mcsa_mon.h"
+#include "mv_rbe.h"
 #include <Ethernet.h>
 
 static void mvAppendProgramStats(JsonObject root) {
@@ -42,6 +43,8 @@ void mvFillDeviceStatus(JsonObject root) {
   root["ateccStatus"] = mvIdentityAteccStatus();
   root["running"] = g_runtimeRunning;
   root["scanMs"] = g_scanMs;
+  root["reportMs"] = mvMqttReportMs();
+  mvRbeFillStatus(root);
   root["cycles"] = g_cycles;
   root["lastCycleUs"] = g_lastCycleUs;
   root["programLoaded"] = mvProgramValid();
@@ -65,9 +68,6 @@ void mvFillDeviceStatus(JsonObject root) {
   }
   root["mqttAuthSet"] = mvMqttAuthConfigured();
   if (mvMqttAuthFailed()) root["mqttAuthFailed"] = true;
-  root["mqttReportMs"] = mvMqttReportMs();
-  root["mqttReportOnException"] = mvMqttReportOnException();
-  root["mqttTelemetryDisable"] = mvMqttTelemetryDisabled();
   root["globalSiteKey"] = mvGlobalSiteKey();
   {
     char addrKey[5];

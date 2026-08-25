@@ -54,12 +54,7 @@ function normalizeBindingDef(raw) {
   if (raw.offValue != null) out.offValue = raw.offValue;
   if (raw.tagField != null) out.tagField = String(raw.tagField).trim();
   if (raw.interaction != null) out.interaction = String(raw.interaction).trim();
-  if (raw.hoaValue != null && Number.isFinite(Number(raw.hoaValue))) {
-    out.hoaValue = Math.max(0, Math.min(2, Math.trunc(Number(raw.hoaValue))));
-  }
-  if (raw.pumpIndex != null && Number.isFinite(Number(raw.pumpIndex))) {
-    out.pumpIndex = Math.max(1, Math.min(4, Math.trunc(Number(raw.pumpIndex))));
-  }
+  if (raw.hoaValue != null && Number.isFinite(Number(raw.hoaValue))) out.hoaValue = Number(raw.hoaValue);
   if (raw.colors && Array.isArray(raw.colors)) out.colors = raw.colors.slice();
   if (raw.flashStates && Array.isArray(raw.flashStates)) out.flashStates = raw.flashStates.slice();
   return out;
@@ -84,7 +79,6 @@ function normalizeManifest(raw, id, publicRoot) {
     subgroup: String(raw.subgroup || 'composites').trim(),
     preview: raw.preview ? (publicRoot ? require('./hmiConfig').resolveAssetPath(publicRoot, String(raw.preview)) : String(raw.preview)) : parts[0].svg,
     defaultTagId: String(raw.defaultTagId || '').trim(),
-    defaultInstancePrefix: String(raw.defaultInstancePrefix || raw.instanceTagPrefix || '').trim(),
     tagRoles: raw.tagRoles && typeof raw.tagRoles === 'object' ? raw.tagRoles : { pv: { pick: 'firstNumeric', types: ['REAL', 'INT'] } },
     parts,
     defaultBindings,
@@ -142,115 +136,11 @@ function compositeBindingElementId(col, row, manifest, bindingDef) {
   return `t${Number(col) + 1}_${Number(row) + 1}_z${z}__${role}`;
 }
 
-/**
- * Explode a composite manifest into an HMI tile (all part layers).
- * Matches HMI Setup composite placement so layers stay editable in composer.
- * @param {HmiCompositeManifest} manifest
- * @param {number} col
- * @param {number} row
- * @param {object} [options]
- * @param {number} [options.colSpan]
- * @param {number} [options.rowSpan]
- * @param {string} [options.compositeTagPrefix]
- * @param {string} [options.tagPrefix]
- * @param {string} [options.label]
- */
-function explodeCompositeToEdit(manifest, col, row, options = {}) {
-  const compositeId = String(manifest?.id || options.compositeId || '').trim();
-  if (!compositeId || !Array.isArray(manifest?.parts) || !manifest.parts.length) return null;
-  const tile = {
-    col: Number(col),
-    row: Number(row),
-    colSpan: Math.max(1, Number(options.colSpan) || 1),
-    rowSpan: Math.max(1, Number(options.rowSpan) || 1),
-    compositeId,
-    layers: manifest.parts.map((part) => ({
-      kind: String(part.kind || 'staticImage').trim() || 'staticImage',
-      z: part.z ?? 0,
-      svg: part.svg,
-    })),
-  };
-  const tagPrefix = String(options.compositeTagPrefix || options.tagPrefix || '').trim();
-  if (tagPrefix) tile.compositeTagPrefix = tagPrefix;
-  if (options.label) tile.label = String(options.label);
-  return tile;
-}
-
 function tagIdForCompositeRole(manifest, role) {
   const spec = manifest.tagRoles?.[role] || manifest.tagRoles?.pv || {};
   if (spec.pick === 'tagId' && spec.tagId) return String(spec.tagId);
   if (spec.pick === 'firstAlt' && spec.tagId) return String(spec.tagId);
   return '';
-}
-
-function compositeInstanceTagPrefix(tile) {
-  return String(tile?.compositeTagPrefix || tile?.tagPrefix || '').trim();
-}
-
-/** MOTOR1 + index 1 → MOTOR2 when tiles lack explicit compositeTagPrefix. */
-function numberedInstancePrefix(basePrefix, instanceIndex) {
-  const base = String(basePrefix || 'MOTOR1').trim();
-  if (instanceIndex <= 0) return base;
-  const m = /^(.*?)(\d+)$/.exec(base);
-  if (!m) return `${base}${instanceIndex + 1}`;
-  return `${m[1]}${Number(m[2]) + instanceIndex}`;
-}
-
-/** Map "col,row" → instance tag prefix for multi-instance composites on one screen. */
-function buildCompositeInstancePrefixMap(screen, manifestForCompositeId) {
-  const grouped = new Map();
-  for (const tile of screen?.tiles || []) {
-    const compositeId = String(tile.compositeId || '').trim();
-    if (!compositeId) continue;
-    const manifest = typeof manifestForCompositeId === 'function'
-      ? manifestForCompositeId(compositeId)
-      : null;
-    const base = String(manifest?.defaultInstancePrefix || manifest?.instanceTagPrefix || '').trim();
-    if (!base) continue;
-    if (!grouped.has(compositeId)) grouped.set(compositeId, []);
-    grouped.get(compositeId).push({
-      tile,
-      col: Number(tile.col),
-      row: Number(tile.row),
-    });
-  }
-  const out = new Map();
-  for (const [compositeId, items] of grouped) {
-    const manifest = typeof manifestForCompositeId === 'function'
-      ? manifestForCompositeId(compositeId)
-      : null;
-    const base = String(manifest?.instanceTagPrefix || manifest?.defaultInstancePrefix || 'MOTOR1').trim();
-    items.sort((a, b) => (a.row - b.row) || (a.col - b.col));
-    items.forEach(({ tile, col, row }, idx) => {
-      let prefix = compositeInstanceTagPrefix(tile);
-      if (!prefix) prefix = numberedInstancePrefix(base, idx);
-      if (!tile.compositeTagPrefix) tile.compositeTagPrefix = prefix;
-      out.set(`${col},${row}`, prefix);
-    });
-  }
-  return out;
-}
-
-function resolveCompositeInstanceTagPrefix(tile, col, row, prefixMap) {
-  return compositeInstanceTagPrefix(tile)
-    || prefixMap?.get?.(`${col},${row}`)
-    || '';
-}
-
-/** Remap manifest default tag ids (e.g. MOTOR1_*) to a tile instance prefix (e.g. MOTOR2). */
-function remapManifestTagId(manifestTagId, manifest, tilePrefix) {
-  const id = String(manifestTagId || '').trim();
-  const prefix = String(tilePrefix || '').trim();
-  if (!id || !prefix) return id;
-  const base = String(manifest?.instanceTagPrefix || manifest?.defaultInstancePrefix || 'MOTOR1').trim();
-  if (!base || base === prefix) return id;
-  const esc = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`^${esc}(?=_)`).test(id) ? id.replace(new RegExp(`^${esc}`), prefix) : id;
-}
-
-function tagIdForCompositeRoleOnTile(manifest, role, tile) {
-  const base = tagIdForCompositeRole(manifest, role);
-  return remapManifestTagId(base, manifest, compositeInstanceTagPrefix(tile));
 }
 
 function bindingSuffix(elementId) {
@@ -287,7 +177,6 @@ function repairCompositeBindings(hmi, publicRoot) {
     }
   }
   for (const screen of hmi.screens) {
-    const prefixMap = buildCompositeInstancePrefixMap(screen, (cid) => byId.get(cid));
     for (const tile of screen.tiles || []) {
       const compositeId = String(tile.compositeId || '').trim();
       if (!compositeId) continue;
@@ -299,16 +188,13 @@ function repairCompositeBindings(hmi, publicRoot) {
       const screenId = screen.id;
       const validKeys = new Set();
       const tagByRole = new Map();
-      const tilePrefix = resolveCompositeInstanceTagPrefix(tile, col, row, prefixMap);
-      if (tilePrefix && !tile.compositeTagPrefix) tile.compositeTagPrefix = tilePrefix;
 
       for (const def of manifest.defaultBindings) {
         const elementId = compositeBindingElementId(col, row, manifest, def);
         const tagRole = def.tagRole || 'pv';
         let tagId = tagByRole.get(tagRole);
         if (!tagId) {
-          const baseTag = tagIdForCompositeRole(manifest, tagRole);
-          tagId = remapManifestTagId(baseTag, manifest, tilePrefix);
+          tagId = tagIdForCompositeRole(manifest, tagRole);
           tagByRole.set(tagRole, tagId);
         }
         validKeys.add(`${elementId}|${def.property}`);
@@ -333,32 +219,22 @@ function repairCompositeBindings(hmi, publicRoot) {
           if (def.tagField) binding.tagField = def.tagField;
           if (def.interaction) binding.interaction = def.interaction;
           if (def.hoaValue != null) binding.hoaValue = def.hoaValue;
-          if (def.pumpIndex != null) binding.pumpIndex = def.pumpIndex;
           if (def.colors) binding.colors = def.colors.slice();
           if (def.flashStates) binding.flashStates = def.flashStates.slice();
           hmi.bindings.push(binding);
           continue;
         }
-        if (tagId && tilePrefix && !def.tagField) binding.tagId = tagId;
-        else if (tagId && !String(binding.tagId || '').trim()) binding.tagId = tagId;
+        if (tagId) binding.tagId = tagId;
         if (def.format) binding.format = def.format;
         if (def.tagField) binding.tagField = def.tagField;
         if (def.interaction) binding.interaction = def.interaction;
         if (def.hoaValue != null) binding.hoaValue = def.hoaValue;
-        if (def.pumpIndex != null) binding.pumpIndex = def.pumpIndex;
         if (def.min != null) binding.min = def.min;
         if (def.max != null) binding.max = def.max;
         backfillBindingPaint(binding, def);
       }
 
       const suffixes = new Set(manifest.defaultBindings.map((d) => d.elementId));
-      const manifestPropsBySuffix = new Map();
-      for (const def of manifest.defaultBindings) {
-        if (!manifestPropsBySuffix.has(def.elementId)) {
-          manifestPropsBySuffix.set(def.elementId, new Set());
-        }
-        manifestPropsBySuffix.get(def.elementId).add(def.property);
-      }
       hmi.bindings = hmi.bindings.filter((b) => {
         if (b.screenId !== screenId) return true;
         const suf = bindingSuffix(b.elementId);
@@ -368,14 +244,39 @@ function repairCompositeBindings(hmi, publicRoot) {
         const bCol = Number(parsed[1]) - 1;
         const bRow = Number(parsed[2]) - 1;
         if (bCol !== col || bRow !== row) return true;
-        const manifestProps = manifestPropsBySuffix.get(suf);
-        // Keep custom property overrides (e.g. visibility to hide 4-pump alternator chrome).
-        if (manifestProps && !manifestProps.has(b.property)) return true;
         return validKeys.has(`${b.elementId}|${b.property}`);
       });
     }
   }
   return hmi;
+}
+
+/**
+ * Place a composite as an editable HMI tile (fleet faceplate generators).
+ * @param {object} manifest
+ * @param {number} col
+ * @param {number} row
+ * @param {object} [options]
+ */
+function explodeCompositeToEdit(manifest, col, row, options = {}) {
+  const compositeId = String(manifest?.id || options.compositeId || '').trim();
+  if (!compositeId || !Array.isArray(manifest?.parts) || !manifest.parts.length) return null;
+  const tile = {
+    col: Number(col),
+    row: Number(row),
+    colSpan: Math.max(1, Number(options.colSpan) || 1),
+    rowSpan: Math.max(1, Number(options.rowSpan) || 1),
+    compositeId,
+    layers: manifest.parts.map((part) => ({
+      kind: String(part.kind || 'staticImage').trim() || 'staticImage',
+      z: part.z ?? 0,
+      svg: part.svg,
+    })),
+  };
+  const tagPrefix = String(options.compositeTagPrefix || options.tagPrefix || '').trim();
+  if (tagPrefix) tile.compositeTagPrefix = tagPrefix;
+  if (options.label) tile.label = String(options.label);
+  return tile;
 }
 
 module.exports = {
@@ -386,11 +287,5 @@ module.exports = {
   compositeIdFromPath,
   compositeBindingElementId,
   explodeCompositeToEdit,
-  compositeInstanceTagPrefix,
-  numberedInstancePrefix,
-  buildCompositeInstancePrefixMap,
-  resolveCompositeInstanceTagPrefix,
-  remapManifestTagId,
-  tagIdForCompositeRoleOnTile,
   repairCompositeBindings,
 };

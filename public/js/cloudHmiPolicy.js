@@ -15,7 +15,7 @@
 
   function relatedHoaTagId(tagId) {
     const id = String(tagId || '');
-    const motor = /^(.+?)_(START|STOP|RUN|OFF|START_PB|STOP_PB)$/i.exec(id);
+    const motor = /^(.+?)_(START|STOP|RUN|OFF|HAND|START_PB|STOP_PB)$/i.exec(id);
     if (motor) return `${motor[1]}_HOA`;
     if (isHoaTagId(id)) return id;
     return null;

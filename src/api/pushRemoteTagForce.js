@@ -12,8 +12,7 @@ const { isParcRegistryNoiseId } = require('../devices/bulkAddParcOpta');
 
 const REMOTE_OPTA_TYPES = new Set(['mqtt_parc', 'opta_remote']);
 
-/** Per-tag remote write state — stale completions must not clear newer forceInput pins. */
-const remoteHmiWriteState = new Map();
+
 
 function listLiveOptaDevices() {
 
@@ -455,37 +454,11 @@ async function ensureOptaDriverInstance(driverManager, driverId) {
 
 async function pushRemoteTagForce(driverManager, scanEngine, tag, tagStore) {
 
-  if (!tag?.id) return { skipped: true, reason: 'no tag' };
+  if (!tag?.driverId) return { skipped: true, reason: 'local tag' };
 
-  const settings = persistence.readJson('settings.json', {});
 
-  let cfg;
 
-  let driverId;
-
-  let deviceId;
-
-  let redirected = false;
-
-  if (tag.driverId) {
-
-    ({ cfg, driverId, redirected } = resolveForceDriverConfig(driverManager, tag));
-
-    deviceId = resolveForceDeviceId(cfg, driverManager);
-
-  } else if (isRemoteStExecution(settings, scanEngine) && tag.role === 'memory') {
-
-    const target = resolveRemoteHmiWriteTarget(driverManager, tag.id);
-
-    if (!target) return { skipped: true, reason: 'no live Opta' };
-
-    ({ cfg, driverId, deviceId } = target);
-
-  } else {
-
-    return { skipped: true, reason: 'local tag' };
-
-  }
+  const { cfg, driverId, redirected } = resolveForceDriverConfig(driverManager, tag);
 
   if (!REMOTE_OPTA_TYPES.has(cfg.type)) {
 
@@ -507,6 +480,10 @@ async function pushRemoteTagForce(driverManager, scanEngine, tag, tagStore) {
 
 
 
+  const deviceId = resolveForceDeviceId(cfg, driverManager);
+
+
+
   const drv = await ensureOptaDriverInstance(driverManager, driverId);
 
   if (!drv?.syncTagForce) {
@@ -516,6 +493,8 @@ async function pushRemoteTagForce(driverManager, scanEngine, tag, tagStore) {
   }
 
 
+
+  const settings = persistence.readJson('settings.json', {});
 
   if (scanEngine && scanEngine.remoteExecution !== (settings.remoteExecution === true)) {
 
@@ -532,12 +511,6 @@ async function pushRemoteTagForce(driverManager, scanEngine, tag, tagStore) {
   drv.cfg = { ...drv.cfg, ...connectCfg };
 
 
-
-  if (tag.role === 'memory' && (tag.forceInput || tag.forceOutput)) {
-
-    await ensureDeviceRuntimeRunning(drv, deviceId, scanEngine);
-
-  }
 
   await drv.syncTagForce(tag, { deviceId });
 
@@ -563,314 +536,15 @@ async function pushRemoteTagForce(driverManager, scanEngine, tag, tagStore) {
 
 
 
-function deviceReportsTag(deviceId, tagId) {
-
-  const dev = registryDeviceLive(deviceId);
-
-  if (!dev || !tagId) return false;
-
-  return (dev.tags || []).some((row) => row.id === tagId);
-
-}
-
-
-
-/** Pick a live Opta running ST that includes tagId in Parc telemetry. */
-
-function resolveRemoteHmiWriteTarget(driverManager, tagId) {
-
-  const id = String(tagId || '').trim();
-
-  if (!id) return null;
-
-  const ranked = rankLiveRemoteOptaConfigs(driverManager);
-
-  const eligible = ranked.filter((cfg) => {
-
-    const deviceId = String(cfg.deviceId || cfg.id || '').trim();
-
-    const dev = registryDeviceLive(deviceId);
-
-    if (!dev) return false;
-
-    if (dev.runtime?.running === true) return true;
-
-    return dev.runtime?.programOk === true;
-
-  });
-
-  for (const cfg of eligible) {
-
-    const deviceId = String(cfg.deviceId || cfg.id || '').trim();
-
-    if (deviceReportsTag(deviceId, id)) return { cfg, driverId: cfg.id, deviceId };
-
-  }
-
-  for (const cfg of eligible) {
-
-    const deviceId = String(cfg.deviceId || cfg.id || '').trim();
-
-    if (deviceId) return { cfg, driverId: cfg.id, deviceId };
-
-  }
-
-  return null;
-
-}
-
-
-
-/** Momentary BOOL memory tags cleared by ST each scan — skip remote false release. */
-function isRemoteMomentaryMemoryRelease(tag) {
-  if (!tag?.id || tag.type !== 'BOOL' || tag.value) return false;
-  if (/^MOTOR[12]_(START|STOP|RESET)$/.test(tag.id)) return true;
-  if (tag.id === 'ALT_BUMP') return true;
-  return false;
-}
-
-/** True when ST runs on Opta (settings) and PC is not executing ST locally. */
-function isRemoteStExecution(settings, scanEngine) {
-  if (settings?.remoteExecution !== true) return false;
-  if (scanEngine?.running && scanEngine?.ast && !scanEngine.ast.remote) return false;
-  return true;
-}
-
-
-
-async function probeDeviceRuntimeRunning(deviceId, timeoutMs = 8000) {
-  const id = String(deviceId || '').trim();
-  if (!id) return null;
-  const { getMqttCentralHub } = require('../parc/mqttCentralHub');
-  const hub = getMqttCentralHub(registry);
-  if (!hub.isLive()) return null;
-  try {
-    const body = await hub.sendCommand(id, 'runtime_status', {}, { timeoutMs });
-    return body?.running === true;
-  } catch {
-    return null;
-  }
-}
-
-async function ensureDeviceRuntimeRunning(drv, deviceId, scanEngine) {
-  const dev = registryDeviceLive(deviceId);
-
-  if (dev?.runtime?.running === true) return;
-
-  // PC remote runtime already started ST on the Opta (Programs → Run / auto-start).
-  if (scanEngine?.running && scanEngine?.ast?.remote) {
-    const liveRunning = await probeDeviceRuntimeRunning(deviceId);
-    if (liveRunning === true) return;
-    if (liveRunning === null) {
-      console.warn(
-        `[hmi-remote] runtime_status unavailable for ${deviceId} — proceeding (MooreVIEW remote runtime active)`,
-      );
-      return;
-    }
-  }
-
-  if (dev?.runtime?.programOk !== true) {
-    throw new Error('Opta ST program not loaded — start MooreVIEW runtime (Programs → Run)');
-  }
-
-  if (!drv?.startRuntime) {
-    throw new Error('Opta driver cannot start device runtime');
-  }
-
-  try {
-    await drv.startRuntime({ deviceId, attach: false });
-    await new Promise((r) => setTimeout(r, 300));
-  } catch (e) {
-    const msg = e.message || String(e);
-    const pcRemoteActive = scanEngine?.running && scanEngine?.ast?.remote;
-    if (/runtime_start|runtime_status/i.test(msg) && (pcRemoteActive || (dev && !dev.stale))) {
-      console.warn(`[hmi-remote] runtime_start failed for ${deviceId} (${msg}) — attempting tag write anyway`);
-      return;
-    }
-    throw e;
-  }
-}
-
-
-
-/** Push HMI memory-tag writes to Opta ST when logic runs on device (remote execution). */
-
-async function pushRemoteHmiMemoryWrite(driverManager, scanEngine, tag) {
-
-  if (!tag?.id || tag.role !== 'memory') return { skipped: true, reason: 'not memory' };
-
-  if (isRemoteMomentaryMemoryRelease(tag)) {
-    return { ok: true, skipped: true, reason: 'momentary release' };
-  }
-
-  const settings = persistence.readJson('settings.json', {});
-
-  if (!isRemoteStExecution(settings, scanEngine)) {
-
-    return { skipped: true, reason: 'local ST' };
-
-  }
-
-  const target = resolveRemoteHmiWriteTarget(driverManager, tag.id);
-
-  if (!target) return { skipped: true, reason: 'no running Opta' };
-
-
-
-  const { ensureMqttHubConnected } = require('../parc/mqttParcBootstrap');
-
-  const hubReady = await ensureMqttHubConnected({ persist: false });
-
-  if (!hubReady.connected) {
-
-    throw new Error(hubReady.error || 'MQTT Parc hub not connected');
-
-  }
-
-
-
-  if (scanEngine && scanEngine.remoteExecution !== (settings.remoteExecution === true)) {
-
-    scanEngine.loadSettings?.();
-
-  }
-
-
-
-  const drv = await ensureOptaDriverInstance(driverManager, target.driverId);
-
-  if (!drv?.syncTagMemory) {
-
-    throw new Error(`Driver "${target.driverId}" does not support remote tag write`);
-
-  }
-
-  const connectCfg = typeof driverManager._connectCfg === 'function'
-
-    ? driverManager._connectCfg(target.cfg)
-
-    : target.cfg;
-
-  drv.cfg = { ...drv.cfg, ...connectCfg };
-
-
-
-  await ensureDeviceRuntimeRunning(drv, target.deviceId, scanEngine);
-
-  await drv.syncTagMemory(tag, { deviceId: target.deviceId });
-
-  console.log(
-
-    `[hmi-remote] ${tag.id}=${tag.value} → ${target.deviceId} via ${target.driverId}`,
-
-  );
-
-  return { ok: true, deviceId: target.deviceId, driverId: target.driverId };
-
-}
-
-
-
-/** Remote ST: push to Opta in background; pin local forceInput so telemetry does not revert the HMI. */
-
-function scheduleRemoteHmiMemoryWrite(tagStore, driverManager, scanEngine, tag) {
-
-  if (!tag?.id || tag.role !== 'memory') return { skipped: true, reason: 'not memory' };
-
-  if (isRemoteMomentaryMemoryRelease(tag)) return { skipped: true, reason: 'momentary release' };
-
-  const settings = persistence.readJson('settings.json', {});
-
-  if (!isRemoteStExecution(settings, scanEngine)) {
-
-    return { skipped: true, reason: 'local ST' };
-
-  }
-
-  tagStore.setForce(tag.id, { forceInput: true, forceValue: tag.value });
-  const pushValue = tag.forceValue ?? tag.value;
-  let state = remoteHmiWriteState.get(tag.id);
-  if (!state) state = { gen: 0, pending: 0 };
-  state.gen += 1;
-  state.pending += 1;
-  const gen = state.gen;
-  remoteHmiWriteState.set(tag.id, state);
-
-  pushRemoteHmiMemoryWrite(driverManager, scanEngine, { ...tag, value: pushValue })
-
-    .then((result) => result)
-
-    .catch((e) => {
-
-      console.error(`[hmi-remote] ${tag.id} failed: ${e.message || e}`);
-
-    })
-
-    .finally(() => {
-
-      const st = remoteHmiWriteState.get(tag.id);
-      if (!st) return;
-      st.pending -= 1;
-      if (st.pending <= 0 && st.gen === gen) {
-        tagStore.clearForce(tag.id, 'input');
-        remoteHmiWriteState.delete(tag.id);
-      }
-
-    });
-
-  return { ok: true, pending: true };
-
-}
-
-
-
-/** Mirror tag force/clear to Opta when drivers are mqtt_parc (remote ST or I/O). */
-
-function scheduleRemoteTagForce(tagStore, driverManager, scanEngine, tag) {
-
-  if (!tag?.id) return { skipped: true, reason: 'no tag' };
-
-  pushRemoteTagForce(driverManager, scanEngine, tag, tagStore)
-
-    .catch((e) => {
-
-      console.error(`[force-remote] ${tag.id} failed: ${e.message || e}`);
-
-    });
-
-  return { ok: true, pending: true };
-
-}
-
-
-
 module.exports = {
 
   pushRemoteTagForce,
-
-  pushRemoteHmiMemoryWrite,
-
-  scheduleRemoteHmiMemoryWrite,
-
-  scheduleRemoteTagForce,
-
-  isRemoteMomentaryMemoryRelease,
 
   resolveForceDeviceId,
 
   resolveForceDriverConfig,
 
-  resolveRemoteHmiWriteTarget,
-
-  isRemoteStExecution,
-
   liveDeviceHint,
-
-  remoteHmiWriteState,
-
-  probeDeviceRuntimeRunning,
-
-  ensureDeviceRuntimeRunning,
 
 };
 

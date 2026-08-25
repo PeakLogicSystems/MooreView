@@ -37,34 +37,16 @@
     #mv-status.ok { border-color: rgba(34, 197, 94, 0.45); color: #86efac; }
     #mv-status.err { border-color: rgba(239, 68, 68, 0.45); color: #fca5a5; }
     #detail-panel {
-      position: absolute; z-index: 20; right: 14px; bottom: 168px; width: 340px; max-height: 46vh;
+      position: absolute; z-index: 20; right: 14px; bottom: 14px; width: 340px; max-height: 52vh;
       overflow: auto; display: none;
     }
     #detail-panel.open { display: block; }
     #detail-panel h2 { font-size: 15px; margin-bottom: 8px; }
-    #detail-status {
-      font-size: 12px; line-height: 1.45; margin-bottom: 10px; padding: 8px 10px;
-      border-radius: 6px; border: 1px solid rgba(148, 163, 184, 0.25);
-    }
-    #detail-status.ok { color: #86efac; background: rgba(34, 197, 94, 0.08); border-color: rgba(34, 197, 94, 0.35); }
-    #detail-status.warn { color: #fcd34d; background: rgba(245, 158, 11, 0.08); border-color: rgba(245, 158, 11, 0.35); }
-    #detail-status.alarm { color: #fca5a5; background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.4); }
-    #detail-status.muted { color: #94a3b8; background: rgba(30, 41, 59, 0.5); }
     #detail-panel dl { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; font-size: 12px; }
     #detail-panel dt { color: #94a3b8; }
-    #detail-panel dd { text-align: right; font-family: Consolas, monospace; color: #e2e8f0; }
+    #detail-panel dd { text-align: right; font-family: Consolas, monospace; }
     #detail-panel .alarm-on { color: #f87171; font-weight: 600; }
-    #detail-panel .ok-on { color: #86efac; font-weight: 600; }
     #detail-panel .actions { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
-    #stats { max-width: 360px; }
-    #stat-pumps { font-size: 12px; line-height: 1.5; }
-    #stat-pumps .run { color: #86efac; font-weight: 600; }
-    #stat-pumps .stop { color: #94a3b8; }
-    #stat-status { margin-top: 6px; font-size: 12px; line-height: 1.4; }
-    #stat-status.ok { color: #86efac; }
-    #stat-status.warn { color: #fcd34d; }
-    #stat-status.alarm { color: #fca5a5; }
-    #stat-status.muted { color: #64748b; }
     #hover-tip {
       position: fixed; z-index: 30; pointer-events: none; display: none;
       max-width: 300px; padding: 10px 12px; font-size: 12px; line-height: 1.45;
@@ -113,7 +95,6 @@
   <div id="detail-panel" class="panel">
     <h2 id="detail-title">Zone</h2>
     <p id="detail-sub" class="hint"></p>
-    <div id="detail-status" class="muted">Click equipment for live status.</div>
     <dl id="detail-tags"></dl>
     <div class="actions">
       <button type="button" id="btn-open-hmi">Open in MV HMI</button>
@@ -130,9 +111,7 @@
     <strong>Station summary</strong>
     <div id="stat-level">Wet well: —</div>
     <div id="stat-stage">Alternator: —</div>
-    <div id="stat-floats">Floats: off off · lead off · lag off · high off</div>
-    <div id="stat-pumps">Pump 1: — · Pump 2: —</div>
-    <div id="stat-status" class="muted">Status: connecting to MV…</div>
+    <div id="stat-pumps">Pumps: —</div>
   </div>
 
   <script type="importmap">
@@ -144,18 +123,90 @@
   }
   </script>
   <script type="module">
-    import * as THREE from 'three';
-    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-    import { buildLiftStation, applyLiftStationLevel, LS_COLORS } from './lift-station-3d.js';
-    import { mountNorthIndicator } from './mv-north-indicator.js';
+    const statusEl = document.getElementById('mv-status');
+    function setStatus(text, ok) {
+      statusEl.textContent = text;
+      statusEl.className = ok ? 'panel ok' : 'panel err';
+    }
+
+    const tagValues = new Map();
+    let hmiScreenCatalog = new Map();
+    let selectedZone = null;
+    let hoveredMesh = null;
+    let mvPollMs = 60000;
+    let mvPollTimer = null;
+
+    async function pollMvLive() {
+      const root = String(window.MV_API_BASE || '/api').replace(/\/$/, '');
+      try {
+        const res = await fetch(`${root}/dashboard`, { credentials: 'same-origin' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        tagValues.clear();
+        for (const t of (data.tags || data.tagSnapshot || [])) {
+          if (t?.id) tagValues.set(t.id, t.value ?? t.val);
+        }
+        setStatus(`MV live: ${tagValues.size} tags`, true);
+        if (typeof updateLiveVisuals === 'function') updateLiveVisuals();
+        if (selectedZone && typeof updateDetailPanelValues === 'function') {
+          updateDetailPanelValues(selectedZone);
+        }
+      } catch (e) {
+        setStatus(`MV live: offline (${e.message})`, false);
+      }
+    }
+
+    function scheduleMvPoll() {
+      if (mvPollTimer) clearInterval(mvPollTimer);
+      pollMvLive();
+      mvPollTimer = setInterval(pollMvLive, mvPollMs);
+    }
+
+    function applyHmiScreenCatalog(screens) {
+      hmiScreenCatalog = new Map();
+      for (const s of screens || []) {
+        const id = String(s?.id || '').trim();
+        if (!id) continue;
+        hmiScreenCatalog.set(id, { id, number: Number(s.number) || 0, name: String(s.name || '').trim() });
+      }
+    }
+
+    window.addEventListener('message', (e) => {
+      if (e.origin !== window.location.origin) return;
+      const data = e.data;
+      if (!data || typeof data !== 'object') return;
+      if (data.type === 'mv-hmi-poll-config' && Number.isFinite(Number(data.pollMs))) {
+        mvPollMs = Math.max(5000, Number(data.pollMs));
+        scheduleMvPoll();
+      } else if (data.type === 'mv-hmi-screen-catalog' && Array.isArray(data.screens)) {
+        applyHmiScreenCatalog(data.screens);
+        if (selectedZone && typeof updateDetailPanelValues === 'function') {
+          updateDetailPanelValues(selectedZone);
+        }
+      }
+    });
+    scheduleMvPoll();
+
+    let THREE;
+    let OrbitControls;
+    let buildLiftStation;
+    let applyLiftStationLevel;
+    let LS_COLORS;
+    try {
+      THREE = await import('three');
+      ({ OrbitControls } = await import('three/addons/controls/OrbitControls.js'));
+      ({ buildLiftStation, applyLiftStationLevel, LS_COLORS } = await import('./lift-station-3d.js'));
+    } catch (e) {
+      console.error('[duplex-lift-3d]', e);
+      setStatus(`3D load failed: ${e.message}. Hard-refresh or check /vendor/three/ on server.`, false);
+      throw e;
+    }
 
     const LEGEND = [
-      ['Wet well (buried, see-through)', LS_COLORS.well],
+      ['Wet well (submersible)', LS_COLORS.well],
       ['Water level (live %)', LS_COLORS.water],
-      ['Submersible pump (run = amber glow)', LS_COLORS.motor],
-      ['Blue discharge risers & header', LS_COLORS.discharge],
-      ['Check / gate valves', LS_COLORS.valve],
-      ['Level floats (off / lead / lag / high)', LS_COLORS.float],
+      ['Pump / motor (run = amber glow)', LS_COLORS.motor],
+      ['Discharge header', LS_COLORS.pipe],
       ['MCC / RTU cabinet', LS_COLORS.cabinet],
     ];
 
@@ -170,15 +221,13 @@
     const ZONE_CATALOG = {
       well: {
         label: 'Wet Well',
-        description: 'Buried cylindrical wet well — water column scales with TANK_LVL. Four floats (off / lead / lag / high) stage the ALT2 alternator; pumps latch until the off float clears.',
+        description: 'Buried cylindrical wet well — water column scales with TANK_LVL. Floats LVL_LAG and LVL_HIGH stage the ALT2 alternator.',
         alarmTag: 'ALT_FAULT',
         detailScreen: 'screen_2',
         tags: [
           ['Wet well level %', 'TANK_LVL'],
-      ['Off float', 'LVL_OFF'],
-      ['Lead float', 'LVL_LEAD'],
-      ['Lag float', 'LVL_LAG'],
-      ['High level', 'LVL_HIGH'],
+          ['High level', 'LVL_HIGH'],
+          ['Lag request', 'LVL_LAG'],
           ['Alternator fault', 'ALT_FAULT'],
           ['System run', 'SYS_RUN'],
         ],
@@ -192,10 +241,8 @@
           ['Pump 1 run', 'MOTOR1_RUN'],
           ['Pump 1 HOA', 'MOTOR1_HOA'],
           ['Pump 1 status', 'MOTOR1_STA'],
-          ['Pump 1 offline', 'MOTOR1_OFFLINE'],
           ['Pump 1 run hours', 'MOTOR1_HRS'],
           ['Lead running', 'LEAD_RUN'],
-          ['Alternator fault', 'ALT_FAULT'],
         ],
       },
       pump2: {
@@ -207,10 +254,8 @@
           ['Pump 2 run', 'MOTOR2_RUN'],
           ['Pump 2 HOA', 'MOTOR2_HOA'],
           ['Pump 2 status', 'MOTOR2_STA'],
-          ['Pump 2 offline', 'MOTOR2_OFFLINE'],
           ['Pump 2 run hours', 'MOTOR2_HRS'],
           ['Alternator cmd', 'P2_ALT_RUN'],
-          ['Alternator fault', 'ALT_FAULT'],
         ],
       },
       mcc: {
@@ -222,13 +267,6 @@
           ['Alternator fault', 'ALT_FAULT'],
           ['Lead unit', 'ALT1'],
           ['System run', 'SYS_RUN'],
-          ['Pump 1 run', 'MOTOR1_RUN'],
-          ['Pump 2 run', 'MOTOR2_RUN'],
-          ['Lead running', 'LEAD_RUN'],
-          ['Pump 1 alt cmd', 'P1_ALT_RUN'],
-          ['Pump 2 alt cmd', 'P2_ALT_RUN'],
-          ['Pump 1 online', 'MOTOR1_ONLINE'],
-          ['Pump 2 online', 'MOTOR2_ONLINE'],
           ['Rotate lead', 'ALT_BUMP'],
           ['Alternator off', 'ALT_OFF'],
         ],
@@ -245,7 +283,7 @@
     const camera = new THREE.OrthographicCamera(
       -frustum * aspect, frustum * aspect, frustum, -frustum, 0.1, 200,
     );
-    camera.position.set(32, 24, 32);
+    camera.position.set(28, 20, 28);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -292,37 +330,21 @@
 
     const hoverMeshes = [...pickables];
     const zoneMeshes = [];
-    let selectedZone = null;
-    let hoveredMesh = null;
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
-    const tagValues = new Map();
-    const tagMeta = new Map();
-    let mvApiRoot = String(window.MV_API_BASE || '').trim();
-    if (!mvApiRoot) {
-      try {
-        if (window.parent !== window && window.parent.MOOREVIEW_API_BASE) {
-          mvApiRoot = String(window.parent.MOOREVIEW_API_BASE).trim();
-        }
-      } catch { /* cross-origin */ }
-    }
-    if (!mvApiRoot) mvApiRoot = '/api';
-    let hmiScreenCatalog = new Map();
-    let pumpMotors = meta.pumpMotors?.length ? [...meta.pumpMotors] : [];
+    const pumpMotors = [];
 
     function registerZone(mesh, key) {
       const spec = ZONE_CATALOG[key];
       if (!spec) return mesh;
       mesh.userData.zone = true;
-      mesh.userData.zoneKey = key;
       mesh.userData.label = spec.label;
       mesh.userData.description = spec.description;
       mesh.userData.alarmTag = spec.alarmTag;
       mesh.userData.detailScreen = spec.detailScreen;
       mesh.userData.detailTags = spec.tags;
       hoverMeshes.push(mesh);
-      // Only the MCC cabinet pulses for station alarm — not the well shell or pump motors.
-      if (spec.alarmTag && key === 'mcc') zoneMeshes.push(mesh);
+      if (spec.alarmTag) zoneMeshes.push(mesh);
       return mesh;
     }
 
@@ -332,13 +354,12 @@
       else registerZone(m, 'mcc');
     }
 
-    if (!pumpMotors.length) {
-      group.traverse((obj) => {
-        if (!obj.isMesh || !obj.material?.userData?.baseColor) return;
-        const c = obj.material.userData.baseColor;
-        if (c.equals(new THREE.Color(LS_COLORS.motor))) pumpMotors.push(obj);
-      });
-    }
+    // Find pump motors in the group for run-state glow
+    group.traverse((obj) => {
+      if (!obj.isMesh || !obj.material?.userData?.baseColor) return;
+      const c = obj.material.userData.baseColor;
+      if (c.equals(new THREE.Color(LS_COLORS.motor))) pumpMotors.push(obj);
+    });
     if (pumpMotors[0]) registerZone(pumpMotors[0], 'pump1');
     if (pumpMotors[1]) registerZone(pumpMotors[1], 'pump2');
 
@@ -354,7 +375,7 @@
         camera.position.set(dist, 12, 0);
         controls.target.set(0, 1.2, 0);
       } else {
-        camera.position.set(32, 24, 32);
+        camera.position.set(28, 20, 28);
         controls.target.set(0, 1.2, 0);
       }
       controls.update();
@@ -366,195 +387,9 @@
       applyView('iso');
     });
 
-    function isTagOn(raw) {
-      return raw === true || raw === 1 || raw === '1' || String(raw).toLowerCase() === 'true';
-    }
-
-    function formatOnOff(raw) {
-      return isTagOn(raw) ? 'on' : 'off';
-    }
-
-    function motorStaLabel(sta) {
-      const labels = ['Off', 'Run', 'Fault', 'Warn', 'Offline'];
-      const n = Number(sta);
-      return Number.isFinite(n) ? (labels[n] || String(n)) : '—';
-    }
-
-    function hoaLabel(hoa) {
-      const labels = ['Auto', 'Off', 'Hand'];
-      const n = Number(hoa);
-      return Number.isFinite(n) ? (labels[n] || String(n)) : '—';
-    }
-
-    function ingestTagRow(t) {
-      const id = String(t?.id || t?.tagId || '').trim();
-      if (!id) return;
-      tagValues.set(id, t.value ?? t.val);
-      tagMeta.set(id, { type: t.type, fb: t.fb });
-    }
-
-    function pumpRunStates() {
-      return [
-        { id: 1, run: isTagOn(tagValues.get('MOTOR1_RUN')) },
-        { id: 2, run: isTagOn(tagValues.get('MOTOR2_RUN')) },
-      ];
-    }
-
-    function pumpRunSummaryText() {
-      if (tagValues.size === 0) return 'Pump 1: — · Pump 2: —';
-      return pumpRunStates()
-        .map((p) => `Pump ${p.id}: ${p.run ? 'running' : 'stopped'}`)
-        .join(' · ');
-    }
-
-    function renderPumpSummaryHtml() {
-      const el = document.getElementById('stat-pumps');
-      if (!el) return;
-      if (tagValues.size === 0) {
-        el.textContent = 'Pump 1: — · Pump 2: —';
-        return;
-      }
-      el.innerHTML = pumpRunStates().map((p, i) => {
-        const sep = i > 0 ? '<span class="stop"> · </span>' : '';
-        const cls = p.run ? 'run' : 'stop';
-        return `${sep}Pump ${p.id}: <span class="${cls}">${p.run ? 'running' : 'stopped'}</span>`;
-      }).join('');
-    }
-
-    function collectStationStatus() {
-      if (tagValues.size === 0) {
-        return {
-          level: 'muted',
-          summary: 'Status: live tags unavailable — check MV connection',
-          faults: ['Live tags unavailable'],
-          notes: [],
-        };
-      }
-
-      const faults = [];
-      const notes = [];
-
-      if (isTagOn(tagValues.get('ALT_FAULT'))) {
-        faults.push('Alternator fault — no pumps available to alternator');
-      }
-      if (isTagOn(tagValues.get('MOTOR1_OFFLINE'))) faults.push('Pump 1 marked offline on HOA');
-      if (isTagOn(tagValues.get('MOTOR2_OFFLINE'))) faults.push('Pump 2 marked offline on HOA');
-      if (!isTagOn(tagValues.get('MOTOR1_ONLINE')) && !isTagOn(tagValues.get('MOTOR1_OFFLINE'))) {
-        notes.push('Pump 1 unavailable to alternator');
-      }
-      if (!isTagOn(tagValues.get('MOTOR2_ONLINE')) && !isTagOn(tagValues.get('MOTOR2_OFFLINE'))) {
-        notes.push('Pump 2 unavailable to alternator');
-      }
-
-      const s1 = Number(tagValues.get('MOTOR1_STA'));
-      const s2 = Number(tagValues.get('MOTOR2_STA'));
-      if (s1 === 2) faults.push('Pump 1 fault');
-      if (s2 === 2) faults.push('Pump 2 fault');
-      if (s1 === 4 && !isTagOn(tagValues.get('MOTOR1_OFFLINE'))) faults.push('Pump 1 offline');
-      if (s2 === 4 && !isTagOn(tagValues.get('MOTOR2_OFFLINE'))) faults.push('Pump 2 offline');
-
-      if (isTagOn(tagValues.get('LVL_HIGH'))) notes.push('High level float active');
-      else if (isTagOn(tagValues.get('LVL_LAG'))) notes.push('Lag float active');
-      else if (isTagOn(tagValues.get('LVL_LEAD'))) notes.push('Lead float active');
-      else if (!isTagOn(tagValues.get('LVL_OFF'))) notes.push('Below off float');
-
-      const running = [];
-      if (isTagOn(tagValues.get('MOTOR1_RUN'))) running.push('Pump 1');
-      if (isTagOn(tagValues.get('MOTOR2_RUN'))) running.push('Pump 2');
-      const pumpLine = pumpRunSummaryText();
-
-      let level = 'ok';
-      let summary = `Status: Normal — ${pumpLine}`;
-      if (faults.length) {
-        level = 'alarm';
-        summary = `Status: ${faults.join('; ')} · ${pumpLine}`;
-      } else if (notes.length) {
-        level = running.length ? 'ok' : 'warn';
-        summary = `Status: ${notes.join('; ')} · ${pumpLine}`;
-      }
-
-      return { level, summary, faults, notes, pumpLine, running };
-    }
-
-    function applyStatusBanner(el, text, level) {
-      if (!el) return;
-      el.textContent = text;
-      el.className = level;
-    }
-
-    function zoneDetailStatus(zoneKey) {
-      const st = collectStationStatus();
-      const pumpLine = st.pumpLine || pumpRunSummaryText();
-
-      if (zoneKey === 'mcc') {
-        const alt1 = tagMeta.get('ALT1')?.fb;
-        const lead = alt1?.activeUnit >= 1 ? `Lead: pump ${alt1.activeUnit}` : 'Alternator idle';
-        const anyRun = st.running?.length > 0;
-        if (st.faults.length) {
-          return { text: `${pumpLine} · ${lead} · ${st.faults.join(' · ')}`, level: 'alarm' };
-        }
-        return {
-          text: `${pumpLine} · ${lead}`,
-          level: anyRun ? 'ok' : 'warn',
-        };
-      }
-
-      if (st.faults.length) return { text: `${pumpLine} · ${st.faults.join(' · ')}`, level: 'alarm' };
-
-      if (zoneKey === 'pump1') {
-        const run = isTagOn(tagValues.get('MOTOR1_RUN'));
-        const hoa = hoaLabel(tagValues.get('MOTOR1_HOA'));
-        const sta = motorStaLabel(tagValues.get('MOTOR1_STA'));
-        return {
-          text: run ? `Pump 1 running — HOA ${hoa}, status ${sta}` : `Pump 1 stopped — HOA ${hoa}, status ${sta}`,
-          level: run ? 'ok' : 'warn',
-        };
-      }
-      if (zoneKey === 'pump2') {
-        const run = isTagOn(tagValues.get('MOTOR2_RUN'));
-        const hoa = hoaLabel(tagValues.get('MOTOR2_HOA'));
-        const sta = motorStaLabel(tagValues.get('MOTOR2_STA'));
-        return {
-          text: run ? `Pump 2 running — HOA ${hoa}, status ${sta}` : `Pump 2 stopped — HOA ${hoa}, status ${sta}`,
-          level: run ? 'ok' : 'warn',
-        };
-      }
-      if (zoneKey === 'well') {
-        return {
-          text: st.notes.length
-            ? `${pumpLine} · ${st.notes.join(' · ')}`
-            : `${pumpLine} · Wet well level normal`,
-          level: st.notes.some((n) => n.includes('High')) ? 'warn' : (st.running?.length ? 'ok' : 'warn'),
-        };
-      }
-      return { text: pumpLine, level: st.running?.length ? 'ok' : 'warn' };
-    }
-
     function formatTagValue(tagId, raw) {
-      if (tagId === 'ALT1') {
-        const fb = tagMeta.get('ALT1')?.fb;
-        if (fb?.fault) return 'Fault — no pumps online';
-        if (fb?.activeUnit >= 1) return `Pump ${fb.activeUnit} lead`;
-        return 'Idle';
-      }
-      if (
-        tagId.startsWith('LVL_')
-        || tagId.endsWith('_RUN')
-        || tagId.endsWith('_FAULT')
-        || tagId.endsWith('_ALM')
-        || tagId.endsWith('_OFFLINE')
-        || tagId.endsWith('_ONLINE')
-        || tagId === 'SYS_RUN'
-        || tagId === 'ALT_OFF'
-        || tagId === 'ALT_BUMP'
-        || tagId === 'LEAD_CALL'
-        || tagId === 'LAG_CALL'
-        || tagId === 'MASTER_OFF'
-      ) {
-        return formatOnOff(raw);
-      }
       if (raw == null) return '—';
-      if (typeof raw === 'boolean') return formatOnOff(raw);
+      if (typeof raw === 'boolean') return raw ? 'ON' : 'OFF';
       if (typeof raw === 'number') {
         if (tagId === 'TANK_LVL') return raw.toFixed(1);
         if (tagId.endsWith('_HRS')) return raw.toFixed(1);
@@ -565,18 +400,7 @@
         }
         return Number.isInteger(raw) ? String(raw) : raw.toFixed(1);
       }
-      if (tagId.endsWith('_HOA')) return hoaLabel(raw);
-      if (tagId.endsWith('_STA')) return motorStaLabel(raw);
       return String(raw);
-    }
-
-    function applyHmiScreenCatalog(screens) {
-      hmiScreenCatalog = new Map();
-      for (const s of screens || []) {
-        const id = String(s?.id || '').trim();
-        if (!id) continue;
-        hmiScreenCatalog.set(id, { id, number: Number(s.number) || 0, name: String(s.name || '').trim() });
-      }
     }
 
     function hmiScreenLabel(screenId) {
@@ -590,64 +414,23 @@
       return hmiScreenCatalog.has(String(screenId || '').trim());
     }
 
-    async function pollMvLive() {
-      const statusEl = document.getElementById('mv-status');
-      try {
-        const res = await fetch(`${mvApiRoot}/live`, { credentials: 'same-origin' });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        const tags = data?.tags || data?.tagSnapshot || [];
-        tagValues.clear();
-        tagMeta.clear();
-        for (const t of tags) ingestTagRow(t);
-        statusEl.textContent = `MV live: ${tagValues.size} tags`;
-        statusEl.className = 'panel ok';
-        if (selectedZone) updateDetailPanelValues(selectedZone);
-        updateLiveVisuals();
-      } catch (e) {
-        statusEl.textContent = `MV live: offline (${e.message})`;
-        statusEl.className = 'panel err';
-        applyStatusBanner(
-          document.getElementById('stat-status'),
-          'Status: live tags unavailable — check MV connection',
-          'muted',
-        );
-      }
-    }
-
     function updateLiveVisuals() {
       applyLiftStationLevel(meta, tagValues.get('TANK_LVL'));
 
       const p1 = tagValues.get('MOTOR1_RUN');
       const p2 = tagValues.get('MOTOR2_RUN');
-      const off = tagValues.get('LVL_OFF');
-      const lead = tagValues.get('LVL_LEAD');
+      document.getElementById('stat-level').textContent = `Wet well: ${formatTagValue('TANK_LVL', tagValues.get('TANK_LVL'))}%`;
       const hi = tagValues.get('LVL_HIGH');
       const lag = tagValues.get('LVL_LAG');
-      const tankLvl = tagValues.get('TANK_LVL');
-      document.getElementById('stat-level').textContent = tankLvl == null
-        ? 'Wet well: —'
-        : `Wet well: ${formatTagValue('TANK_LVL', tankLvl)}%`;
-      let stage = 'Off';
-      if (isTagOn(hi)) stage = 'High (both online)';
-      else if (isTagOn(lag)) stage = 'Lag (lead + lag)';
-      else if (isTagOn(lead)) stage = 'Lead';
-      else if (!isTagOn(off)) stage = 'Below off';
+      let stage = 'Lead';
+      if (hi === true || hi === 1) stage = 'High (both)';
+      else if (lag === true || lag === 1) stage = 'Lag (2 pumps)';
       document.getElementById('stat-stage').textContent = `Alternator: ${stage}`;
-      document.getElementById('stat-floats').textContent =
-        `Floats: off ${formatOnOff(off)} · lead ${formatOnOff(lead)} · lag ${formatOnOff(lag)} · high ${formatOnOff(hi)}`;
-      renderPumpSummaryHtml();
-      const st = collectStationStatus();
-      applyStatusBanner(document.getElementById('stat-status'), st.summary, st.level);
-      applyPumpRunGlow();
-    }
+      document.getElementById('stat-pumps').textContent = `Pumps: P1 ${p1 ? 'RUN' : 'off'} · P2 ${p2 ? 'RUN' : 'off'}`;
 
-    function applyPumpRunGlow() {
-      const p1 = tagValues.get('MOTOR1_RUN');
-      const p2 = tagValues.get('MOTOR2_RUN');
       for (let i = 0; i < pumpMotors.length; i++) {
         const run = i === 0 ? p1 : p2;
-        const on = isTagOn(run);
+        const on = run === true || run === 1;
         const m = pumpMotors[i].material;
         if (on) {
           m.emissive = new THREE.Color(0xf59e0b);
@@ -660,47 +443,34 @@
     }
 
     function applyAlarmVisuals() {
-      const alarmOn = collectStationStatus().level === 'alarm';
       for (const mesh of zoneMeshes) {
+        const tag = mesh.userData.alarmTag;
+        if (!tag) continue;
+        const alarm = tagValues.get(tag);
+        const on = alarm === true || alarm === 1 || alarm === 'true';
         const m = mesh.material;
-        if (alarmOn) {
+        if (on) {
           const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 200);
           m.emissive = new THREE.Color(0xff2222);
           m.emissiveIntensity = pulse * 0.6;
-        } else {
+        } else if (!m.emissive || m.emissiveIntensity < 0.2) {
           m.emissive = new THREE.Color(0x000000);
           m.emissiveIntensity = 0;
         }
       }
-      applyPumpRunGlow();
     }
 
     function updateDetailPanelValues(mesh) {
-      const zone = zoneDetailStatus(mesh.userData.zoneKey || '');
-      applyStatusBanner(document.getElementById('detail-status'), zone.text, zone.level);
       const dl = document.getElementById('detail-tags');
       dl.innerHTML = '';
-      if (tagValues.size === 0) {
-        const dt = document.createElement('dt');
-        dt.textContent = 'Live tags';
-        const dd = document.createElement('dd');
-        dd.textContent = 'unavailable';
-        dl.appendChild(dt);
-        dl.appendChild(dd);
-        return;
-      }
       for (const [label, tagId] of mesh.userData.detailTags || []) {
         const dt = document.createElement('dt');
         dt.textContent = label;
         const dd = document.createElement('dd');
         const val = tagValues.get(tagId);
         dd.textContent = formatTagValue(tagId, val);
-        if ((tagId.endsWith('_FAULT') || tagId.endsWith('_ALM') || tagId.endsWith('_OFFLINE')) && isTagOn(val)) {
+        if ((tagId.endsWith('_FAULT') || tagId.endsWith('_ALM')) && (val === true || val === 1)) {
           dd.className = 'alarm-on';
-        } else if (tagId.endsWith('_STA') && (Number(val) === 2 || Number(val) === 4)) {
-          dd.className = 'alarm-on';
-        } else if (tagId.endsWith('_RUN') && isTagOn(val)) {
-          dd.className = 'ok-on';
         }
         dl.appendChild(dt);
         dl.appendChild(dd);
@@ -814,32 +584,6 @@
       controls.update();
     });
 
-    let mvPollMs = 60000;
-    let mvPollTimer = null;
-    function scheduleMvPoll() {
-      if (mvPollTimer) clearInterval(mvPollTimer);
-      pollMvLive();
-      mvPollTimer = setInterval(pollMvLive, mvPollMs);
-    }
-    window.addEventListener('message', (e) => {
-      if (e.origin !== window.location.origin) return;
-      const data = e.data;
-      if (!data || typeof data !== 'object') return;
-      if (data.type === 'mv-hmi-poll-config') {
-        if (typeof data.apiBase === 'string' && data.apiBase.trim()) {
-          mvApiRoot = data.apiBase.trim();
-        }
-        if (Number.isFinite(Number(data.pollMs))) {
-          mvPollMs = Math.max(500, Number(data.pollMs));
-          scheduleMvPoll();
-        }
-      } else if (data.type === 'mv-hmi-screen-catalog' && Array.isArray(data.screens)) {
-        applyHmiScreenCatalog(data.screens);
-        if (selectedZone) updateDetailPanelValues(selectedZone);
-      }
-    });
-    scheduleMvPoll();
-
     function onResize() {
       const a = wrap.clientWidth / wrap.clientHeight;
       camera.left = -frustum * a;
@@ -851,12 +595,9 @@
     }
     window.addEventListener('resize', onResize);
 
-    const north = mountNorthIndicator();
-
     function animate() {
       requestAnimationFrame(animate);
       controls.update();
-      north.update(camera);
       applyAlarmVisuals();
       renderer.render(scene, camera);
     }

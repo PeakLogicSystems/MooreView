@@ -4,8 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const { DATA_DIR } = require('../config');
 const { CONFIG_JSON_FILES } = require('./keys');
-function readFileJson(name, fallback, dataDir = DATA_DIR) {
-  const fp = path.join(dataDir, name);
+function readFileJson(name, fallback) {
+  const fp = path.join(DATA_DIR, name);
   if (!fs.existsSync(fp)) return fallback;
   try {
     return JSON.parse(fs.readFileSync(fp, 'utf8'));
@@ -14,8 +14,8 @@ function readFileJson(name, fallback, dataDir = DATA_DIR) {
   }
 }
 
-function listFileProjects(dataDir = DATA_DIR) {
-  const dir = path.join(dataDir, 'projects');
+function listFileProjects() {
+  const dir = path.join(DATA_DIR, 'projects');
   if (!fs.existsSync(dir)) return [];
   return fs.readdirSync(dir).filter((f) => /\.est\.json$/i.test(f));
 }
@@ -33,48 +33,12 @@ async function migrateConfigFilesToMongo(backend, opts = {}) {
     await backend.writeDocument(key, data);
     imported.push(key);
   }
-  if (opts.seedProjects !== false) {
+  // Projects live on disk (data/projects/*.est.zip). Opt-in only for legacy Mongo seeding.
+  if (opts.seedProjects === true && typeof backend.writeProjectSnapshot === 'function') {
     const synced = await syncBundledProjectsFromDisk(backend);
     imported.push(...synced.map((id) => `projects/${id}`));
   }
   return imported;
-}
-
-const BUNDLED_FORCE_REFRESH_IDS = new Set(['assisted-living', 'assisted-living-halow', 'assisted-living-pool-iot-link', 'mle-wastewater', 'duplex-lift-station', 'putnam-county-cloud', 'putnam-mle-plant', 'atu-cloud-residential', 'atu-cloud-commercial', 'pool-cloud-residential', 'cstore-opta-parc-starter', 'circle-k-florida-fleet']);
-
-function bundledProjectRel(projectId) {
-  return path.join('projects', `${projectId}.est.json`);
-}
-
-/** True when data/projects/<id>.est.json mtime is newer than the Mongo snapshot savedAt. */
-function isBundledDiskNewerThanMongo(projectId, row, dataDir = DATA_DIR) {
-  if (!row?.data) return true;
-  try {
-    const fp = path.join(dataDir, bundledProjectRel(projectId));
-    const st = fs.statSync(fp);
-    const mongoTs = row.savedAt ? Date.parse(row.savedAt) : 0;
-    return Number.isFinite(mongoTs) ? st.mtimeMs > mongoTs + 500 : true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Reload a bundled project snapshot from data/projects/<id>.est.json (always for force-refresh ids).
- * @returns {Promise<object|null>} project document or null when not bundled / missing on disk
- */
-async function refreshBundledProjectFromDisk(projectId, backend, opts = {}) {
-  const { safeId, writeProjectSnapshot, readProjectSnapshot } = backend;
-  const id = typeof safeId === 'function' ? safeId(projectId) : String(projectId || '').trim();
-  if (!id || !BUNDLED_FORCE_REFRESH_IDS.has(id)) return null;
-  const doc = readFileJson(bundledProjectRel(id), null);
-  if (!doc) return null;
-  if (opts.force !== true && typeof readProjectSnapshot === 'function') {
-    const row = await readProjectSnapshot(id);
-    if (row?.data && !isBundledDiskNewerThanMongo(id, row)) return row.data;
-  }
-  await writeProjectSnapshot(id, doc, { name: doc?.project?.name || id });
-  return doc;
 }
 
 /**
@@ -85,38 +49,25 @@ async function refreshBundledProjectFromDisk(projectId, backend, opts = {}) {
 async function syncBundledProjectsFromDisk(backend, opts = {}) {
   const imported = [];
   const existing = opts.existingIds || new Set();
-  const dataDir = opts.dataDir || DATA_DIR;
-  const { safeId, readProjectSnapshot } = backend;
-  const FORCE_REFRESH_IDS = BUNDLED_FORCE_REFRESH_IDS;
+  const { safeId } = backend;
+  const FORCE_REFRESH_IDS = new Set([
+    'assisted-living',
+    'mle-wastewater',
+    'duplex-lift-station',
+    'putnam-county-cloud',
+    'putnam-mle-plant',
+  ]);
 
-  for (const fname of listFileProjects(dataDir)) {
+  for (const fname of listFileProjects()) {
     const id = fname.replace(/\.est\.json$/i, '');
     const projectId = typeof safeId === 'function' ? safeId(id) : id;
-    const forceRefresh = FORCE_REFRESH_IDS.has(projectId);
-    if (existing.has(projectId) && !forceRefresh && !opts.forceAll) continue;
-    const doc = readFileJson(path.join('projects', fname), null, dataDir);
+    if (existing.has(projectId) && !FORCE_REFRESH_IDS.has(projectId) && !opts.forceAll) continue;
+    const doc = readFileJson(path.join('projects', fname), null);
     if (!doc) continue;
-    if (
-      !opts.forceAll
-      && existing.has(projectId)
-      && forceRefresh
-      && typeof readProjectSnapshot === 'function'
-    ) {
-      const row = await readProjectSnapshot(projectId);
-      if (row?.data && !isBundledDiskNewerThanMongo(projectId, row, dataDir)) continue;
-    }
     await backend.writeProjectSnapshot(projectId, doc, { name: doc?.project?.name || id });
     imported.push(projectId);
   }
   return imported;
 }
 
-module.exports = {
-  migrateConfigFilesToMongo,
-  syncBundledProjectsFromDisk,
-  refreshBundledProjectFromDisk,
-  BUNDLED_FORCE_REFRESH_IDS,
-  isBundledDiskNewerThanMongo,
-  readFileJson,
-  listFileProjects,
-};
+module.exports = { migrateConfigFilesToMongo, syncBundledProjectsFromDisk, readFileJson, listFileProjects };

@@ -1,191 +1,145 @@
 'use strict';
 
 const path = require('path');
-const fs = require('fs');
 const persistence = require('../../persistence');
 const programStore = require('../../programs/programStore');
 const { parseProgram, collectProgramTagRefs } = require('../../engine/parser');
 const { listSerialPorts } = require('../../system/serialPorts');
 const { listPresets } = require('../../devices/devicePresets');
+const { listTransportGroups } = require('../../devices/hardwareWizard');
 const { normalizePens, penTagIds } = require('../../graph/graphPens');
 const { normalizeHmi, defaultDemoHmi } = require('../../hmi/hmiConfig');
+const { ensureDuplexlsScreen2 } = require('../../hmi/duplexlsScreen');
+const { patchAssistedLivingHmi } = require('../../settings/assistedLivingSettings');
 const mongoTagLogger = require('../../logger/mongoTagLogger');
 const projectStore = require('../../project/projectStore');
-const { registry } = require('../../parc/deviceRegistry');
+const { resolveParcRegistry } = require('../../parc/deviceRegistry');
 const { getMqttCentralHub } = require('../../parc/mqttCentralHub');
+const { syncMqttParcLiveIo } = require('../../parc/parcLiveIoSync');
 const { enrichParcDevicesWithDriverLink } = require('../../parc/parcDiscovery');
-const { MAX_TAGS } = require('../../config');
+const { MAX_TAGS, DEPLOYMENT_MODE } = require('../../config');
+const { publicDriverList } = require('../../drivers/driverConfig');
 const { normalizeReportConfig } = require('../../reports/reportConfig');
-const { stripLegacyProjectHwDefaults } = require('../../settings/portableSettings');
-
-function parcPayload(driverManager, settings) {
-  return {
-    settings: registry.settings(),
-    devices: enrichParcDevicesWithDriverLink(
-      registry.listDevices(),
-      driverManager.list(),
-      { hubBrokerUrl: settings?.mqttParc?.brokerUrl || '' },
-    ),
-    mqtt: getMqttCentralHub(registry).status(),
-  };
-}
+const { stProgramLimitsMeta, assessStProgramLines } = require('../../programs/stProgramLimits');
+const { readTimezoneFromSettings } = require('../../settings/timezoneSettings');
+const { buildLivePayload } = require('../../live/liveWebSocket');
 
 const PUBLIC_ROOT = path.join(__dirname, '../../../public');
-const SETTINGS_FILE = 'settings.json';
-const SERIAL_PORTS_TTL_MS = 60_000;
-
-/** @type {{ key: string, hmi: object } | null} */
-let hmiCache = null;
-/** @type {{ mtimeMs: number, refs: string[], programPath: string } | null} */
-let programTagRefCache = null;
-/** @type {{ at: number, ports: string[] } | null} */
-let serialPortsCache = null;
-
-function settingsMtimeMs() {
-  try {
-    return fs.statSync(persistence.filePath(SETTINGS_FILE)).mtimeMs;
-  } catch {
-    return 0;
-  }
-}
-
-function readSettings() {
-  return stripLegacyProjectHwDefaults(
-    persistence.readJson(SETTINGS_FILE, { scanMs: 100, graphMaxPoints: 600, graphPens: [] }),
-  );
-}
-
-function getNormalizedHmi(settings, tagList) {
-  const key = `${settingsMtimeMs()}:${tagList.length}`;
-  if (hmiCache?.key === key) return hmiCache.hmi;
-  const hmi = normalizeHmi(
-    settings.hmi?.screens?.length ? settings.hmi : defaultDemoHmi(),
-    tagList,
-    PUBLIC_ROOT,
-  );
-  hmiCache = { key, hmi };
-  return hmi;
-}
-
-function getProgramTagRefs() {
-  const programPath = programStore.activeRel();
-  let mtimeMs = 0;
-  if (programPath) {
-    try {
-      mtimeMs = fs.statSync(programStore.resolvePath(programPath)).mtimeMs;
-    } catch { /* ignore */ }
-  }
-  if (programTagRefCache
-    && programTagRefCache.programPath === programPath
-    && programTagRefCache.mtimeMs === mtimeMs) {
-    return programTagRefCache.refs;
-  }
-  const { ast } = parseProgram(programStore.readActive());
-  const refs = ast ? collectProgramTagRefs(ast) : [];
-  programTagRefCache = { mtimeMs, refs, programPath };
-  return refs;
-}
-
-async function getSerialPortsCached() {
-  const now = Date.now();
-  if (serialPortsCache && now - serialPortsCache.at < SERIAL_PORTS_TTL_MS) {
-    return serialPortsCache.ports;
-  }
-  let serialPorts = [];
-  try { serialPorts = await listSerialPorts(); } catch { /* ignore */ }
-  serialPortsCache = { at: now, ports: serialPorts };
-  return serialPorts;
-}
 
 function createDashboardRoutes(deps) {
   const { tagStore, driverManager, scanEngine, graphHistory } = deps;
   const router = require('express').Router();
 
-  router.get('/live', async (req, res) => {
-    const tagList = tagStore.list();
+  router.get('/live', (req, res) => {
+    const payload = buildLivePayload({ tagStore, driverManager, scanEngine });
     const qIds = (req.query.graphTags || '').split(',').filter(Boolean);
-    res.json({
-      runtime: scanEngine.status(),
-      live: tagStore.liveSnapshotSlim(),
-      tagCount: tagStore.count(),
-      forces: tagList.filter((t) => t.forceInput || t.forceOutput),
-      driverHealth: driverManager.health(),
-      ...(qIds.length ? { graph: graphHistory.getHistory(qIds, 400) } : {}),
-    });
+    if (qIds.length) {
+      payload.graph = graphHistory.getHistory(qIds, 400);
+    }
+    res.json(payload);
   });
 
   router.get('/dashboard', async (req, res) => {
-    const lite = String(req.query.lite || '').trim() === '1';
+    syncMqttParcLiveIo(tagStore, driverManager);
     const tagList = tagStore.list();
-    const settings = readSettings();
+    const registry = resolveParcRegistry();
+    let settings = persistence.readJson('settings.json', { scanMs: 100, graphMaxPoints: 600, graphPens: [] });
+    const mqttHub = getMqttCentralHub(registry).status();
+    if (DEPLOYMENT_MODE === 'cloud' && mqttHub.brokerUrl) {
+      settings = {
+        ...settings,
+        mqttParc: {
+          ...(settings.mqttParc || {}),
+          brokerUrl: mqttHub.brokerUrl,
+        },
+      };
+    }
+    const projects = await projectStore.listProjectsFresh();
+    const startup = settings.startup || {};
+    const activeProjectId = settings.project?.lastOpenedId
+      || (startup.mode === 'saved_project' && startup.projectId ? startup.projectId : null);
+    let activeProjectName = settings.project?.name;
+    if (activeProjectId) {
+      const listed = projects.find((p) => String(p.id) === String(activeProjectId));
+      if (listed?.name) activeProjectName = listed.name;
+      else if (!activeProjectName) activeProjectName = activeProjectId;
+    }
     const graphPens = normalizePens(settings.graphPens, tagList);
-    const hmiRev = settingsMtimeMs();
+    const rawHmi = patchAssistedLivingHmi(settings.hmi?.screens?.length ? settings.hmi : defaultDemoHmi());
+    ensureDuplexlsScreen2(rawHmi, PUBLIC_ROOT, activeProjectName || settings.project?.name);
+    const hmi = normalizeHmi(rawHmi, tagList, PUBLIC_ROOT);
     const qIds = (req.query.graphTags || '').split(',').filter(Boolean);
     const graphIds = qIds.length ? qIds : penTagIds(graphPens);
-    const programTagRefs = getProgramTagRefs();
-    const serialPorts = await getSerialPortsCached();
-    const reportConfig = normalizeReportConfig(settings.reportConfig);
-
-    if (lite) {
-      const { hmi, ...settingsRest } = settings;
-      res.json({
-        lite: true,
-        hmiRev,
-        runtime: scanEngine.status(),
-        tagCount: tagStore.count(),
-        maxTags: MAX_TAGS,
-        drivers: driverManager.list(),
-        driverHealth: driverManager.health(),
-        program: programStore.readActive(),
-        activeProgram: programStore.activeRel(),
-        stDir: programStore.ST_DIR,
-        programs: programStore.listPrograms(),
-        settings: { ...settingsRest, graphPens, reportConfig },
-        reportConfig,
-        graphPens,
-        programTagRefs,
-        serialPorts,
-        devicePresets: listPresets(),
-        mongoLogger: mongoTagLogger.status(),
-        parc: parcPayload(driverManager, settings),
-      });
-      return;
+    const programSource = programStore.readActive();
+    const programMeta = programStore.activeProgramMeta();
+    let programTagRefs = [];
+    if (scanEngine.ast) {
+      programTagRefs = collectProgramTagRefs(scanEngine.ast);
+    } else if (programSource) {
+      const { ast } = parseProgram(programSource);
+      programTagRefs = ast ? collectProgramTagRefs(ast) : [];
     }
-
-    const hmi = getNormalizedHmi(settings, tagList);
+    const programLineCount = assessStProgramLines(programSource, { forParc: false });
+    const programLineCountParc = assessStProgramLines(programSource, { forParc: true });
+    let serialPorts = [];
+    try { serialPorts = await listSerialPorts(); } catch { /* ignore */ }
+    let optaRuntime = null;
+    try {
+      const { optaRuntimeSnapshot } = require('../../parc/parcLiveIoSync');
+      optaRuntime = optaRuntimeSnapshot(driverManager);
+    } catch { /* optional */ }
     res.json({
       runtime: scanEngine.status(),
+      optaRuntime,
       tags: tagList,
       tagCount: tagStore.count(),
       maxTags: MAX_TAGS,
-      drivers: driverManager.list(),
+      drivers: publicDriverList(driverManager.list()),
       driverHealth: driverManager.health(),
-      program: programStore.readActive(),
+      program: programSource,
+      programMeta,
       activeProgram: programStore.activeRel(),
-      stDir: programStore.ST_DIR,
+      stDir: programStore.stDir(),
       programs: programStore.listPrograms(),
-      settings: { ...settings, graphPens, hmi, reportConfig },
-      hmiRev,
-      reportConfig,
+      settings: {
+        ...settings,
+        timezone: readTimezoneFromSettings(settings),
+        graphPens,
+        hmi,
+        reportConfig: normalizeReportConfig(settings.reportConfig),
+      },
+      reportConfig: normalizeReportConfig(settings.reportConfig),
       forces: tagList.filter((t) => t.forceInput || t.forceOutput),
       graph: graphHistory.getHistory(graphIds.length ? graphIds : null, 400),
       graphPens,
       programTagRefs,
-      live: tagStore.liveSnapshotSlim(),
+      programLimits: stProgramLimitsMeta(),
+      programLineCount,
+      programLineCountParc,
+      live: tagStore.liveSnapshot(),
       serialPorts,
       devicePresets: listPresets(),
+      wizardTransportGroups: listTransportGroups(),
       mongoLogger: mongoTagLogger.status(),
-      projects: projectStore.listProjects(),
-      parc: parcPayload(driverManager, settings),
+      projects,
+      activeProjectId: activeProjectId || null,
+      activeProjectName: activeProjectName || settings.project?.name || 'untitled',
+      parc: {
+        settings: registry.settings(),
+        devices: enrichParcDevicesWithDriverLink((() => {
+          try {
+            const { listVisibleParcDevices } = require('../../parc/parcTenantScope');
+            return listVisibleParcDevices(registry);
+          } catch {
+            return registry.listDevices();
+          }
+        })(), driverManager.list()),
+        mqtt: mqttHub,
+      },
     });
   });
 
   return router;
 }
 
-function invalidateDashboardCaches() {
-  hmiCache = null;
-  programTagRefCache = null;
-}
-
-module.exports = { createDashboardRoutes, invalidateDashboardCaches };
+module.exports = { createDashboardRoutes };

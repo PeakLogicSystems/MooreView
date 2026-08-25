@@ -172,23 +172,7 @@ describe('parcDiscovery', () => {
       settings: {},
     });
     const registry = {
-      listDevices: () => [{
-        deviceId: 'opta_0123b636f1c23964ee',
-        lastReportAt: new Date().toISOString(),
-        ageSec: 5,
-        stale: false,
-        meta: { ateccSerial: '0123b636f1c23964ee' },
-      }],
-      getDevice: (id) => {
-        if (id !== 'opta_0123b636f1c23964ee') return null;
-        return {
-          deviceId: id,
-          lastReportAt: new Date().toISOString(),
-          ageSec: 5,
-          stale: false,
-          meta: { ateccSerial: '0123b636f1c23964ee' },
-        };
-      },
+      listDevices: () => [{ deviceId: 'opta_0123b636f1c23964ee', meta: { ateccSerial: '0123b636f1c23964ee' } }],
     };
     const { drivers, changed } = reconcileMqttParcDriversFromRegistry(
       [{ id: 'mock1', type: 'mock' }],

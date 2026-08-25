@@ -1,5 +1,6 @@
 #include "mv_store.h"
 #include "mv_config.h"
+#include <stddef.h>
 #include <string.h>
 
 static MvDeviceConfig g_active;
@@ -50,6 +51,33 @@ struct MvDeviceConfigV2 {
   uint16_t globalSiteKey;
 };
 
+/** V4 — pre-reportMs firmware (password[80], no device→host interval). */
+struct MvDeviceConfigV4 {
+  uint32_t magic;
+  uint16_t version;
+  uint16_t crc;
+  uint8_t ethUseDhcp;
+  uint8_t wifiApEnable;
+  uint8_t reserved[2];
+  char wifiApSsid[24];
+  char wifiApPass[24];
+  uint8_t ethIp[4];
+  uint8_t ethGw[4];
+  uint8_t ethMask[4];
+  uint8_t ethDns[4];
+  uint8_t expSlotType[MV_EXP_SLOTS];
+  char mqttBrokerHost[64];
+  uint16_t mqttBrokerPort;
+  uint8_t mqttBrokerSet;
+  uint8_t mqttAuthSet;
+  char mqttUsername[32];
+  char mqttPassword[MV_MQTT_PASSWORD_SIZE];
+  uint16_t globalSiteKey;
+  uint8_t a0602RtdEnable;
+  uint8_t mqttUseTls;
+  uint8_t reservedPad[2];
+};
+
 /** V3 — same layout as pre-80-byte password firmware (mqttPassword[48]). */
 struct MvDeviceConfigV3 {
   uint32_t magic;
@@ -77,34 +105,26 @@ struct MvDeviceConfigV3 {
   uint8_t reservedPad[2];
 };
 
-/** V4 — before mqttReportMs / exception / disable fields (MV_STORE_VERSION 4). */
-struct MvDeviceConfigV4 {
-  uint32_t magic;
-  uint16_t version;
-  uint16_t crc;
-  uint8_t ethUseDhcp;
-  uint8_t wifiApEnable;
-  uint8_t reserved[2];
-  char wifiApSsid[24];
-  char wifiApPass[24];
-  uint8_t ethIp[4];
-  uint8_t ethGw[4];
-  uint8_t ethMask[4];
-  uint8_t ethDns[4];
-  uint8_t expSlotType[MV_EXP_SLOTS];
-  char mqttBrokerHost[64];
-  uint16_t mqttBrokerPort;
-  uint8_t mqttBrokerSet;
-  uint8_t mqttAuthSet;
-  char mqttUsername[32];
-  char mqttPassword[MV_MQTT_PASSWORD_SIZE];
-  uint16_t globalSiteKey;
-  uint8_t a0602RtdEnable;
-  uint8_t mqttUseTls;
-  uint8_t reservedPad[2];
-};
+static uint16_t mvStoreCrcBytes(const uint8_t* p, size_t n, size_t skipOff, size_t skipLen) {
+  uint16_t crc = 0xFFFF;
+  for (size_t i = 0; i < n; i++) {
+    if (i >= skipOff && i < skipOff + skipLen) continue;
+    crc ^= p[i];
+    for (uint8_t b = 0; b < 8; b++) {
+      crc = (crc & 1) ? (uint16_t)((crc >> 1) ^ 0xA001) : (uint16_t)(crc >> 1);
+    }
+  }
+  return crc;
+}
 
+/** CRC over the whole struct, skipping the crc field (not the last 2 bytes). */
 static uint16_t mvStoreCrc(const MvDeviceConfig* cfg) {
+  return mvStoreCrcBytes((const uint8_t*)cfg, sizeof(MvDeviceConfig),
+                         offsetof(MvDeviceConfig, crc), sizeof(cfg->crc));
+}
+
+/** Legacy V5 checksum hashed bytes [0, sizeof-2) and included the crc field — always failed after reboot. */
+static uint16_t mvStoreCrcLegacyPrefix(const MvDeviceConfig* cfg) {
   const uint8_t* p = (const uint8_t*)cfg;
   uint16_t crc = 0xFFFF;
   size_t n = sizeof(MvDeviceConfig) - sizeof(cfg->crc);
@@ -162,7 +182,7 @@ void mvStoreDefaults(MvDeviceConfig* cfg) {
   cfg->magic = MV_STORE_MAGIC;
   cfg->version = MV_STORE_VERSION;
   cfg->ethUseDhcp = 1;
-  cfg->wifiApEnable = 1;
+  cfg->wifiApEnable = 0;
   strncpy(cfg->wifiApSsid, MV_WIFI_AP_SSID, sizeof(cfg->wifiApSsid) - 1);
   strncpy(cfg->wifiApPass, MV_WIFI_AP_PASS, sizeof(cfg->wifiApPass) - 1);
   cfg->ethIp[0] = 192; cfg->ethIp[1] = 168; cfg->ethIp[2] = 1; cfg->ethIp[3] = 50;
@@ -182,9 +202,7 @@ void mvStoreDefaults(MvDeviceConfig* cfg) {
   cfg->mqttAuthSet = (cfg->mqttUsername[0] && cfg->mqttPassword[0]) ? 1 : 0;
   cfg->globalSiteKey = 1;
   cfg->a0602RtdEnable = 0;
-  cfg->mqttReportOnException = 1;
-  cfg->mqttTelemetryDisable = 0;
-  cfg->mqttReportMs = MV_MQTT_REPORT_MS_DEFAULT;
+  cfg->reportMs = MV_REPORT_MS_DEFAULT;
   cfg->crc = mvStoreCrc(cfg);
 }
 
@@ -267,6 +285,7 @@ static void mvStoreMigrateV3(const MvDeviceConfigV3* old, MvDeviceConfig* cfg) {
   strncpy(cfg->mqttPassword, old->mqttPassword, sizeof(cfg->mqttPassword) - 1);
   cfg->globalSiteKey = old->globalSiteKey;
   cfg->a0602RtdEnable = old->a0602RtdEnable;
+  cfg->reportMs = MV_REPORT_MS_DEFAULT;
   cfg->crc = mvStoreCrc(cfg);
 }
 
@@ -308,12 +327,17 @@ static void mvStoreMigrateV4(const MvDeviceConfigV4* old, MvDeviceConfig* cfg) {
   strncpy(cfg->mqttPassword, old->mqttPassword, sizeof(cfg->mqttPassword) - 1);
   cfg->globalSiteKey = old->globalSiteKey;
   cfg->a0602RtdEnable = old->a0602RtdEnable;
+  cfg->reportMs = MV_REPORT_MS_DEFAULT;
   cfg->crc = mvStoreCrc(cfg);
 }
 
 static bool mvStoreValid(const MvDeviceConfig* cfg) {
   if (!cfg || cfg->magic != MV_STORE_MAGIC || cfg->version != MV_STORE_VERSION) return false;
-  return cfg->crc == mvStoreCrc(cfg);
+  return cfg->crc == mvStoreCrc(cfg) || cfg->crc == mvStoreCrcLegacyPrefix(cfg);
+}
+
+static bool mvStoreLooksLikeV5(const MvDeviceConfig* cfg) {
+  return cfg && cfg->magic == MV_STORE_MAGIC && cfg->version == MV_STORE_VERSION;
 }
 
 static void mvStoreApplyCloudMqtt(MvDeviceConfig* cfg) {
@@ -343,6 +367,7 @@ static const char* MV_KV_KEY = "/kv/mv_setup";
 bool mvStoreLoad(MvDeviceConfig* cfg) {
   mvStoreDefaults(cfg);
   bool fromNv = false;
+  bool rewriteCrc = false;
 #ifdef MV_HAS_KV
   {
     uint8_t buf[sizeof(MvDeviceConfig)];
@@ -350,9 +375,15 @@ bool mvStoreLoad(MvDeviceConfig* cfg) {
     if (kv_get(MV_KV_KEY, buf, sizeof(buf), &actual) == 0 && actual > 0) {
       if (actual == sizeof(MvDeviceConfig)) {
         MvDeviceConfig* tmp = (MvDeviceConfig*)buf;
-        if (mvStoreValid(tmp)) {
+        /* V5 CRC used to include the crc field, so reboot always dropped NV (site key → 1). */
+        if (mvStoreValid(tmp) || mvStoreLooksLikeV5(tmp)) {
           memcpy(cfg, tmp, sizeof(MvDeviceConfig));
+          if (cfg->globalSiteKey < 1) cfg->globalSiteKey = 1;
+          if (cfg->reportMs < MV_REPORT_MS_MIN || cfg->reportMs > MV_REPORT_MS_MAX) {
+            cfg->reportMs = MV_REPORT_MS_DEFAULT;
+          }
           fromNv = true;
+          rewriteCrc = (tmp->crc != mvStoreCrc(cfg));
         }
       } else if (actual == sizeof(MvDeviceConfigV4)) {
         MvDeviceConfigV4* old = (MvDeviceConfigV4*)buf;
@@ -382,7 +413,7 @@ bool mvStoreLoad(MvDeviceConfig* cfg) {
     }
   }
 #endif
-  if (!fromNv || mvStoreMqttUnconfigured(cfg)) {
+  if (!fromNv || mvStoreMqttUnconfigured(cfg) || rewriteCrc) {
     if (mvStoreMqttUnconfigured(cfg)) mvStoreApplyCloudMqtt(cfg);
     mvStoreSave(cfg);
   }
@@ -397,6 +428,7 @@ bool mvStoreSave(const MvDeviceConfig* cfg) {
   memcpy(&tmp, cfg, sizeof(tmp));
   tmp.magic = MV_STORE_MAGIC;
   tmp.version = MV_STORE_VERSION;
+  tmp.crc = 0;
   tmp.crc = mvStoreCrc(&tmp);
   memcpy(&g_active, &tmp, sizeof(g_active));
   g_loaded = true;

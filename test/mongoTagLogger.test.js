@@ -5,7 +5,6 @@ const assert = require('node:assert');
 const {
   validateTimeRange,
   docsToHistory,
-  penSampleToTsDoc,
   generateSeedSampleDocs,
   buildSeedTagDefinitions,
   HISTORIAN_MIN_CHUNK_MS,
@@ -42,19 +41,24 @@ describe('mongoTagLogger historian query', () => {
   it('docsToHistory groups and sorts pen_sample docs', () => {
     const docs = [
       {
-        timestamp: new Date('2026-01-01T01:00:00Z'),
-        metadata: { tagId: 'AI1', projectName: 'demo' },
-        value: 2,
+        event: 'pen_sample',
+        at: new Date('2026-01-01T01:00:00Z'),
+        pen: { tagId: 'AI1' },
+        tag: { id: 'AI1', value: 2, wordWidth: 16 },
+        sampleValue: 2,
       },
       {
-        timestamp: new Date('2026-01-01T00:00:00Z'),
-        metadata: { tagId: 'AI1', projectName: 'demo' },
-        value: 1,
+        event: 'pen_sample',
+        at: new Date('2026-01-01T00:00:00Z'),
+        pen: { tagId: 'AI1' },
+        tag: { id: 'AI1', value: 1, wordWidth: 16 },
+        sampleValue: 1,
       },
       {
-        timestamp: new Date('2026-01-01T00:30:00Z'),
-        metadata: { tagId: 'AI2', projectName: 'demo' },
-        value: 1,
+        event: 'pen_sample',
+        at: new Date('2026-01-01T00:30:00Z'),
+        pen: { tagId: 'AI2' },
+        tag: { id: 'AI2', value: true, wordWidth: 16 },
       },
     ];
     const { history, counts } = docsToHistory(docs, ['AI1', 'AI2'], 5000);
@@ -95,41 +99,10 @@ describe('mongoTagLogger historian query', () => {
     assert.equal(SEED_ANALOG_IDS.length, 6);
     assert.equal(tags.length, 10);
     assert.ok(docs.length >= 10 * 24);
-    const digital = docs.filter((d) => d.metadata.tagId === 'SEED_DI1');
-    assert.ok(digital.every((d) => d.value === 0 || d.value === 1));
-    const analog = docs.filter((d) => d.metadata.tagId === 'SEED_AI1');
-    assert.ok(analog.every((d) => d.value >= 0 && d.value <= 100));
-  });
-
-  it('docsToHistory still accepts legacy pen_sample documents', () => {
-    const docs = [
-      {
-        event: 'pen_sample',
-        at: new Date('2026-01-01T00:00:00Z'),
-        pen: { tagId: 'AI1' },
-        tag: { id: 'AI1', value: 1, wordWidth: 16 },
-        sampleValue: 1,
-      },
-    ];
-    const { history } = docsToHistory(docs, ['AI1'], 5000);
-    assert.equal(history.AI1.length, 1);
-    assert.equal(history.AI1[0].value, 1);
-  });
-
-  it('penSampleToTsDoc produces thin time-series measurements', () => {
-    const doc = penSampleToTsDoc({
-      at: new Date('2026-01-01T00:00:00Z'),
-      projectName: 'demo',
-      tagId: 'AI1',
-      tagType: 'REAL',
-      running: true,
-      sampleValue: 12.3456,
-      scaledValue: 12.3456,
-    });
-    assert.equal(doc.metadata.tagId, 'AI1');
-    assert.equal(doc.value, 12.35);
-    assert.equal(doc.running, true);
-    assert.ok(doc.timestamp instanceof Date);
+    const digital = docs.filter((d) => d.pen.tagId === 'SEED_DI1');
+    assert.ok(digital.every((d) => d.sampleValue === 0 || d.sampleValue === 1));
+    const analog = docs.filter((d) => d.pen.tagId === 'SEED_AI1');
+    assert.ok(analog.every((d) => d.sampleValue >= 0 && d.sampleValue <= 100));
   });
 
   it('buildSeedTagDefinitions has BOOL and REAL tags', () => {

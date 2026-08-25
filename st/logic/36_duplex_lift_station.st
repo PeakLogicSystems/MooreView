@@ -69,21 +69,23 @@
 
     X1_I11…X1_I16            Spare DIs
 
-    Base analog inputs 1–6 (Opta terminals I1–I6, tags AI1–AI6 ← I1_RAW–I6_RAW):
+    Base analog inputs 1–6 (Opta terminals I1–I6) are MCSA LIFT6 CTs:
 
-      0–1 V CT transmitters, linear 0–50 A (1.00 V = 50 A)
+      0–1 V transmitters, linear 0–50 A (1.00 V = 50 A)
 
-      AI1  Motor 1 phase A amps
+      Firmware publishes mcsa[] ch0–5; host PDM uses I1_RAW–I6_RAW / AI1–AI6
 
-      AI2  Motor 1 phase B amps
+      AI1  Motor 1 phase A amps   MCSA ch0 → PDM pump-1
 
-      AI3  Motor 1 phase C amps
+      AI2  Motor 1 phase B amps   MCSA ch1 → PDM pump-1
 
-      AI4  Motor 2 phase A amps
+      AI3  Motor 1 phase C amps   MCSA ch2 → PDM pump-1
 
-      AI5  Motor 2 phase B amps
+      AI4  Motor 2 phase A amps   MCSA ch3 → PDM pump-2
 
-      AI6  Motor 2 phase C amps
+      AI5  Motor 2 phase B amps   MCSA ch4 → PDM pump-2
+
+      AI6  Motor 2 phase C amps   MCSA ch5 → PDM pump-2
 
     R1   Pump 1 contactor ← MOTOR1_RUN
 

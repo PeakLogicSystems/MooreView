@@ -14,6 +14,7 @@
 #include "mv_program_store.h"
 #include "mv_store.h"
 #include "mv_global_mqtt.h"
+#include "mv_global_key.h"
 #include "mv_watchdog.h"
 #include "mv_edge_ai.h"
 #include "mv_identity.h"
@@ -74,16 +75,10 @@ static char s_mqttUser[32];
 static char s_mqttPass[MV_MQTT_PASSWORD_SIZE];
 static bool s_mqttAuthSet = false;
 static bool s_mqttAuthFailed = false;
+static bool s_mqttEverConnected = false;
 static bool s_pauseTelemetry = false;
-static bool s_reportOnException = true;
-static bool s_telemetryDisabled = false;
 static unsigned long s_lastReport = 0;
 static bool s_forceTelemetry = false;
-static uint32_t s_lastExceptionFp = 0xffffffffu;
-static bool s_lastRuntimeRunning = false;
-static bool s_lastProgramOk = false;
-static bool s_lastMqttAuthFailed = false;
-static char s_lastProgramError[64];
 /** Actual PubSubClient buffer size achieved (256 = alloc failed / default). */
 static uint16_t s_mqttBufferBytes = 0;
 
@@ -124,43 +119,6 @@ static uint16_t mvMqttEnsureBuffer() {
 void mvMqttReserveBuffer() { mvMqttEnsureBuffer(); }
 
 uint16_t mvMqttBufferBytes() { return s_mqttBufferBytes; }
-
-static uint32_t mvMqttClampReportMs(uint32_t ms) {
-  if (ms < MV_MQTT_REPORT_MS_MIN) return MV_MQTT_REPORT_MS_MIN;
-  if (ms > MV_MQTT_REPORT_MS_MAX) return MV_MQTT_REPORT_MS_MAX;
-  return ms;
-}
-
-static void mvMqttSnapshotTelemetryBaseline(bool runtimeRunning) {
-  s_lastExceptionFp = mvTagsValueFingerprint();
-  s_lastRuntimeRunning = runtimeRunning;
-  s_lastProgramOk = mvProgramValid();
-  s_lastMqttAuthFailed = s_mqttAuthFailed;
-  const char* progErr = mvLastProgramError();
-  strncpy(s_lastProgramError, progErr ? progErr : "", sizeof(s_lastProgramError) - 1);
-  s_lastProgramError[sizeof(s_lastProgramError) - 1] = '\0';
-}
-
-static bool mvMqttTelemetryException(bool runtimeRunning) {
-  if (!s_reportOnException) return false;
-  if (mvTagsValueFingerprint() != s_lastExceptionFp) return true;
-  if (runtimeRunning != s_lastRuntimeRunning) return true;
-  if (mvProgramValid() != s_lastProgramOk) return true;
-  if (s_mqttAuthFailed != s_lastMqttAuthFailed) return true;
-  const char* progErr = mvLastProgramError();
-  return strcmp(progErr ? progErr : "", s_lastProgramError) != 0;
-}
-
-void mvMqttApplyReportSettings(const MvDeviceConfig* devCfg) {
-  if (!devCfg) return;
-  s_cfg.reportMs = mvMqttClampReportMs(devCfg->mqttReportMs ? devCfg->mqttReportMs : MV_MQTT_REPORT_MS_DEFAULT);
-  s_reportOnException = devCfg->mqttReportOnException != 0;
-  s_telemetryDisabled = devCfg->mqttTelemetryDisable != 0;
-}
-
-uint32_t mvMqttReportMs() { return s_cfg.reportMs; }
-bool mvMqttReportOnException() { return s_reportOnException; }
-bool mvMqttTelemetryDisabled() { return s_telemetryDisabled; }
 
 static void appendExpansionModules(JsonObject doc) {
   doc["expansionBlueprint"] = mvExpBlueprintEnabled();
@@ -583,11 +541,8 @@ static void mqttCallback(char* topic, byte* payload, unsigned int len) {
     if (!deserializeJson(doc, s_configBuf)) {
       if (doc.containsKey("pauseTelemetry")) s_pauseTelemetry = doc["pauseTelemetry"].as<bool>();
       if (doc.containsKey("reportMs")) {
-        uint32_t ms = doc["reportMs"].as<uint32_t>();
-        if (ms >= MV_MQTT_REPORT_MS_MIN && ms <= MV_MQTT_REPORT_MS_MAX) s_cfg.reportMs = ms;
+        mvMqttSetReportMs(doc["reportMs"].as<uint32_t>());
       }
-      if (doc.containsKey("reportOnException")) s_reportOnException = doc["reportOnException"].as<bool>();
-      if (doc.containsKey("telemetryDisable")) s_telemetryDisabled = doc["telemetryDisable"].as<bool>();
     }
     return;
   }
@@ -752,6 +707,23 @@ static void mvMqttConfigureClient(const MvDeviceConfig* devCfg) {
   mvMqttEnsureBufferOn(*s_mqtt);
 }
 
+uint32_t mvMqttReportMs() {
+  return s_cfg.reportMs ? s_cfg.reportMs : MV_REPORT_MS_DEFAULT;
+}
+
+bool mvMqttSetReportMs(uint32_t ms) {
+  if (ms < MV_REPORT_MS_MIN || ms > MV_REPORT_MS_MAX) return false;
+  s_cfg.reportMs = ms;
+  s_forceTelemetry = true;
+  return true;
+}
+
+static void mvMqttApplyReportMs(const MvDeviceConfig* devCfg) {
+  uint32_t ms = (devCfg && devCfg->reportMs) ? devCfg->reportMs : MV_REPORT_MS_DEFAULT;
+  if (ms < MV_REPORT_MS_MIN || ms > MV_REPORT_MS_MAX) ms = MV_REPORT_MS_DEFAULT;
+  s_cfg.reportMs = ms;
+}
+
 static void mvMqttResolveBroker(const MvMqttConfig* cfg, const MvDeviceConfig* devCfg) {
   const char* broker = cfg && cfg->broker ? cfg->broker : MV_MQTT_SKETCH_BROKER_DEFAULT;
   uint16_t port = cfg ? cfg->port : 1883;
@@ -801,9 +773,8 @@ bool mvMqttAuthFailed() {
 void mvMqttBegin(const MvMqttConfig* cfg, const MvDeviceConfig* devCfg) {
   if (!cfg) return;
   s_cfg = *cfg;
-  if (devCfg) mvMqttApplyReportSettings(devCfg);
-  else s_cfg.reportMs = mvMqttClampReportMs(s_cfg.reportMs ? s_cfg.reportMs : MV_MQTT_REPORT_MS_DEFAULT);
   mvMqttResolveBroker(cfg, devCfg);
+  mvMqttApplyReportMs(devCfg);
   mvMqttRefreshTopics();
   mvMqttConfigureClient(devCfg);
   mvGlobalMqttBegin(*s_mqtt, s_cfg.topicPrefix);
@@ -812,9 +783,11 @@ void mvMqttBegin(const MvMqttConfig* cfg, const MvDeviceConfig* devCfg) {
 
 void mvMqttApplyDeviceConfig(const MvDeviceConfig* devCfg) {
   mvMqttResolveBroker(&s_cfg, devCfg);
+  mvMqttApplyReportMs(devCfg);
   mvMqttConfigureClient(devCfg);
-  mvMqttApplyReportSettings(devCfg);
   mvMqttRefreshTopics();
+  s_mqttNextConnectMs = 0;
+  s_forceTelemetry = true;
   MV_LOG_CMD2("MQTT broker updated ", s_brokerHost);
 }
 
@@ -849,6 +822,7 @@ void mvMqttLoop() {
     }
     if (ok) {
       s_mqttAuthFailed = false;
+      s_mqttEverConnected = true;
       s_mqttNextConnectMs = 0;
       mvWatchdogNoteActivity();
       const bool subCmd = s_mqtt->subscribe(s_topicCmd, 1);
@@ -888,6 +862,8 @@ void mvMqttLoop() {
 }
 
 bool mvMqttConnected() { return s_mqtt->connected(); }
+
+bool mvMqttEverConnected() { return s_mqttEverConnected; }
 
 void mvMqttSetPauseTelemetry(bool pause) { s_pauseTelemetry = pause; }
 
@@ -1187,12 +1163,9 @@ bool mvMqttHandleCommand(const char* json, const char* id, const char* op, Strin
 }
 
 void mvMqttMaybePublishTelemetry(bool runtimeRunning, uint32_t scanMs, uint32_t cycles, uint32_t lastCycleUs) {
-  if (s_telemetryDisabled) return;
   if (!s_mqtt->connected() || s_pauseTelemetry) return;
   unsigned long now = millis();
-  const bool intervalDue = s_forceTelemetry || (now - s_lastReport >= s_cfg.reportMs);
-  const bool exceptionDue = !s_forceTelemetry && mvMqttTelemetryException(runtimeRunning);
-  if (!intervalDue && !exceptionDue) return;
+  if (!s_forceTelemetry && now - s_lastReport < s_cfg.reportMs) return;
   s_lastReport = now;
   s_forceTelemetry = false;
   mvWatchdogNoteActivity();
@@ -1211,12 +1184,13 @@ void mvMqttMaybePublishTelemetry(bool runtimeRunning, uint32_t scanMs, uint32_t 
   doc["mqttAuth"] = s_mqttAuthSet;
   if (s_mqttAuthFailed) doc["mqttAuthFailed"] = true;
   doc["mqttBufferBytes"] = s_mqttBufferBytes;
-  doc["reportMs"] = s_cfg.reportMs;
   doc["reportIntervalSec"] = (int)(s_cfg.reportMs / 1000);
-  doc["reportOnException"] = s_reportOnException;
-  doc["telemetryDisabled"] = s_telemetryDisabled;
-  if (exceptionDue) doc["reportReason"] = "exception";
   doc["deviceMode"] = mvDeviceModeString(mvDeviceModeActive());
+  doc["globalSiteKey"] = mvGlobalSiteKey();
+  {
+    char addrKey[5];
+    if (mvGlobalAddrKey(addrKey)) doc["globalAddrKey"] = addrKey;
+  }
   // ATECC serial omitted from MQTT telemetry (privacy); available locally on /setup and /api/status.
 
   JsonObject rt = doc.createNestedObject("runtime");
@@ -1272,7 +1246,6 @@ void mvMqttMaybePublishTelemetry(bool runtimeRunning, uint32_t scanMs, uint32_t 
   if (written == 0 || s_telemetryJson[0] == '\0') return;
   s_mqtt->publish(s_topicTelemetry, s_telemetryJson, false);
   mvGlobalMqttPublishAll(*s_mqtt, s_cfg.topicPrefix);
-  mvMqttSnapshotTelemetryBaseline(runtimeRunning);
 }
 
 void mvMqttRequestTelemetryFlush() {

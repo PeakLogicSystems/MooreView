@@ -11,14 +11,6 @@ const FIXTURE_DIR = path.join(ST_DIR, 'fixtures');
 
 /** Per-program tag/driver bundle overrides (path under st/). */
 const PROGRAM_FIXTURE_OVERRIDES = {
-  'opta/07_leak_ct_thermistor.st': {
-    tagsFile: 'tags.opta_leak_demo.json',
-    driversFile: 'drivers.opta_leak_demo.json',
-  },
-  'opta/09_moisture_ntc_ct.st': {
-    tagsFile: 'tags.opta_sensor_test.json',
-    driversFile: 'drivers.opta_mqtt_st.json',
-  },
   'logic/21_all_st_features_memory.st': {
     tagsFile: 'tags.all_st_features.json',
     driversFile: 'drivers.logic.json',
@@ -35,9 +27,53 @@ const PROGRAM_FIXTURE_OVERRIDES = {
     tagsFile: 'tags.motor_tpo_combined.json',
     driversFile: 'drivers.logic.json',
   },
-  'modbus/09_ul212nt_e_level.st': {
-    tagsFile: 'tags.ul212nt_e.json',
-    driversFile: 'drivers.ul212nt_e.json',
+  'logic/26_alternator_pumps.st': {
+    tagsFile: 'tags.alternator_pumps.json',
+    driversFile: 'drivers.logic.json',
+  },
+  'logic/27_alternator_2pump.st': {
+    tagsFile: 'tags.alternator_2pump.json',
+    driversFile: 'drivers.logic.json',
+  },
+  'logic/28_alternator_triplex.st': {
+    tagsFile: 'tags.alternator_triplex.json',
+    driversFile: 'drivers.logic.json',
+  },
+  'logic/29_reversing_motor.st': {
+    tagsFile: 'tags.reversing_motor.json',
+    driversFile: 'drivers.logic.json',
+  },
+  'logic/30_pool_controller.st': {
+    tagsFile: 'tags.pool_controller.json',
+    driversFile: 'drivers.pool_controller.json',
+  },
+  'logic/31_pool_lighting.st': {
+    tagsFile: 'tags.pool_lighting.json',
+    driversFile: 'drivers.pool_controller.json',
+  },
+  'logic/32_single_atu.st': {
+    tagsFile: 'tags.single_atu.json',
+    driversFile: 'drivers.logic.json',
+  },
+  'logic/33_dual_atu.st': {
+    tagsFile: 'tags.dual_atu.json',
+    driversFile: 'drivers.logic.json',
+  },
+  'logic/34_quad_atu.st': {
+    tagsFile: 'tags.quad_atu.json',
+    driversFile: 'drivers.logic.json',
+  },
+  'logic/35_lift_simplex.st': {
+    tagsFile: 'tags.lift_simplex.json',
+    driversFile: 'drivers.logic.json',
+  },
+  'logic/36_duplex_lift_station.st': {
+    tagsFile: 'tags.duplex_lift_station.json',
+    driversFile: 'drivers.logic.json',
+  },
+  'opta/08_triplex_floats.st': {
+    tagsFile: 'tags.opta_triplex.json',
+    driversFile: 'drivers.opta.json',
   },
 };
 

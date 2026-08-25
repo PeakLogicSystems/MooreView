@@ -7,30 +7,17 @@
   "stationType": "simplex",
   "defaultProgram": "logic/35_lift_simplex.st",
   "tagsFromDevice": true,
-  "ioBaseOnly": true,
-  "diCount": 6,
+  "diCount": 4,
   "doCount": 1,
-  "aiCount": 2,
+  "aiCount": 1,
   "defaults": {
     "deviceId": "lift_spx_01",
     "reportIntervalMs": 200,
     "scanMs": 100,
-    "remoteExecution": true,
-    "ioBaseOnly": true
+    "remoteExecution": true
   },
   "driver": {
-    "enabled": true,
-    "ioBaseOnly": true
+    "enabled": true
   },
-  "notes": "Single-pump wet-well on Opta base unit only (no expansion). 2× CT on I1/AI1 and I2/AI2; floats on I3–I8. Deploy logic/35_lift_simplex.st; bind I3→LVL_START, I4→LVL_STOP, I5→LVL_HIGH, I6→LVL_LO, I7→PUMP_FAIL in tag map.",
-  "pdm": {
-    "motorType": "pump",
-    "application": "lift_station",
-    "configuration": "simplex",
-    "locationClass": "convenience_store",
-    "floatLadder": "pull_down",
-    "assets": [
-      { "assetId": "pump-1", "pumpIndex": 1, "pumpRole": "lead" }
-    ]
-  }
+  "notes": "Single-pump wet-well station. Deploy logic/35_lift_simplex.st on device."
 }

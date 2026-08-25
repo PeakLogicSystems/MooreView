@@ -1,55 +1,29 @@
 'use strict';
 
-const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { DATA_DIR } = require('./config');
+const { DATA_DIR, DEPLOYMENT_MODE } = require('./config');
 
-const RENAME_RETRY_CODES = new Set(['EPERM', 'EBUSY', 'EACCES', 'ENOENT', 'EXDEV']);
-const fileWriteLocks = new Map();
+/** Cloud fleet registry — global across orgs; not per-tenant Mongo workspace. */
+const CLOUD_FLEET_JSON_FILES = new Set(['parc.json']);
 
-function sleepSync(ms) {
-  if (ms <= 0) return;
-  const deadline = Date.now() + ms;
-  while (Date.now() < deadline) { /* spin */ }
+function isCloudFleetJsonFile(name) {
+  return DEPLOYMENT_MODE === 'cloud' && CLOUD_FLEET_JSON_FILES.has(name);
 }
 
-function uniqueTempPath(fp) {
-  return `${fp}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
-}
+let writeSeq = 0;
 
-function withFileWriteLock(name, fn) {
-  while (fileWriteLocks.get(name)) sleepSync(5);
-  fileWriteLocks.set(name, true);
+function getConfigStore() {
   try {
-    return fn();
-  } finally {
-    fileWriteLocks.delete(name);
+    return require('./configStore');
+  } catch {
+    return null;
   }
 }
 
-function renameWithRetry(src, dest, maxAttempts = 25) {
-  let lastErr;
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    try {
-      fs.renameSync(src, dest);
-      return;
-    } catch (err) {
-      lastErr = err;
-      if (!RENAME_RETRY_CODES.has(err.code)) throw err;
-      if (attempt === maxAttempts - 1) break;
-      sleepSync(20 * (attempt + 1));
-    }
-  }
-  // Windows: target may stay locked (AV, indexer, editor) — copy over then remove temp.
-  try {
-    fs.copyFileSync(src, dest);
-    fs.unlinkSync(src);
-    return;
-  } catch (copyErr) {
-    try { fs.unlinkSync(src); } catch { /* ignore */ }
-    throw lastErr || copyErr;
-  }
+function ensureConfigReady() {
+  const store = getConfigStore();
+  if (store?.initMemorySync) store.initMemorySync();
 }
 
 function ensureDataDir() {
@@ -57,10 +31,11 @@ function ensureDataDir() {
 }
 
 function filePath(name) {
-  return path.join(DATA_DIR, name);
+  const { resolveTenantRelativePath } = require('./tenants/tenantPaths');
+  return resolveTenantRelativePath(name);
 }
 
-function readJson(name, fallback) {
+function readJsonFile(name, fallback) {
   ensureDataDir();
   const fp = filePath(name);
   if (!fs.existsSync(fp)) return fallback;
@@ -71,19 +46,77 @@ function readJson(name, fallback) {
   }
 }
 
-function writeJson(name, data) {
-  return withFileWriteLock(name, () => {
-    ensureDataDir();
-    const fp = filePath(name);
-    const tmp = uniqueTempPath(fp);
-    fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
+function readJson(name, fallback) {
+  if (isCloudFleetJsonFile(name)) {
+    return readJsonFile(name, fallback);
+  }
+  const store = getConfigStore();
+  if (store?.isConfigJsonFile(name)) {
+    ensureConfigReady();
+    if (!store.status?.().ready) return fallback;
+    return store.readSync(name, fallback);
+  }
+  return readJsonFile(name, fallback);
+}
+
+function sleepSync(ms) {
+  if (ms <= 0) return;
+  const end = Date.now() + ms;
+  while (Date.now() < end) { /* busy-wait for short Windows rename retries */ }
+}
+
+function removeFileQuiet(fp) {
+  try {
+    if (fs.existsSync(fp)) fs.unlinkSync(fp);
+  } catch { /* ignore */ }
+}
+
+/** Atomic JSON write — unique temp file + rename retries (Windows sync / multi-process safe). */
+function writeJsonFile(name, data) {
+  ensureDataDir();
+  const fp = filePath(name);
+  const payload = JSON.stringify(data, null, 2);
+  let lastErr;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const tmp = `${fp}.${process.pid}.${++writeSeq}.${attempt}.tmp`;
     try {
-      renameWithRetry(tmp, fp);
-    } catch (err) {
-      try { fs.unlinkSync(tmp); } catch { /* ignore */ }
-      throw err;
+      fs.writeFileSync(tmp, payload, 'utf8');
+      fs.renameSync(tmp, fp);
+      return;
+    } catch (e) {
+      lastErr = e;
+      removeFileQuiet(tmp);
+      const retryable = e.code === 'ENOENT' || e.code === 'EPERM' || e.code === 'EBUSY' || e.code === 'EACCES';
+      if (retryable && attempt < 4) {
+        sleepSync(10 * (attempt + 1));
+        continue;
+      }
+      throw e;
     }
-  });
+  }
+  throw lastErr;
+}
+
+function writeJson(name, data) {
+  if (isCloudFleetJsonFile(name)) {
+    writeJsonFile(name, data);
+    return;
+  }
+  const store = getConfigStore();
+  if (store?.isConfigJsonFile(name)) {
+    ensureConfigReady();
+    if (!store.status?.().ready) {
+      throw new Error(`configStore not ready — cannot write ${name}`);
+    }
+    store.writeSync(name, data);
+    return;
+  }
+  writeJsonFile(name, data);
+}
+
+async function flushConfig() {
+  const store = getConfigStore();
+  if (store?.flushPending) await store.flushPending();
 }
 
 function readText(name, fallback = '') {
@@ -95,35 +128,35 @@ function readText(name, fallback = '') {
 
 function writeText(name, text) {
   ensureDataDir();
-  fs.writeFileSync(filePath(name), text, 'utf8');
-}
-
-/** Flush batched config writes (mongo configStore) or no-op for file backend. */
-async function flushConfig() {
-  try {
-    const configStore = require('./configStore');
-    if (configStore.status?.().ready) {
-      await configStore.flushPending();
-    }
-  } catch {
-    /* File-backed persistence: writeJson is already durable on disk. */
-  }
+  const fp = filePath(name);
+  const tmp = `${fp}.${process.pid}.${++writeSeq}.tmp`;
+  fs.writeFileSync(tmp, text, 'utf8');
+  fs.renameSync(tmp, fp);
 }
 
 function writeBinary(name, buffer) {
-  return withFileWriteLock(name, () => {
-    ensureDataDir();
-    const fp = filePath(name);
-    const tmp = uniqueTempPath(fp);
-    const buf = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
-    fs.writeFileSync(tmp, buf);
+  ensureDataDir();
+  const fp = filePath(name);
+  const buf = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
+  let lastErr;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const tmp = `${fp}.${process.pid}.${++writeSeq}.${attempt}.tmp`;
     try {
-      renameWithRetry(tmp, fp);
-    } catch (err) {
-      try { fs.unlinkSync(tmp); } catch { /* ignore */ }
-      throw err;
+      fs.writeFileSync(tmp, buf);
+      fs.renameSync(tmp, fp);
+      return;
+    } catch (e) {
+      lastErr = e;
+      removeFileQuiet(tmp);
+      const retryable = e.code === 'ENOENT' || e.code === 'EPERM' || e.code === 'EBUSY' || e.code === 'EACCES';
+      if (retryable && attempt < 4) {
+        sleepSync(10 * (attempt + 1));
+        continue;
+      }
+      throw e;
     }
-  });
+  }
+  throw lastErr;
 }
 
 function readBinary(name) {
@@ -137,10 +170,12 @@ module.exports = {
   ensureDataDir,
   readJson,
   writeJson,
+  flushConfig,
   readText,
   writeText,
   readBinary,
   writeBinary,
   filePath,
-  flushConfig,
+  readJsonFile,
+  writeJsonFile,
 };

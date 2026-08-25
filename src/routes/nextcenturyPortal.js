@@ -12,6 +12,9 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;');
 }
 
+/** Third-party portal only — omit allow-same-origin so scripts cannot unsandbox the frame. */
+const NC_THIRD_PARTY_SANDBOX = 'allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads';
+
 function renderPortalFrameHtml(session) {
   const portalUrl = buildPortalUrl(session.token);
   const loginUrl = buildPortalLoginUrl();
@@ -48,7 +51,7 @@ function renderPortalFrameHtml(session) {
   <iframe
     id="nc-portal-frame"
     title="NextCentury portal"
-    sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads"
+    sandbox="${NC_THIRD_PARTY_SANDBOX}"
     referrerpolicy="no-referrer"
     src="${portalUrlAttr}"></iframe>
   <script>
@@ -104,7 +107,7 @@ function createNextcenturyPortalRoutes() {
   <style>html,body{margin:0;height:100%}iframe{display:block;width:100%;height:100%;border:0}</style>
 </head>
 <body>
-  <iframe title="NextCentury portal" src="${escapeHtml(framePath)}" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads"></iframe>
+  <iframe title="NextCentury portal" src="${escapeHtml(framePath)}"></iframe>
 </body>
 </html>`);
   });
@@ -112,4 +115,4 @@ function createNextcenturyPortalRoutes() {
   return router;
 }
 
-module.exports = { createNextcenturyPortalRoutes, renderPortalFrameHtml, escapeHtml };
+module.exports = { createNextcenturyPortalRoutes, renderPortalFrameHtml, escapeHtml, NC_THIRD_PARTY_SANDBOX };

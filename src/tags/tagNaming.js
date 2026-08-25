@@ -14,9 +14,11 @@ const FB_PREFIX = {
   PID: 'PID',
   AVG: 'AVG',
   FLOW: 'FLOW',
+  ALT: 'ALT',
+  RMOTOR: 'RMOTOR',
 };
 
-const FB_TYPES = ['TIMER', 'COUNTER', 'PID', 'AVG', 'FLOW'];
+const FB_TYPES = ['TIMER', 'COUNTER', 'PID', 'AVG', 'FLOW', 'ALT', 'RMOTOR'];
 
 function memoryPrefixForType(type) {
   return MEMORY_PREFIX[type] || null;
@@ -33,7 +35,7 @@ function parseMemoryId(id) {
 }
 
 function parseFbId(id) {
-  const m = String(id || '').match(/^(TMR|CTR|PID|AVG|FLOW)(\d*)$/i);
+  const m = String(id || '').match(/^(TMR|CTR|PID|AVG|FLOW|ALT|RMOTOR)(\d*)$/i);
   if (!m) return null;
   return { prefix: m[1].toUpperCase(), num: m[2] || '' };
 }
@@ -145,6 +147,8 @@ function normalizeWordWidth(type, wordWidth) {
     return n >= 32 ? 32 : 16;
   }
   if (type === 'REAL' || type === 'PID' || type === 'AVG' || type === 'FLOW') return 32;
+  if (type === 'ALT') return 16;
+  if (type === 'RMOTOR') return 16;
   return 16;
 }
 
@@ -156,6 +160,8 @@ function formatWordWidthLabel(type, wordWidth) {
     return `${w}-bit`;
   }
   if (type === 'PID' || type === 'AVG' || type === 'FLOW') return '32-bit REAL';
+  if (type === 'ALT') return '16-bit INT';
+  if (type === 'RMOTOR') return '16-bit INT';
   return '—';
 }
 

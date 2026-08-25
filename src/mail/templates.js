@@ -30,7 +30,7 @@ function buildAlarmEmail({ tenantName, alarm, user }) {
   const level = formatAlarmLevel(alarm.level);
   const tagId = alarm.tagId || 'unknown';
   const value = alarm.value != null ? String(alarm.value) : '—';
-  const org = tenantName || 'MooreVIEW';
+  const org = tenantName || 'MooreView';
   const subject = `[${org}] ${level}: ${tagId}`;
   const studioUrl = appBaseUrl() ? `${appBaseUrl()}/studio` : '/studio';
   const text = [
@@ -44,7 +44,7 @@ function buildAlarmEmail({ tenantName, alarm, user }) {
     <p><strong>${escapeHtml(level)}</strong> on tag <code>${escapeHtml(tagId)}</code></p>
     <p>Value: <strong>${escapeHtml(value)}</strong></p>
     <p>Organization: ${escapeHtml(org)}</p>
-    <p><a href="${escapeHtml(studioUrl)}">Open MooreVIEW Studio</a></p>
+    <p><a href="${escapeHtml(studioUrl)}">Open MooreView Studio</a></p>
   `.trim();
   return { subject, text, html, toName: user?.profile?.displayName || user?.email };
 }
@@ -55,7 +55,7 @@ function buildPasswordResetEmail({ tenant, token }) {
   const resetUrl = base
     ? `${base}/reset-password?token=${encodeURIComponent(token)}`
     : `/reset-password?token=${encodeURIComponent(token)}`;
-  const subject = `Reset your MooreVIEW password`;
+  const subject = `Reset your MooreView password`;
   const text = [
     `You requested a password reset for ${org}.`,
     '',
@@ -74,7 +74,7 @@ function buildPasswordResetEmail({ tenant, token }) {
 
 function buildPasswordChangedEmail({ tenant, user }) {
   const org = tenant?.name || tenant?.slug || 'your organization';
-  const subject = `Your MooreVIEW password was changed`;
+  const subject = `Your MooreView password was changed`;
   const text = [
     `The password for ${user?.email || 'your account'} at ${org} was changed.`,
     '',
@@ -90,7 +90,7 @@ function buildPasswordChangedEmail({ tenant, user }) {
 function buildWelcomeEmail({ tenant, user, temporaryPassword }) {
   const org = tenant?.name || tenant?.slug || 'your organization';
   const loginUrl = appBaseUrl() ? `${appBaseUrl()}/login` : '/login';
-  const subject = `Welcome to MooreVIEW — ${org}`;
+  const subject = `Welcome to MooreView — ${org}`;
   const lines = [
     `An account was created for you at ${org}.`,
     `Email: ${user?.email || ''}`,
@@ -108,35 +108,54 @@ function buildWelcomeEmail({ tenant, user, temporaryPassword }) {
       <li>Organization slug: <code>${escapeHtml(tenant?.slug || '')}</code></li>
       ${temporaryPassword ? `<li>Temporary password: <code>${escapeHtml(temporaryPassword)}</code></li>` : ''}
     </ul>
-    <p><a href="${escapeHtml(loginUrl)}">Sign in to MooreVIEW</a></p>
+    <p><a href="${escapeHtml(loginUrl)}">Sign in to MooreView</a></p>
   `.trim();
   return { subject, text, html };
 }
 
 function buildInviteEmail({ tenant, user, token }) {
-  const org = tenant?.name || tenant?.slug || 'your organization';
+  const org = tenant?.name || tenant?.slug || tenant?.tenantSlug || 'your organization';
+  const slug = tenant?.slug || tenant?.tenantSlug || '';
   const base = appBaseUrl();
   const inviteUrl = base
     ? `${base}/accept-invite?token=${encodeURIComponent(token)}`
     : `/accept-invite?token=${encodeURIComponent(token)}`;
-  const subject = `You're invited to MooreVIEW — ${org}`;
+  const subject = `You're invited to MooreView — ${org}`;
   const text = [
-    `You've been invited to join ${org} on MooreVIEW.`,
+    `You've been invited to join ${org} on MooreView.`,
     `Email: ${user?.email || ''}`,
-    `Organization slug: ${tenant?.slug || ''}`,
+    `Organization ID: ${slug}`,
     '',
     `Accept your invite and set your password (link expires in 7 days):`,
     inviteUrl,
   ].join('\n');
   const html = `
-    <p>You've been invited to join <strong>${escapeHtml(org)}</strong> on MooreVIEW.</p>
+    <p>You've been invited to join <strong>${escapeHtml(org)}</strong> on MooreView.</p>
     <ul>
       <li>Email: ${escapeHtml(user?.email || '')}</li>
-      <li>Organization slug: <code>${escapeHtml(tenant?.slug || '')}</code></li>
+      <li>Organization ID: <code>${escapeHtml(slug)}</code></li>
     </ul>
     <p><a href="${escapeHtml(inviteUrl)}">Accept invite and set your password</a> (link expires in 7 days).</p>
   `.trim();
   return { subject, text, html, inviteUrl };
+}
+
+function buildMfaCodeEmail({ tenant, user, code }) {
+  const org = tenant?.name || tenant?.slug || tenant?.tenantSlug || 'MooreView';
+  const subject = `Your MooreView sign-in code`;
+  const text = [
+    `Your MooreView verification code for ${org}:`,
+    '',
+    String(code),
+    '',
+    'This code expires in 10 minutes. If you did not try to sign in, contact your administrator.',
+  ].join('\n');
+  const html = `
+    <p>Your MooreView verification code for <strong>${escapeHtml(org)}</strong>:</p>
+    <p style="font-size:1.5rem;letter-spacing:0.2em;font-weight:700"><code>${escapeHtml(String(code))}</code></p>
+    <p>This code expires in 10 minutes. If you did not try to sign in, contact your administrator.</p>
+  `.trim();
+  return { subject, text, html };
 }
 
 module.exports = {
@@ -145,4 +164,5 @@ module.exports = {
   buildPasswordChangedEmail,
   buildWelcomeEmail,
   buildInviteEmail,
+  buildMfaCodeEmail,
 };

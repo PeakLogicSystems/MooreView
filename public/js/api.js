@@ -1,37 +1,45 @@
 'use strict';
 
-const API = (() => {
-  const base = String(window.MOOREVIEW_API_BASE || '').trim().replace(/\/$/, '');
-  return base || '/api';
-})();
+const API = (typeof window !== 'undefined' && window.MOOREVIEW_API_BASE) || '/api';
 
-const PLATFORM_API = (() => {
-  const base = String(window.MOOREVIEW_PLATFORM_API || '').trim().replace(/\/$/, '');
-  return base || '/api';
-})();
+function isCloudContext() {
+  if (typeof window === 'undefined' || !window.location) return false;
+  if (window.MOOREVIEW_DEPLOYMENT === 'cloud') return true;
+  const host = window.location.hostname || '';
+  const port = window.location.port || '';
+  return port === '3100' || /mooreview\.io$/i.test(host);
+}
 
-async function request(method, path, body, apiBase = API) {
-  const url = path.startsWith('http') ? path : `${apiBase}${path}`;
+function fetchErrorHint(origin) {
+  if (isCloudContext()) {
+    return `Cannot reach the MooreView Cloud server at ${origin}. The site may be down or HTTPS/nginx needs attention on the SaaS host (port 3100).`;
+  }
+  return `Cannot reach the MooreView server at ${origin}. Start MVP Suite with npm start (default http://127.0.0.1:3090/).`;
+}
+
+async function request(method, path, body) {
   let res;
   try {
-    res = await fetch(url, {
+    res = await fetch(API + path, {
       method,
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
       body: body != null ? JSON.stringify(body) : undefined,
     });
   } catch (e) {
-    const target = apiBase.startsWith('http') ? apiBase : `${location.origin}${apiBase}`;
     const hint = e.message === 'Failed to fetch'
-      ? `Cannot reach the MooreVIEW server at ${target}. Start MVP Suite with npm start (default http://127.0.0.1:3090/).`
+      ? fetchErrorHint(location.origin)
       : e.message;
     throw new Error(hint);
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const msg = data.error
+    let msg = data.error
       || (Array.isArray(data.errors) && data.errors.length ? data.errors.join('; ') : null)
       || res.statusText;
+    if (res.status === 413 && !data.error && !(Array.isArray(data.errors) && data.errors.length)) {
+      msg = `Request body too large (HTTP 413, limit may be too low). Restart MooreView (npm stop && npm start), then try again. Large projects need the current server — tags alone can be ~500 KB.`;
+    }
     const err = new Error(msg);
     if (data.errors) err.errors = data.errors;
     if (data.unknownTags) err.unknownTags = data.unknownTags;
@@ -42,58 +50,44 @@ async function request(method, path, body, apiBase = API) {
   return data;
 }
 
-async function platformRequest(method, path, body) {
-  return request(method, path, body, PLATFORM_API);
-}
-
-async function importProjectFileRequest(fileOrBlob) {
-  const blob = fileOrBlob instanceof Blob ? fileOrBlob : new Blob([fileOrBlob]);
-  const buf = await blob.arrayBuffer();
-  const bytes = new Uint8Array(buf);
-  const isZip = bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b;
-  const contentType = isZip ? 'application/zip' : 'application/json';
-  let res;
-  try {
-    res = await fetch(`${API}/project/archive`, {
-      method: 'POST',
-      headers: { 'Content-Type': contentType },
-      credentials: 'same-origin',
-      body: buf,
-    });
-  } catch (e) {
-    const hint = e.message === 'Failed to fetch'
-      ? `Cannot reach the MooreVIEW server at ${location.origin}. Start MVP Suite with npm start.`
-      : e.message;
-    throw new Error(hint);
-  }
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || res.statusText || 'Import project failed');
-  if (!data.ok) throw new Error(data.error || 'Import project failed');
-  return data;
-}
-
 window.api = {
   getDashboard: (graphTags, opts = {}) => {
-    const q = new URLSearchParams();
-    if (graphTags?.length) q.set('graphTags', graphTags.join(','));
-    if (opts.lite) q.set('lite', '1');
-    const qs = q.toString();
-    return request('GET', `/dashboard${qs ? `?${qs}` : ''}`);
+    const params = [];
+    if (graphTags?.length) params.push(`graphTags=${graphTags.join(',')}`);
+    if (opts.lite) params.push('lite=1');
+    let q = '/dashboard';
+    if (params.length) q += `?${params.join('&')}`;
+    return request('GET', q);
   },
   getLive: (graphTags) => {
     let q = '/live';
     if (graphTags?.length) q += `?graphTags=${graphTags.join(',')}`;
     return request('GET', q);
   },
-  openProjectArchive: importProjectFileRequest,
-  importProjectFile: importProjectFileRequest,
+  openEst: (doc) => request('POST', '/project/est', doc),
   saveEstBlob: async (name) => {
     let res;
     try {
-      res = await fetch(`${API}/project/archive?name=${encodeURIComponent(name || 'project')}`);
+      res = await fetch(`${API}/project/est?name=${encodeURIComponent(name || 'project')}`);
     } catch (e) {
       const hint = e.message === 'Failed to fetch'
-        ? `Cannot reach the MooreVIEW server at ${location.origin}. Start MVP Suite with npm start.`
+        ? fetchErrorHint(location.origin)
+        : e.message;
+      throw new Error(hint);
+    }
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || res.statusText || 'Export project failed');
+    }
+    return res.blob();
+  },
+  exportSavedProjectBlob: async (id) => {
+    let res;
+    try {
+      res = await fetch(`${API}/projects/export?id=${encodeURIComponent(id)}`);
+    } catch (e) {
+      const hint = e.message === 'Failed to fetch'
+        ? fetchErrorHint(location.origin)
         : e.message;
       throw new Error(hint);
     }
@@ -106,116 +100,55 @@ window.api = {
   saveWorkspace: (project) => request('POST', '/workspace/save', { project }),
   listProjects: () => request('GET', '/projects'),
   listImportableProjects: () => request('GET', '/projects/importable'),
-  importProjectFromLibrary: (file) => request('POST', '/projects/import-library', { file }),
-  importProjectNativePick: () => request('POST', '/projects/import-pick', {}),
-  importProjectFromPath: (path) => request('POST', '/projects/import-path', { path }),
+  importProjectFromLibrary: (file) => request('POST', '/projects/import/library', { file }),
+  importProjectNativePick: () => request('POST', '/projects/import/native-pick', {}),
+  importProjectFromPath: (path) => request('POST', '/projects/import/path', { path }),
+  async importProjectFile(file) {
+    if (!file) throw new Error('No file selected');
+    const buf = await file.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
+    return request('POST', '/projects/import/file', {
+      filename: file.name || 'project.est.zip',
+      contentBase64: btoa(binary),
+    });
+  },
+  async deployProjectHubFile(fileOrBlob) {
+    if (!fileOrBlob) throw new Error('No project file selected');
+    if (typeof window.api?.importProjectFile === 'function') {
+      return window.api.importProjectFile(fileOrBlob);
+    }
+    const name = String(fileOrBlob.name || 'project');
+    if (/\.est\.zip$/i.test(name)) {
+      throw new Error('This server cannot import .est.zip yet — deploy the latest MooreView build, or use Project → Import after upgrading.');
+    }
+    const text = await fileOrBlob.text();
+    const doc = JSON.parse(text);
+    return request('POST', '/project/est', doc);
+  },
+  async exportEstDoc(name) {
+    const res = await fetch(`${API}/project/est?name=${encodeURIComponent(name || 'project')}`, {
+      credentials: 'same-origin',
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || res.statusText || 'Export failed');
+    return data;
+  },
   openProjectsFolder: () => request('POST', '/projects/open-folder', {}),
   saveProject: (name) => request('POST', '/projects/save', { name }),
   newProject: (name) => request('POST', '/projects/new', { name }),
   openProject: (id) => request('POST', '/projects/open', { id }),
   deleteProject: (id) => request('DELETE', `/projects?id=${encodeURIComponent(id)}`),
-  exportSavedProjectBlob: async (id) => {
-    let res;
-    try {
-      res = await fetch(`${API}/projects/${encodeURIComponent(id)}/archive`);
-    } catch (e) {
-      const hint = e.message === 'Failed to fetch'
-        ? `Cannot reach the MooreVIEW server at ${location.origin}. Start MVP Suite with npm start.`
-        : e.message;
-      throw new Error(hint);
-    }
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new Error(data.error || res.statusText || 'Export project failed');
-    }
-    return res.blob();
-  },
-  downloadProjectArchive: async (name) => {
-    let res;
-    try {
-      res = await fetch(`${API}/project/archive?name=${encodeURIComponent(name || 'project')}`);
-    } catch (e) {
-      const hint = e.message === 'Failed to fetch'
-        ? `Cannot reach the MooreVIEW server at ${location.origin}. Start MVP Suite with npm start.`
-        : e.message;
-      throw new Error(hint);
-    }
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new Error(data.error || res.statusText || 'Export project failed');
-    }
-    return res.blob();
-  },
-  listProjectHubLocal: () => request('GET', '/project-hub/catalog'),
-  listProjectHubCloud: () => request('GET', '/project-hub/cloud/catalog'),
-  publishProjectHubLocal: (body) => request('POST', '/project-hub/publish', body),
-  publishProjectHubCloud: (body) => request('POST', '/project-hub/cloud/publish', body),
-  publishProjectHubPlatform: (body) => platformRequest('POST', '/project-hub/publish', body),
-  downloadProjectHubFile: async (id) => {
-    let res;
-    try {
-      res = await fetch(`${API}/project-hub/catalog/${encodeURIComponent(id)}/file`);
-    } catch (e) {
-      throw new Error(e.message === 'Failed to fetch'
-        ? `Cannot reach the MooreVIEW server at ${location.origin}.`
-        : e.message);
-    }
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new Error(data.error || res.statusText || 'Download failed');
-    }
-    return res.blob();
-  },
-  deployProjectHub: (body) => request('POST', '/project-hub/deploy', body),
-  deployProjectHubFile: async (fileOrBlob) => {
-    const blob = fileOrBlob instanceof Blob ? fileOrBlob : new Blob([fileOrBlob]);
-    const buf = await blob.arrayBuffer();
-    const bytes = new Uint8Array(buf);
-    const isZip = bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b;
-    const contentType = isZip ? 'application/zip' : 'application/json';
-    let res;
-    try {
-      res = await fetch(`${API}/project-hub/deploy/file`, {
-        method: 'POST',
-        headers: { 'Content-Type': contentType },
-        credentials: 'same-origin',
-        body: buf,
-      });
-    } catch (e) {
-      throw new Error(e.message === 'Failed to fetch'
-        ? `Cannot reach the MooreVIEW server at ${location.origin}.`
-        : e.message);
-    }
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || res.statusText || 'Deploy failed');
-    if (!data.ok) throw new Error(data.error || 'Deploy failed');
-    return data;
-  },
-  listProjectHubCatalog: (locationId) => {
-    const q = locationId ? `?locationId=${encodeURIComponent(locationId)}` : '';
-    return platformRequest('GET', `/project-hub/catalog${q}`);
-  },
-  fetchProjectHubEst: (id) => platformRequest('GET', `/project-hub/catalog/${encodeURIComponent(id)}/est`),
-  publishProjectHub: (body) => platformRequest('POST', '/project-hub/publish', body),
-  listLocations: () => platformRequest('GET', '/locations'),
   putTags: (tags) => request('PUT', '/tags', { tags }),
   putDrivers: (drivers) => request('PUT', '/drivers', { drivers }),
+  saveNextcenturySetup: (body) => request('PUT', '/drivers/nextcentury/setup', body),
   connectDriver: (driverId) => request('POST', '/drivers/connect', { driverId }),
   disconnectDriver: (driverId) => request('POST', '/drivers/disconnect', { driverId }),
   testDriver: (cfg) => request('POST', '/drivers/test', cfg),
-  bacnetDiscover: (body) => request('POST', '/drivers/bacnet/discover', body),
-  bacnetBrowse: (body) => request('POST', '/drivers/bacnet/browse', body),
-  bacnetImportTags: (body) => request('POST', '/drivers/bacnet/import-tags', body),
-  bacnetLoadExampleTags: (body) => request('POST', '/drivers/bacnet/load-example-tags', body),
-  bacnetListProfiles: () => request('GET', '/drivers/bacnet/profiles'),
-  bacnetSaveProfiles: (profiles) => request('PUT', '/drivers/bacnet/profiles', { profiles }),
-  bacnetSaveProfile: (profile) => request('POST', '/drivers/bacnet/profiles/save', { profile }),
-  bacnetDeleteProfile: (id) => request('DELETE', `/drivers/bacnet/profiles/${encodeURIComponent(id)}`),
-  bacnetProfileFromBrowse: (body) => request('POST', '/drivers/bacnet/profiles/from-browse', body),
-  bacnetProfilePreview: (body) => request('POST', '/drivers/bacnet/profiles/preview', body),
-  bacnetProfileApply: (body) => request('POST', '/drivers/bacnet/profiles/apply', body),
-  bacnetProfilesExample: () => request('GET', '/drivers/bacnet/profiles/example'),
   getNextcenturyExample: () => request('GET', '/drivers/nextcentury/example'),
+  nextcenturyDeployEstimate: (body) => request('POST', '/drivers/nextcentury/deploy-estimate', body),
+  openNextcenturyPortal: (body) => request('POST', '/drivers/nextcentury/portal-session', body),
   loadNextcenturyExampleTags: (body) => request('POST', '/drivers/nextcentury/load-example-tags', body),
   listDevicePresets: () => request('GET', '/devices/presets'),
   applyDevicePreset: (body) => request('POST', '/devices/apply', body),
@@ -233,12 +166,14 @@ window.api = {
   getProgramFile: (path) => request('GET', `/program/file?path=${encodeURIComponent(path)}`),
   putProgram: (source) => request('PUT', '/program', { source }),
   validateProgram: (source) => request('POST', '/program/validate', { source }),
+  programTrace: (source) => request('POST', '/program/trace', { source }),
   deployEstimate: (source, driverId) => request('POST', '/program/deploy-estimate', {
     source,
     ...(driverId ? { driverId } : {}),
   }),
   ackAlarm: (tagId) => request('POST', '/alarms/ack', { tagId }),
   ackAllAlarms: () => request('POST', '/alarms/ack', { all: true }),
+  listAlarms: () => request('GET', '/alarms'),
   runtimeStart: () => request('POST', '/runtime/start'),
   runtimePause: () => request('POST', '/runtime/pause'),
   runtimeResume: () => request('POST', '/runtime/resume'),
@@ -249,12 +184,9 @@ window.api = {
   clearForce: (tagId) => request('DELETE', `/debug/force?tagId=${encodeURIComponent(tagId)}`),
   clearGraph: () => request('POST', '/graph/clear', {}),
   modbusMove: (body) => request('POST', '/modbus/move', body),
+  modbusProbe: (body) => request('POST', '/modbus/probe', body),
   getSerialPorts: () => request('GET', '/system/serial-ports'),
   getTags: () => request('GET', '/tags'),
-  getIoMap: () => request('GET', '/io-map'),
-  patchIoMapTag: (tagId, body) => request('PATCH', `/io-map/tags/${encodeURIComponent(tagId)}`, body),
-  bindIoMapRoomTemplate: (body) => request('POST', '/io-map/bindings/room-template', body),
-  putIoMapBindings: (bindings) => request('PUT', '/io-map/bindings', { bindings }),
   ensureMotorTags: () => request('POST', '/tags/ensure-motor', {}),
   ensureTpoTags: () => request('POST', '/tags/ensure-tpo', {}),
   ensureProgramTags: (source) => request('POST', '/tags/ensure-program', source != null ? { source } : {}),
@@ -276,40 +208,9 @@ window.api = {
     if (to) q.set('to', to);
     return request('GET', `/pdm/view?${q}`);
   },
-  putPdmSettings: (body) => request('PUT', '/pdm/settings', body?.pdm != null ? body : { pdm: body }),
-  buildPdmFeatures: (body) => request('POST', '/pdm/build', body || {}),
-  runPdmProactive: (body) => request('POST', '/pdm/proactive/run', body || {}),
-  downloadPdmReportPdf: async (body) => {
-    let res;
-    try {
-      res = await fetch(`${API}/pdm/report/pdf`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body || {}),
-      });
-    } catch (e) {
-      throw new Error(e.message === 'Failed to fetch'
-        ? `Cannot reach the MooreVIEW server at ${location.origin}.`
-        : e.message);
-    }
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new Error(data.error || res.statusText || 'PdM PDF export failed');
-    }
-    return res.blob();
-  },
+  putPdmSettings: (pdm) => request('PUT', '/pdm/settings', { pdm }),
+  buildPdmFeatures: () => request('POST', '/pdm/build', {}),
   simulateMotorPdm: (body) => request('POST', '/pdm/sim/motor', body || {}),
-  simulateMotorAssetPdm: (body) => request('POST', '/pdm/sim/asset', body || {}),
-  pdmSetupCatalog: () => request('GET', '/pdm/setup/catalog'),
-  pdmSetupList: () => request('GET', '/pdm/setup'),
-  putPdmAssetSetup: (assetId, payload) => {
-    const body = payload && typeof payload === 'object' && !Array.isArray(payload)
-      ? payload
-      : { context: payload };
-    return request('PUT', `/pdm/setup/${encodeURIComponent(assetId)}`, body);
-  },
-  deletePdmAssetSetup: (assetId) => request('DELETE', `/pdm/setup/${encodeURIComponent(assetId)}`),
-  getPdmAssetContext: (assetId) => request('GET', `/pdm/context/${encodeURIComponent(assetId)}`),
   listHmiAssets: async () => {
     const data = await request('GET', '/hmi/assets');
     if (Array.isArray(data?.assets)) return data.assets;
@@ -326,89 +227,43 @@ window.api = {
   parcScanExpansions: (deviceId) => request('POST', `/parc/devices/${encodeURIComponent(deviceId)}/scan-expansions`, {}),
   parcSyncTags: (deviceId, driverId) => request('POST', `/parc/devices/${encodeURIComponent(deviceId)}/sync-tags`, { driverId }),
   syncParcTags: (driverId) => request('POST', '/drivers/sync-parc-tags', { driverId }),
+  bulkAddParcOpta: (body) => request('POST', '/drivers/parc-opta/bulk', body),
+  replaceParcOptaHardware: (body) => request('POST', '/drivers/parc-opta/replace-hardware', body),
+  renameParcOptaPosition: (body) => request('POST', '/drivers/parc-opta/rename-position', body),
+  hardwareHistory: (params) => {
+    const q = new URLSearchParams();
+    if (params?.positionId) q.set('positionId', params.positionId);
+    if (params?.serial) q.set('serial', params.serial);
+    if (params?.recent || params?.all) q.set('recent', '1');
+    if (params?.limit != null) q.set('limit', String(params.limit));
+    return request('GET', `/hardware-history?${q}`);
+  },
+  hardwareHistoryStatus: () => request('GET', '/hardware-history/status'),
+  sysLogStatus: () => request('GET', '/sys-log/status'),
+  sysLogQuery: (params) => {
+    const q = new URLSearchParams();
+    if (params?.level) q.set('level', params.level);
+    if (params?.category) q.set('category', params.category);
+    if (params?.since) q.set('since', params.since);
+    if (params?.limit != null) q.set('limit', String(params.limit));
+    if (params?.userId) q.set('userId', params.userId);
+    return request('GET', `/sys-log?${q}`);
+  },
+  sysLogMaintenance: (body) => request('POST', '/sys-log/maintenance', body),
+  getIoMap: () => request('GET', '/io-map'),
+  patchIoMapTag: (tagId, body) => request('PATCH', `/io-map/tags/${encodeURIComponent(tagId)}`, body),
+  putIoMapBindings: (bindings) => request('PUT', '/io-map/bindings', { bindings }),
+  bindIoMapRoomTemplate: (body) => request('POST', '/io-map/bindings/room-template', body),
   parcDeployProgram: (id, body) => request('POST', `/parc/devices/${encodeURIComponent(id)}/program`, body || {}),
   parcSettings: () => request('GET', '/parc/settings'),
   putParcSettings: (settings) => request('PUT', '/parc/settings', settings),
-  cameras: () => request('GET', '/cameras'),
-  camera: (id) => request('GET', `/cameras/${encodeURIComponent(id)}`),
-  createCamera: (body) => request('POST', '/cameras', body),
-  updateCamera: (id, body) => request('PUT', `/cameras/${encodeURIComponent(id)}`, body),
-  deleteCamera: (id) => request('DELETE', `/cameras/${encodeURIComponent(id)}`),
-  discoverCameras: (body) => request('POST', '/cameras/discover', body || {}),
-  addCameraByIp: (body) => request('POST', '/cameras/add-by-ip', body || {}),
-  probeCamera: (id, body) => request('POST', `/cameras/${encodeURIComponent(id)}/probe`, body || {}),
-  probeAllCameras: (body) => request('POST', '/cameras/probe-all', body || {}),
-  cameraViewer: (id) => request('GET', `/cameras/${encodeURIComponent(id)}/viewer`),
-  cloudStatus: () => platformRequest('GET', '/cloud/status'),
-  cloudAgent: () => platformRequest('GET', '/cloud/agent'),
-  putCloudAgent: (body) => platformRequest('PUT', '/cloud/agent', body || {}),
-  startCloudAgent: () => platformRequest('POST', '/cloud/agent/start'),
-  stopCloudAgent: () => platformRequest('POST', '/cloud/agent/stop'),
-  syncCloudAgent: () => platformRequest('POST', '/cloud/agent/sync'),
-  listSites: () => platformRequest('GET', '/sites'),
-  createSite: (body) => platformRequest('POST', '/sites', body || {}),
-  deleteSite: (id) => platformRequest('DELETE', `/sites/${encodeURIComponent(id)}`),
-  repairSite: (id) => platformRequest('POST', `/sites/${encodeURIComponent(id)}/repair`),
-  siteCameras: (siteId) => platformRequest('GET', `/sites/${encodeURIComponent(siteId)}/cameras`),
-  siteCameraViewer: (siteId, cameraId) => platformRequest(
-    'GET',
-    `/sites/${encodeURIComponent(siteId)}/cameras/${encodeURIComponent(cameraId)}/viewer`,
-  ),
-  login: (body) => platformRequest('POST', '/auth/login', body || {}),
-  logout: () => platformRequest('POST', '/auth/logout'),
-  authMe: () => platformRequest('GET', '/auth/me'),
-  getTenant: () => platformRequest('GET', '/tenant'),
-  listAdminTenants: () => platformRequest('GET', '/admin/tenants'),
-  createAdminTenant: (body) => platformRequest('POST', '/admin/tenants', body || {}),
-  patchTenantCmms: (id, body) => platformRequest('PATCH', `/admin/tenants/${encodeURIComponent(id)}/cmms`, body || {}),
-  listTenantUsers: () => platformRequest('GET', '/tenant/users'),
-  createTenantUser: (body) => platformRequest('POST', '/tenant/users', body || {}),
-  putTenantFeaturesMatrix: (matrix) => platformRequest('PUT', '/tenant/users/features-matrix', { matrix }),
-  listSiteDevices: () => platformRequest('GET', '/sites/devices'),
-  createSiteDevice: (body) => platformRequest('POST', '/sites/devices', body || {}),
-  listFleetAssets: () => platformRequest('GET', '/fleet'),
-  createFleetAsset: (body) => platformRequest('POST', '/fleet', body || {}),
-  deleteFleetAsset: (id) => platformRequest('DELETE', `/fleet/${encodeURIComponent(id)}`),
-  tenantCmms: () => platformRequest('GET', '/tenant/cmms'),
-  captureCameraSnapshot: (id, body) => request('POST', `/cameras/${encodeURIComponent(id)}/snapshot`, body || {}),
-  cameraSnapshots: (id, limit) => request('GET', `/cameras/${encodeURIComponent(id)}/snapshots?limit=${limit || 50}`),
-  cameraEvents: (id, limit, type) => {
-    const q = new URLSearchParams();
-    if (limit) q.set('limit', String(limit));
-    if (type) q.set('type', type);
-    const qs = q.toString();
-    return request('GET', `/cameras/${encodeURIComponent(id)}/events${qs ? `?${qs}` : ''}`);
-  },
-  inferCamera: (id, body) => request('POST', `/cameras/${encodeURIComponent(id)}/infer`, body || {}),
-  cameraInferences: (id, hours) => request('GET', `/cameras/${encodeURIComponent(id)}/inferences?hours=${hours || 24}`),
-  cameraOverlays: (id) => request('GET', `/cameras/${encodeURIComponent(id)}/overlays`),
-  putCameraOverlays: (id, overlays) => request('PUT', `/cameras/${encodeURIComponent(id)}/overlays`, { overlays }),
-  cameraAiStatus: () => request('GET', '/cameras/ai/status'),
-  refreshCameraAi: () => request('POST', '/cameras/ai/refresh'),
-  cameraOverview: () => request('GET', '/cameras/overview'),
-  allCameraEvents: (limit, type) => {
-    const q = new URLSearchParams();
-    if (limit) q.set('limit', String(limit));
-    if (type) q.set('type', type);
-    const qs = q.toString();
-    return request('GET', `/cameras/events${qs ? `?${qs}` : ''}`);
-  },
-  allCameraInferences: (hours) => request('GET', `/cameras/inferences?hours=${hours || 24}`),
-  cameraSettings: () => request('GET', '/cameras/settings'),
-  putCameraSettings: (settings) => request('PUT', '/cameras/settings', settings),
-  go2rtcStatus: () => request('GET', '/cameras/go2rtc/status'),
-  syncGo2rtc: () => request('POST', '/cameras/go2rtc/sync'),
-  gridfsStatus: () => request('GET', '/storage/gridfs/status'),
-  gridfsList: (bucket, cameraId, limit) => {
-    const q = new URLSearchParams();
-    if (cameraId) q.set('cameraId', cameraId);
-    if (limit) q.set('limit', String(limit));
-    const qs = q.toString();
-    return request('GET', `/storage/gridfs/${encodeURIComponent(bucket)}${qs ? `?${qs}` : ''}`);
-  },
-  listReportPdfs: (limit) => request('GET', `/reports/pdfs?limit=${limit || 50}`),
   getReportConfig: () => request('GET', '/reports/config'),
   putReportConfig: (reportConfig) => request('PUT', '/reports/config', { reportConfig }),
+  listUsers: () => request('GET', '/users'),
+  getUser: (id) => request('GET', `/users/${encodeURIComponent(id)}`),
+  createUser: (body) => request('POST', '/users', body),
+  updateUser: (id, body) => request('PUT', `/users/${encodeURIComponent(id)}`, body),
+  deleteUser: (id) => request('DELETE', `/users/${encodeURIComponent(id)}`),
   downloadReportPdf: async (body) => {
     let res;
     try {
@@ -419,7 +274,7 @@ window.api = {
       });
     } catch (e) {
       throw new Error(e.message === 'Failed to fetch'
-        ? `Cannot reach the MooreVIEW server at ${location.origin}.`
+        ? fetchErrorHint(location.origin)
         : e.message);
     }
     if (!res.ok) {
@@ -428,119 +283,180 @@ window.api = {
     }
     return res.blob();
   },
-  getMessagingStatus: () => request('GET', '/messaging/status'),
-  saveMessagingConfig: (body) => request('PUT', '/messaging/config', body),
-  testMessagingMail: (body) => request('POST', '/messaging/test/mail', body),
-  testMessagingSms: (body) => request('POST', '/messaging/test/sms', body),
+  getCloudSimsStatus: () => request('GET', '/cloud/sims/status'),
+  getCloudSims: () => request('GET', '/cloud/sims'),
+  createCloudSim: (body) => request('POST', '/cloud/sims', body),
+  getCloudSim: (id) => request('GET', `/cloud/sims/${encodeURIComponent(id)}`),
+  updateCloudSim: (id, body) => request('PUT', `/cloud/sims/${encodeURIComponent(id)}`, body),
+  startCloudSim: (id) => request('POST', `/cloud/sims/${encodeURIComponent(id)}/start`, {}),
+  stopCloudSim: (id) => request('POST', `/cloud/sims/${encodeURIComponent(id)}/stop`, {}),
+  deleteCloudSim: (id) => request('DELETE', `/cloud/sims/${encodeURIComponent(id)}`),
+  getCellularSimsStatus: () => request('GET', '/cellular/sims/status'),
   getCellularVendorCatalog: () => request('GET', '/cellular/vendors/catalog'),
   getCellularVendors: () => request('GET', '/cellular/vendors'),
   addCellularVendor: (body) => request('POST', '/cellular/vendors', body),
   updateCellularVendor: (id, body) => request('PUT', `/cellular/vendors/${encodeURIComponent(id)}`, body),
   deleteCellularVendor: (id) => request('DELETE', `/cellular/vendors/${encodeURIComponent(id)}`),
   testCellularVendor: (id) => request('POST', `/cellular/vendors/${encodeURIComponent(id)}/test`, {}),
-  getCellularSimsStatus: () => request('GET', '/cellular/sims/status'),
-  getCellularSims: (opts = {}) => {
-    const q = new URLSearchParams();
-    if (opts.vendor) q.set('vendor', opts.vendor);
-    if (opts.tenantId) q.set('tenantId', opts.tenantId);
-    if (opts.deviceId) q.set('deviceId', opts.deviceId);
-    if (opts.sync) q.set('sync', '1');
-    const qs = q.toString();
-    return request('GET', `/cellular/sims${qs ? `?${qs}` : ''}`);
-  },
+  syncCellularSims: () => request('POST', '/cellular/sync', {}),
+  getCellularSims: (sync) => request('GET', sync ? '/cellular/sims?sync=1' : '/cellular/sims'),
+  getCellularSim: (id) => request('GET', `/cellular/sims/${encodeURIComponent(id)}`),
+  linkCellularSim: (id, body) => request('PUT', `/cellular/sims/${encodeURIComponent(id)}/link`, body),
   activateCellularSim: (id) => request('POST', `/cellular/sims/${encodeURIComponent(id)}/activate`, {}),
   deactivateCellularSim: (id) => request('POST', `/cellular/sims/${encodeURIComponent(id)}/deactivate`, {}),
   getCellularSimUsage: (id) => request('GET', `/cellular/sims/${encodeURIComponent(id)}/usage`),
-  syncCellularSims: () => request('POST', '/cellular/sync', {}),
-  getCloudSimsStatus: () => request('GET', '/cloud/sims/status'),
-  getCloudSims: () => request('GET', '/cloud/sims'),
-  createCloudSim: (body) => request('POST', '/cloud/sims', body),
-  startCloudSim: (id) => request('POST', `/cloud/sims/${encodeURIComponent(id)}/start`, {}),
-  stopCloudSim: (id) => request('POST', `/cloud/sims/${encodeURIComponent(id)}/stop`, {}),
-  deleteCloudSim: (id) => request('DELETE', `/cloud/sims/${encodeURIComponent(id)}`),
-  seedWebsiteDemoSims: (body) => request('POST', '/cloud/sims/seed-website-demo', body || {}),
-  sysLogStatus: () => request('GET', '/sys-log/status'),
-  sysLogQuery: (params = {}) => {
-    const q = new URLSearchParams();
-    if (params.level) q.set('level', params.level);
-    if (params.category) q.set('category', params.category);
-    if (params.limit) q.set('limit', String(params.limit));
-    if (params.since) q.set('since', params.since);
-    if (params.until) q.set('until', params.until);
-    if (params.userId) q.set('userId', params.userId);
-    const qs = q.toString();
-    return request('GET', `/sys-log${qs ? `?${qs}` : ''}`);
-  },
-  sysLogMaintenance: (body) => request('POST', '/sys-log/maintenance', body),
-  hardwareHistoryStatus: () => request('GET', '/hardware-history/status'),
-  hardwareHistory: (params = {}) => {
-    const q = new URLSearchParams();
-    if (params.positionId) q.set('positionId', params.positionId);
-    if (params.serial) q.set('serial', params.serial);
-    if (params.recent) q.set('recent', '1');
-    if (params.limit) q.set('limit', String(params.limit));
-    const qs = q.toString();
-    return request('GET', `/hardware-history${qs ? `?${qs}` : ''}`);
-  },
-  mongoReportCatalog: () => request('GET', '/reports/mongo/catalog'),
-  mongoReportDefinitions: () => request('GET', '/reports/mongo/definitions'),
-  putMongoReportDefinitions: (definitions) => request('PUT', '/reports/mongo/definitions', { definitions }),
-  discoverMongoReportFields: (collection) => request('GET', `/reports/mongo/discover?collection=${encodeURIComponent(collection)}`),
-  queryMongoReport: (spec) => request('POST', '/reports/mongo/query', { spec }),
-  downloadMongoReportPdf: async (body) => {
-    const res = await fetch(`${API}/reports/mongo/pdf`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify(body),
+  syncCellularBilling: (body) => request('POST', '/cellular/billing/sync', body || {}),
+  getCellularBillingReport: (query) => {
+    const qs = new URLSearchParams();
+    Object.entries(query || {}).forEach(([key, value]) => {
+      if (value != null && value !== '') qs.set(key, String(value));
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || res.statusText);
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return request('GET', `/cellular/billing/report${suffix}`);
+  },
+  exportCellularBillingCsv: (query) => {
+    const qs = new URLSearchParams();
+    Object.entries(query || {}).forEach(([key, value]) => {
+      if (value != null && value !== '') qs.set(key, String(value));
+    });
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return fetch(`${API}/cellular/billing/export${suffix}`, { credentials: 'same-origin' })
+      .then(async (res) => {
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || res.statusText || 'Export failed');
+        }
+        return res.text();
+      });
+  },
+  getCellularGatewayReports: () => request('GET', '/cellular/gateway/reports'),
+  autoLinkCellularGateway: (body) => request('POST', '/cellular/gateway/auto-link', body || {}),
+  getMessagingStatus: () => request('GET', '/messaging/status'),
+  saveMessagingConfig: (body) => request('PUT', '/messaging/config', body),
+  testMessagingMail: (body) => request('POST', '/messaging/test/mail', body),
+  testMessagingSms: (body) => request('POST', '/messaging/test/sms', body),
+  listProjectHubLocal: () => request('GET', '/project-hub/catalog'),
+  async listProjectHubCloud() {
+    if (typeof window !== 'undefined' && window.MOOREVIEW_PLATFORM_API) {
+      const platform = window.MOOREVIEW_PLATFORM_API;
+      const res = await fetch(`${platform}/project-hub/catalog`, { credentials: 'include' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || res.statusText || 'Cloud catalog failed');
+      return data;
     }
-    const blob = await res.blob();
-    const disp = res.headers.get('Content-Disposition') || '';
-    const m = disp.match(/filename="([^"]+)"/);
-    return { blob, filename: m ? m[1] : 'mongo-report.pdf' };
+    return request('GET', '/project-hub/cloud/catalog');
   },
-  cmmsStatus: () => request('GET', '/cmms/status'),
-  cmmsDashboard: () => request('GET', '/cmms/dashboard'),
-  listCmmsAssignees: () => request('GET', '/cmms/assignees'),
-  listCmmsWorkOrders: (params = {}) => {
-    const q = new URLSearchParams();
-    Object.entries(params).forEach(([k, v]) => {
-      if (v != null && v !== '') q.set(k, String(v));
+  publishProjectHubLocal: (body) => request('POST', '/project-hub/publish', body || {}),
+  publishProjectHubCloud: (body) => request('POST', '/project-hub/cloud/publish', body || {}),
+  deployProjectHub: (body) => request('POST', '/project-hub/deploy', body),
+  async fetchCloudProjectDoc(id) {
+    if (typeof window !== 'undefined' && window.MOOREVIEW_PLATFORM_API) {
+      const platform = window.MOOREVIEW_PLATFORM_API;
+      const res = await fetch(`${platform}/project-hub/catalog/${encodeURIComponent(id)}/est`, {
+        credentials: 'include',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || res.statusText || 'Cloud fetch failed');
+      return data.doc;
+    }
+    const data = await request('GET', `/project-hub/cloud/catalog/${encodeURIComponent(id)}/est`);
+    return data.doc;
+  },
+  async downloadProjectHubFile(id) {
+    const res = await fetch(`${API}/project-hub/catalog/${encodeURIComponent(id)}/file`);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || res.statusText || 'Download failed');
+    }
+    return res.blob();
+  },
+  async publishProjectHubPlatform(body) {
+    const platform = (typeof window !== 'undefined' && window.MOOREVIEW_PLATFORM_API) || '/api';
+    const res = await fetch(`${platform}/project-hub/publish`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
     });
-    const qs = q.toString();
-    return request('GET', `/cmms/work-orders${qs ? `?${qs}` : ''}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || res.statusText || 'Cloud publish failed');
+    return data;
   },
-  createCmmsWorkOrder: (body) => request('POST', '/cmms/work-orders', body),
-  updateCmmsWorkOrder: (id, body) => request('PUT', `/cmms/work-orders/${encodeURIComponent(id)}`, body),
-  deleteCmmsWorkOrder: (id) => request('DELETE', `/cmms/work-orders/${encodeURIComponent(id)}`),
-  completeCmmsWorkOrder: (id) => request('POST', `/cmms/work-orders/${encodeURIComponent(id)}/complete`),
-  listCmmsPmSchedules: (params = {}) => {
-    const q = new URLSearchParams();
-    Object.entries(params).forEach(([k, v]) => {
-      if (v != null && v !== '') q.set(k, String(v));
-    });
-    const qs = q.toString();
-    return request('GET', `/cmms/pm-schedules${qs ? `?${qs}` : ''}`);
-  },
-  createCmmsPmSchedule: (body) => request('POST', '/cmms/pm-schedules', body),
-  updateCmmsPmSchedule: (id, body) => request('PUT', `/cmms/pm-schedules/${encodeURIComponent(id)}`, body),
-  deleteCmmsPmSchedule: (id) => request('DELETE', `/cmms/pm-schedules/${encodeURIComponent(id)}`),
-  completeCmmsPmSchedule: (id) => request('POST', `/cmms/pm-schedules/${encodeURIComponent(id)}/complete`),
-  generateCmmsDuePmWorkOrders: () => request('POST', '/cmms/pm/generate-due'),
-  listUsers: () => request('GET', '/users'),
-  createUser: (body) => request('POST', '/users', body),
-  updateUser: (id, body) => request('PUT', `/users/${encodeURIComponent(id)}`, body),
-  deleteUser: (id) => request('DELETE', `/users/${encodeURIComponent(id)}`),
-  listAuthUsers: () => request('GET', '/auth/users'),
-  createAuthUser: (body) => request('POST', '/auth/users', body),
-  updateAuthUser: (id, body) => request('PUT', `/auth/users/${encodeURIComponent(id)}`, body),
-  deleteAuthUser: (id) => request('DELETE', `/auth/users/${encodeURIComponent(id)}`),
-  putAuthFeaturesMatrix: (matrix) => request('PUT', '/auth/users/features-matrix', { matrix }),
-  authFeaturesCatalog: () => request('GET', '/auth/features'),
-};
 
-window.api.dashboard = window.api.getDashboard;
+  async listLocations() {
+    const data = await request('GET', '/sites');
+    const locations = (data.sites || []).map((s) => ({
+      id: s.siteId || s.id,
+      name: s.name || s.siteId || s.id,
+      slug: s.slug || s.siteId || s.id,
+    }));
+    return { locations };
+  },
+  async listProjectHubCatalog(locationId) {
+    const qs = locationId ? `?locationId=${encodeURIComponent(locationId)}` : '';
+    const data = await request('GET', `/project-hub/catalog${qs}`);
+    let projects = data.projects || [];
+    if (locationId) {
+      projects = projects.filter((p) => !p.locationId || p.locationId === locationId);
+    }
+    return { projects };
+  },
+  fetchProjectHubEst: (id) => request('GET', `/project-hub/catalog/${encodeURIComponent(id)}/est`),
+  publishProjectHub: (body) => request('POST', '/project-hub/publish', body || {}),
+
+  // Cloud SaaS — tenant auth + Cloud Studio (cloudStudioUi.js)
+  authMe: () => request('GET', '/auth/me'),
+  logout: () => request('POST', '/auth/logout', {}),
+  listSites: () => request('GET', '/sites'),
+  createSite: (body) => request('POST', '/sites', body),
+  updateSite: (siteId, body) => request('PATCH', `/sites/${encodeURIComponent(siteId)}`, body),
+  deleteSite: (siteId) => request('DELETE', `/sites/${encodeURIComponent(siteId)}`),
+  siteCameras: (siteId) => request('GET', `/sites/${encodeURIComponent(siteId)}/cameras`),
+  listSiteDevices: () => request('GET', '/sites/devices'),
+  listCheckedInDevices: () => request('GET', '/sites/devices/checked-in'),
+  claimSiteDevice: (body) => request('POST', '/sites/devices/claim', body),
+  tenantCommissionKey: () => request('GET', '/tenant/commission-key'),
+  mqttConsole: () => request('GET', '/mqtt-console'),
+  mqttConsoleTraffic: (qs) => request('GET', `/mqtt-console/traffic${qs ? `?${qs}` : ''}`),
+  mqttConsoleFenceDevice: (deviceId, body) => request('POST', `/mqtt-console/devices/${encodeURIComponent(deviceId)}/fence`, body),
+  mqttConsoleSetSiteKey: (tenantId, body) => request('PATCH', `/mqtt-console/tenants/${encodeURIComponent(tenantId)}/site-key`, body),
+  createSiteDevice: (body) => request('POST', '/sites/devices', body),
+  unassignSiteDevice: (deviceId) => request('DELETE', `/sites/devices/${encodeURIComponent(deviceId)}`),
+  listFleetAssets: () => request('GET', '/fleet'),
+  createFleetAsset: (body) => request('POST', '/fleet', body),
+  deleteFleetAsset: (assetId) => request('DELETE', `/fleet/${encodeURIComponent(assetId)}`),
+  cloudAccessCatalog: () => request('GET', '/tenant/access-catalog'),
+  notificationScopeCatalog: (tenantId) => request(
+    'GET',
+    tenantId
+      ? `/tenant/notification-scope-catalog?tenantId=${encodeURIComponent(tenantId)}`
+      : '/users/notification-scope-catalog',
+  ),
+  listTenantUsers: () => request('GET', '/tenant/users'),
+  createTenantUser: (body) => request('POST', '/tenant/users', body),
+  updateTenantUser: (userId, body) => request('PUT', `/tenant/users/${encodeURIComponent(userId)}`, body),
+  resendTenantInvite: (userId) => request('POST', `/tenant/users/${encodeURIComponent(userId)}/resend-invite`),
+  deleteTenantUser: (userId) => request('DELETE', `/tenant/users/${encodeURIComponent(userId)}`),
+  listAdminTenants: () => request('GET', '/admin/tenants'),
+  listAdminPartners: () => request('GET', '/admin/partners'),
+  listAdminCustomers: () => request('GET', '/admin/customers'),
+  createAdminTenant: (body) => request('POST', '/admin/tenants', body),
+  updateAdminTenant: (tenantId, body) => request('PATCH', `/admin/tenants/${encodeURIComponent(tenantId)}`, body),
+  deleteAdminTenant: (tenantId) => request('DELETE', `/admin/tenants/${encodeURIComponent(tenantId)}`),
+  listAdminUsers: (tenantId) => request(
+    'GET',
+    tenantId ? `/admin/users?tenantId=${encodeURIComponent(tenantId)}` : '/admin/users',
+  ),
+  createAdminUser: (body) => request('POST', '/admin/users', body),
+  updateAdminUser: (userId, body) => request('PUT', `/admin/users/${encodeURIComponent(userId)}`, body),
+  resendAdminInvite: (userId) => request('POST', `/admin/users/${encodeURIComponent(userId)}/resend-invite`),
+  deleteAdminUser: (userId) => request('DELETE', `/admin/users/${encodeURIComponent(userId)}`),
+  patchTenantCmms: (tenantId, body) => request('PATCH', `/admin/tenants/${encodeURIComponent(tenantId)}/cmms`, body),
+  patchTenantPartner: (tenantId, body) => request('PATCH', `/admin/tenants/${encodeURIComponent(tenantId)}/partner`, body),
+  patchTenantType: (tenantId, body) => request('PATCH', `/admin/tenants/${encodeURIComponent(tenantId)}/type`, body),
+  tenantCmms: () => request('GET', '/tenant/cmms'),
+  listPartnerCustomers: () => request('GET', '/partner/customers'),
+  partnerBilling: () => request('GET', '/partner/billing'),
+  listAccessibleTenants: () => request('GET', '/partner/accessible-tenants'),
+  switchPartnerTenant: (body) => request('POST', '/partner/switch-tenant', body),
+};

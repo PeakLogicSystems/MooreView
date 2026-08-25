@@ -27,7 +27,8 @@
     "motor1Start": { "pick": "tagId", "tagId": "MOTOR1_START", "types": ["BOOL"] },
     "motor1Stop": { "pick": "tagId", "tagId": "MOTOR1_STOP", "types": ["BOOL"] },
     "motor2Start": { "pick": "tagId", "tagId": "MOTOR2_START", "types": ["BOOL"] },
-    "motor2Stop": { "pick": "tagId", "tagId": "MOTOR2_STOP", "types": ["BOOL"] }
+    "motor2Stop": { "pick": "tagId", "tagId": "MOTOR2_STOP", "types": ["BOOL"] },
+    "altOff": { "pick": "tagId", "tagId": "ALT_OFF", "types": ["BOOL"] }
   },
   "parts": [
     {
@@ -298,6 +299,21 @@
       "interaction": "pulse",
       "onValue": "#ff3333",
       "offValue": "#222222"
+    },
+    {
+      "elementId": "lamp_alt_off",
+      "property": "fill",
+      "tagRole": "altOff",
+      "onValue": "#ef4444",
+      "offValue": "#222222"
+    },
+    {
+      "elementId": "btn_alt_off",
+      "property": "fill",
+      "tagRole": "altOff",
+      "interaction": "toggle",
+      "onValue": "#7f1d1d",
+      "offValue": "#333333"
     }
   ]
 }

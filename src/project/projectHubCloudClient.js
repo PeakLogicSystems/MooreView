@@ -53,49 +53,25 @@ async function cloudFetch(path, opts = {}) {
   return data;
 }
 
-async function cloudFetchBinary(path, opts = {}) {
-  const cfg = opts.cloudRemote || cloudRemoteFromSettings();
-  const base = cloudApiBase(cfg);
-  if (!base) {
-    throw Object.assign(new Error('Cloud API URL not configured (pair appliance or set cloudRemote.cloudApiUrl)'), { status: 400 });
-  }
-  if (!cfg.tenantId || !cfg.applianceId) {
-    throw Object.assign(new Error('Appliance not paired to a cloud tenant'), { status: 400 });
-  }
-  const url = `${base}${path.startsWith('/') ? path : `/${path}`}`;
-  const res = await fetch(url, {
-    method: opts.method || 'GET',
-    headers: {
-      Accept: 'application/zip, application/octet-stream',
-      ...applianceHeaders(cfg),
-      ...(opts.headers || {}),
-    },
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw Object.assign(new Error(text || `Cloud request failed (${res.status})`), { status: res.status });
-  }
-  return Buffer.from(await res.arrayBuffer());
-}
-
 async function listCloudCatalog(cloudRemote) {
   const data = await cloudFetch('/api/project-hub/catalog', { cloudRemote });
   return Array.isArray(data.projects) ? data.projects : [];
 }
 
-async function fetchCloudArchive(id, cloudRemote) {
-  return cloudFetchBinary(`/api/project-hub/catalog/${encodeURIComponent(id)}/file`, { cloudRemote });
+async function fetchCloudEst(id, cloudRemote) {
+  const data = await cloudFetch(`/api/project-hub/catalog/${encodeURIComponent(id)}/est`, { cloudRemote });
+  if (!data?.doc) throw Object.assign(new Error('Cloud project payload missing'), { status: 502 });
+  return data.doc;
 }
 
-async function publishToCloud(archiveBuffer, meta = {}, cloudRemote) {
-  const buf = Buffer.isBuffer(archiveBuffer) ? archiveBuffer : Buffer.from(archiveBuffer);
+async function publishToCloud(doc, meta = {}, cloudRemote) {
   return cloudFetch('/api/project-hub/publish', {
     method: 'POST',
     cloudRemote,
     body: {
-      name: meta.name,
+      name: meta.name || doc?.project?.name,
       description: meta.description || '',
-      archiveBase64: buf.toString('base64'),
+      doc,
     },
     headers: cloudRemote?.pairingKey ? { 'X-Mooreview-Pairing-Key': String(cloudRemote.pairingKey) } : {},
   });
@@ -104,6 +80,6 @@ async function publishToCloud(archiveBuffer, meta = {}, cloudRemote) {
 module.exports = {
   cloudRemoteFromSettings,
   listCloudCatalog,
-  fetchCloudArchive,
+  fetchCloudEst,
   publishToCloud,
 };

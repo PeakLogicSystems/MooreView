@@ -65,6 +65,23 @@ describe('parc position drivers', () => {
     assert.notEqual(r.drivers[0].id, r.drivers[0].deviceId);
   });
 
+  it('bulkAddParcOptaDrivers honors positionId for single registry device', () => {
+    const registry = {
+      listDevices: () => [{ deviceId: 'mv_f2e689fd60d96bab', ateccSerial: '0123b636f1c23964ee' }],
+      getDevice: (id) => (id === 'mv_f2e689fd60d96bab'
+        ? { deviceId: id, ateccSerial: '0123b636f1c23964ee' }
+        : null),
+    };
+    const r = bulkAddParcOptaDrivers({
+      driverList: [],
+      body: { fromRegistry: true, positionId: 'ck_2707575' },
+      registry,
+    });
+    assert.equal(r.added.length, 1);
+    assert.equal(r.drivers[0].id, 'ck_2707575');
+    assert.equal(r.drivers[0].deviceId, 'mv_f2e689fd60d96bab');
+  });
+
   it('replaceParcOptaHardware keeps position id and records history', () => {
     const registry = {
       getDevice: (id) => (id === 'opta_newserial00000001'

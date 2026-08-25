@@ -1,17 +1,5 @@
 'use strict';
 
-const {
-  resolveNextcenturyPropertyIds,
-  isPlaceholderNcPropertyIds,
-  propertyIdListsEqual,
-} = require('./nextcenturyPropertyIds');
-const {
-  isEzMeterFacility,
-  syncEzMeterSemanticTags,
-  mergedEzMeterSemanticMap,
-  pqThresholds,
-} = require('../facilities/ezmeterPq');
-
 /** Main pool vs shared-plumbing bodies with independent circulation targets. */
 const WATER_BODY_KINDS = {
   POOL: 'pool',
@@ -194,29 +182,11 @@ function normalizeAssistedLiving(raw, prev = {}) {
   } else if (!Array.isArray(next.pools) || !next.pools.length) {
     next.pools = normalizePools(undefined, base.pools);
   }
-  if (Object.prototype.hasOwnProperty.call(raw, 'halow') && raw.halow && typeof raw.halow === 'object') {
-    next.halow = { ...(base.halow || {}), ...raw.halow };
-  }
-  if (Object.prototype.hasOwnProperty.call(raw, 'poolSubsystem') && raw.poolSubsystem) {
-    next.poolSubsystem = { ...(base.poolSubsystem || {}), ...raw.poolSubsystem };
-  }
-  if (raw.nextCentury && typeof raw.nextCentury === 'object') {
-    next.nextCentury = { ...(base.nextCentury || {}), ...raw.nextCentury };
-    const resolved = resolveNextcenturyPropertyIds(next.nextCentury.propertyIds);
-    if (resolved.length) next.nextCentury.propertyIds = resolved;
-  } else if (next.nextCentury?.propertyIds) {
-    const resolved = resolveNextcenturyPropertyIds(next.nextCentury.propertyIds);
-    if (resolved.length) next.nextCentury.propertyIds = resolved;
-  }
   return next;
 }
 
 function setTagBool(tagStore, tagId, value) {
   if (tagStore.get(tagId)) tagStore.setValue(tagId, !!value);
-}
-
-function setTagReal(tagStore, tagId, value) {
-  if (tagStore.get(tagId)) tagStore.setValue(tagId, Number(value));
 }
 
 function defaultNextcenturySemanticMap() {
@@ -229,83 +199,6 @@ function defaultNextcenturySemanticMap() {
 
 function defaultNextcenturyDriverId(assistedLiving) {
   return String(assistedLiving?.nextCentury?.driverId || 'nextcentury1').trim() || 'nextcentury1';
-}
-
-function facilityDriverMode(assistedLiving) {
-  return String(assistedLiving?.facility?.driver || '').trim().toLowerCase();
-}
-
-/** True when the project is on NextCentury (not T-HaLow phase-1 defaults). */
-function isNextcenturyFacility(assistedLiving) {
-  const mode = facilityDriverMode(assistedLiving);
-  if (mode === 'nextcentury' || mode === 'nc') return true;
-  const pids = assistedLiving?.nextCentury?.propertyIds;
-  return Array.isArray(pids) && pids.length > 0;
-}
-
-/** HaLow semantic wiring applies only when the project is explicitly on T-HaLow. */
-function halowSemanticMappingEnabled(assistedLiving) {
-  const halow = assistedLiving?.halow;
-  if (halow?.enabled === false) return false;
-  const mode = facilityDriverMode(assistedLiving);
-  if (mode === 'halow' || mode === 't-halow' || mode === 'thalow') return true;
-  if (!halow || typeof halow !== 'object') return false;
-  if (Array.isArray(halow.semanticMap) && halow.semanticMap.length) return true;
-  if (halow.phase) return true;
-  return false;
-}
-
-function mergedHalowSemanticMap(assistedLiving) {
-  if (!halowSemanticMappingEnabled(assistedLiving)) return [];
-  const stored = assistedLiving?.halow?.semanticMap;
-  if (Array.isArray(stored) && stored.length) return stored;
-  try {
-    return require('../../scripts/assisted-living-halow/halow-semantic-map').SEMANTIC_MAP;
-  } catch {
-    return [];
-  }
-}
-
-/** Wire ALF tags to T-HaLow mqtt_parc drivers via on-device Parc tag ids. */
-function syncHalowSemanticTags(tagStore, assistedLiving) {
-  if (!tagStore || typeof tagStore.list !== 'function') return;
-  const map = mergedHalowSemanticMap(assistedLiving);
-  const poolMap = Array.isArray(assistedLiving?.halow?.poolRollupMap)
-    ? assistedLiving.halow.poolRollupMap
-    : [];
-  const hvacMap = Array.isArray(assistedLiving?.halow?.hvacCondMap)
-    ? assistedLiving.halow.hvacCondMap
-    : [];
-  let defaultHvac = [];
-  if (!hvacMap.length) {
-    try {
-      defaultHvac = require('../../scripts/assisted-living-halow/hvac-halow-bindings').HVAC_COND_BINDINGS;
-    } catch { /* optional */ }
-  }
-  const all = [...map, ...poolMap, ...hvacMap, ...defaultHvac];
-  if (!all.length) return;
-
-  const ncTagIds = isNextcenturyFacility(assistedLiving)
-    ? new Set(mergedSemanticMap(assistedLiving).map((m) => m.tagId))
-    : new Set();
-
-  const tags = tagStore.list();
-  let changed = false;
-  const wired = tags.map((t) => {
-    const m = all.find((row) => row.tagId === t.id);
-    if (!m?.deviceId || !m?.parcTagId) return t;
-    if (ncTagIds.has(t.id)) return t;
-    changed = true;
-    const next = {
-      ...t,
-      driverId: m.driverId || m.deviceId,
-      driverAddress: { channel: m.parcTagId },
-    };
-    if (m.scale != null) next.scale = m.scale;
-    if (m.offset != null) next.offset = m.offset;
-    return next;
-  });
-  if (changed) tagStore.replaceAll(wired, { keepForces: true });
 }
 
 /** Stored project map overrides defaults; defaults fill gaps (e.g. RM101 on property 40074). */
@@ -352,10 +245,9 @@ function syncNextcenturySemanticTags(tagStore, assistedLiving) {
     return;
   }
 
-  const mapByTagId = new Map(map.map((m) => [m.tagId, m]));
   let changed = next !== tags;
   const wired = next.map((t) => {
-    const m = mapByTagId.get(t.id);
+    const m = map.find((row) => row.tagId === t.id);
     if (!m?.deviceId || !m?.field) return t;
     changed = true;
     return {
@@ -366,41 +258,6 @@ function syncNextcenturySemanticTags(tagStore, assistedLiving) {
   });
 
   if (changed) tagStore.replaceAll(wired, { keepForces: true });
-}
-
-/** Apply resolved NC property IDs to the nextcentury driver config (project open / settings sync). */
-function syncNextcenturyDriverPropertyIds(driverManager, assistedLiving) {
-  if (!driverManager || typeof driverManager.list !== 'function') return false;
-  if (!isNextcenturyFacility(assistedLiving)) return false;
-
-  const driverId = defaultNextcenturyDriverId(assistedLiving);
-  const fromSettings = assistedLiving?.nextCentury?.propertyIds;
-  const resolved = resolveNextcenturyPropertyIds(fromSettings);
-  if (!resolved.length) return false;
-
-  const list = driverManager.list();
-  const idx = list.findIndex((d) => d.id === driverId && d.type === 'nextcentury');
-  if (idx < 0) return false;
-
-  const cur = list[idx];
-  if (propertyIdListsEqual(cur.propertyIds, resolved)) return false;
-
-  const drivers = list.map((d, i) => (i === idx ? { ...d, propertyIds: resolved } : d));
-  driverManager.save(drivers);
-  return true;
-}
-
-function patchNextcenturyDriverPropertyIds(drivers, assistedLiving) {
-  if (!Array.isArray(drivers)) return drivers;
-  const fromSettings = assistedLiving?.nextCentury?.propertyIds;
-  const fallback = resolveNextcenturyPropertyIds(fromSettings);
-  return drivers.map((d) => {
-    if (d.type !== 'nextcentury') return d;
-    const resolved = resolveNextcenturyPropertyIds(d.propertyIds);
-    const nextIds = resolved.length ? resolved : fallback;
-    if (!nextIds.length || propertyIdListsEqual(d.propertyIds, nextIds)) return d;
-    return { ...d, propertyIds: nextIds };
-  });
 }
 
 const MECH_METER_INTERVAL_BINDING = {
@@ -459,29 +316,8 @@ function syncAssistedLivingTags(tagStore, assistedLiving) {
   }
 
   const ncMap = mergedSemanticMap(assistedLiving);
-  const tagIds = new Set(tagStore.list().map((t) => t.id));
-  if (ncMap.some((m) => tagIds.has(m.tagId)) && isNextcenturyFacility(assistedLiving)) {
+  if (ncMap.some((m) => tagStore.get(m.tagId))) {
     syncNextcenturySemanticTags(tagStore, assistedLiving);
-  }
-  const ezMap = mergedEzMeterSemanticMap(assistedLiving);
-  if (isEzMeterFacility(assistedLiving) && ezMap.some((m) => tagIds.has(m.tagId))) {
-    syncEzMeterSemanticTags(tagStore, assistedLiving);
-    const th = pqThresholds(assistedLiving);
-    setTagReal(tagStore, 'MECH_PQ_CFG_NOM_V', th.nominalV);
-    setTagReal(tagStore, 'MECH_PQ_CFG_UV_V', th.undervoltV);
-    setTagReal(tagStore, 'MECH_PQ_CFG_OV_V', th.overvoltV);
-    setTagReal(tagStore, 'MECH_PQ_CFG_LOW_PF', th.lowPf);
-    setTagReal(tagStore, 'MECH_PQ_CFG_FREQ_MIN', th.freqMinHz);
-    setTagReal(tagStore, 'MECH_PQ_CFG_FREQ_MAX', th.freqMaxHz);
-    setTagReal(tagStore, 'MECH_PQ_CFG_IMBAL_PCT', th.vImbalPct);
-    setTagReal(tagStore, 'MECH_PQ_CFG_LOAD_I', th.loadedIA);
-  }
-  const halowMap = mergedHalowSemanticMap(assistedLiving);
-  const poolRollup = Array.isArray(assistedLiving?.halow?.poolRollupMap)
-    ? assistedLiving.halow.poolRollupMap
-    : [];
-  if ([...halowMap, ...poolRollup].some((m) => tagIds.has(m.tagId))) {
-    syncHalowSemanticTags(tagStore, assistedLiving);
   }
 }
 
@@ -507,16 +343,6 @@ module.exports = {
   normalizeAssistedLiving,
   syncAssistedLivingTags,
   syncNextcenturySemanticTags,
-  syncHalowSemanticTags,
-  mergedHalowSemanticMap,
   mergedSemanticMap,
-  halowSemanticMappingEnabled,
-  isNextcenturyFacility,
   patchAssistedLivingHmi,
-  syncNextcenturyDriverPropertyIds,
-  patchNextcenturyDriverPropertyIds,
-  isPlaceholderNcPropertyIds,
-  isEzMeterFacility,
-  syncEzMeterSemanticTags,
-  mergedEzMeterSemanticMap,
 };

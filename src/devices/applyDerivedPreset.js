@@ -121,7 +121,6 @@ function patchEzMeterAssistedLivingSettings(settings, driverId, body = {}) {
     freqMaxHz: body.freqMaxHz ?? al.ezMeter?.freqMaxHz,
     vImbalancePct: body.vImbalancePct ?? al.ezMeter?.vImbalancePct,
     loadedCurrentA: body.loadedCurrentA ?? al.ezMeter?.loadedCurrentA,
-    thdAlarmPct: body.thdAlarmPct ?? al.ezMeter?.thdAlarmPct,
   };
   next.assistedLiving = al;
   return next;

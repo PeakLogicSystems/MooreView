@@ -1,4 +1,4 @@
-# mooreVIEW HMI — SVG graphics
+# MooreVIEW HMI — SVG graphics
 
 Graphics are organized under `svg/library/` by function, with demo screens in `svg/demos/`.
 
@@ -6,7 +6,7 @@ Graphics are organized under `svg/library/` by function, with demo screens in `s
 
 | Group | Path | Contents |
 |-------|------|----------|
-| **Demos** | `demos/` | Built-in mooreVIEW demo screens |
+| **Demos** | `demos/` | Built-in MooreVIEW demo screens |
 | **Controls — Pilot lights** | `library/controls/pilot-lights/` | MV `light_symbol*`, `pl_*` |
 | **Controls — Push buttons** | `library/controls/push-buttons/` | MV `roundsymbol_*`, `pb_*` |
 | **Controls — Switches** | `library/controls/selector-switches/` | MV selector switches |
@@ -23,7 +23,7 @@ Full index: `svg/graphics-catalog.json` · Legacy path redirects: `svg/path-alia
 
 ## PID faceplate
 
-mooreVIEW includes a ready-made PID loop faceplate:
+MooreVIEW includes a ready-made PID loop faceplate:
 
 **`/hmi/svg/library/pid-faceplates/mooreview/pid_loop_standard.svg`**
 
@@ -73,6 +73,8 @@ Each grid **anchor cell** can hold up to **5 stacked layers** (Z0 = back … Z4 
 | **dynamicText** | Numeric or string from tag | `text` (+ format for INT/REAL) |
 | **dynamicImage** | State overlay (run/stop/warning/fault/offline) | `visibility`, `fill`, or `class` per layer |
 | **navButton** | Page / screen change | none (uses `targetScreenId`) |
+| **pageHotspot** | Transparent page navigation (Z1–4) | none (uses `targetScreenId`; optional composer label) |
+| **flashOverlay** | Flashing semi-transparent alarm highlight (Z1–4) | optional `visibility` on `…__flash_overlay` or layer `tagId` |
 
 Example: five pilot images in one cell at Z0–Z4, each bound to a BOOL (or one INT with `fill8`) so only the active state shows.
 

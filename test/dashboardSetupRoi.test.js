@@ -10,22 +10,19 @@ const dashboardEjs = fs.readFileSync(
   'utf8',
 );
 
-describe('dashboard ROI calculator', () => {
-  it('renders ROI panel in Reports popup, reachable from Reporting menu', () => {
-    assert.doesNotMatch(dashboardEjs, /data-setup-tab-btn="roi"/);
-    assert.doesNotMatch(dashboardEjs, /data-setup-tab="roi"/);
-    assert.match(dashboardEjs, /data-report-open="roi"/);
+describe('dashboard System setup ROI tab', () => {
+  it('renders ROI calculator panel and script', () => {
+    assert.match(dashboardEjs, /data-setup-tab-btn="roi"/);
     assert.match(dashboardEjs, /\/js\/roiCalculator\.js/);
     const roiPanel = dashboardEjs.match(
-      /<details class="report-roi-panel" id="report-roi-panel">([\s\S]*?)<\/details>/,
+      /<section class="setup-panel[^"]*" data-setup-tab="roi">([\s\S]*?)<\/section>/,
     );
-    assert.ok(roiPanel, 'ROI report panel missing');
+    assert.ok(roiPanel, 'ROI setup panel missing');
     const panelHtml = roiPanel[1];
     assert.match(panelHtml, /id="roi-leak-repair-cost"/);
     assert.match(panelHtml, /value="90"/);
     assert.match(panelHtml, /id="roi-pool-energy-monthly"/);
     assert.match(panelHtml, /id="roi-pool-chem-monthly"/);
     assert.match(panelHtml, /id="roi-combined-summary"/);
-    assert.match(panelHtml, /id="btn-report-roi-save"/);
   });
 });

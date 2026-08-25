@@ -818,28 +818,6 @@ void mvTagsToJson(JsonObject out) {
   }
 }
 
-uint32_t mvTagsValueFingerprint() {
-  uint32_t h = 2166136261u;
-  for (uint8_t i = 0; i < g_tagCount; i++) {
-    const MvTag* t = &g_tags[i];
-    h ^= (uint32_t)t->kind;
-    h *= 16777619u;
-    switch (t->kind) {
-      case MV_BOOL: h ^= t->b ? 1u : 0u; break;
-      case MV_INT: h ^= (uint32_t)t->i; break;
-      case MV_REAL: h ^= (uint32_t)(t->r * 1000.0f); break;
-      case MV_TIMER: h ^= t->tmrDone ? 1u : 0u; break;
-      case MV_COUNTER: h ^= (uint32_t)t->count; break;
-      case MV_PID: h ^= (uint32_t)(t->out * 1000.0f); break;
-      case MV_AVG: h ^= (uint32_t)(t->avgVal * 1000.0f); break;
-      case MV_FLOW: h ^= (uint32_t)(t->flowGpm * 1000.0f); break;
-      case MV_ALT: h ^= (uint32_t)t->altActiveUnit; break;
-    }
-    h *= 16777619u;
-  }
-  return h;
-}
-
 static const char* kindTypeName(MvTagKind k) {
   switch (k) {
     case MV_INT: return "INT";

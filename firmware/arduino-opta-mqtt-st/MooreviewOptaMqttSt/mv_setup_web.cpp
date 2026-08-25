@@ -11,7 +11,7 @@
 #include "mv_watchdog.h"
 #include "mv_web_nav.h"
 #include "mv_identity.h"
-#include "mv_ezmeter.h"
+#include "mv_rbe.h"
 #include "mv_debug.h"
 #include <ArduinoJson.h>
 #include <Ethernet.h>
@@ -47,6 +47,10 @@ button.primary{background:#49104F;color:#fff;border-color:#49104F}
 .status-bar.err{background:#fef2f2;border-color:#fecaca;color:#991b1b}
 .status-bar.ok{background:#f0fdf4;border-color:#bbf7d0;color:#166534}
 .status-bar.warn{background:#fffbeb;border-color:#fde68a;color:#92400e}
+.rbe-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(7.2rem,1fr));gap:.3rem;margin:.4rem 0}
+.rbe-grid label{display:flex;align-items:center;gap:.35rem;margin:0;font-size:.85rem}
+.rbe-grid input[type=checkbox]{width:auto;max-width:none;margin:0}
+.rbe-sec{margin:.55rem 0 .25rem;font-size:.85rem;color:#49104F;font-weight:600}
 )HTML" MV_WEB_NAV_CSS R"HTML(
 </style></head><body>
 <h1>MooreVIEW Opta Setup</h1>
@@ -63,6 +67,8 @@ button.primary{background:#49104F;color:#fff;border-color:#49104F}
 <dt>Bytecode</dt><dd id="stBytecode">—</dd>
 <dt>Code / data</dt><dd id="stCodeData">—</dd>
 <dt>Scan</dt><dd id="stScan">—</dd>
+<dt>Host report</dt><dd id="stReport">—</dd>
+<dt>RBE</dt><dd id="stRbe">—</dd>
 <dt>MQTT Parc</dt><dd id="stMqtt">—</dd>
 <dt>Firmware</dt><dd id="stFirmware">—</dd>
 <dt>Ethernet IP</dt><dd id="stEthIp">—</dd>
@@ -94,7 +100,7 @@ button.primary{background:#49104F;color:#fff;border-color:#49104F}
 <label>Password <input id="wifiPass" type="password" placeholder="mooreview (min 8 chars)"></label>
 <p class="muted" id="wifiStatus"></p></div>
 <div class="card"><h2>MQTT Parc broker</h2>
-<p class="muted"><strong>TLS on</strong> = cloud <code>mqtt.mooreview.io:8883</code>. <strong>TLS off</strong> = local MooreVIEW appliance <code>:1883</code> (no TLS). Save writes the active path to NV.</p>
+<p class="muted"><strong>TLS on + Save</strong> connects this Opta to <code>mqtt.mooreview.io:8883</code>. <strong>TLS off</strong> = local MooreVIEW appliance <code>:1883</code> (no TLS).</p>
 <label><input type="checkbox" id="mqttTls"> Cloud MQTT (TLS — mqtt.mooreview.io:8883)</label>
 <label>Broker host <input id="mqttBroker" placeholder="mqtt.mooreview.io or LAN IP"></label>
 <label>Port <input id="mqttPort" type="number" min="1" max="65535" value="1883" readonly></label>
@@ -105,21 +111,26 @@ button.primary{background:#49104F;color:#fff;border-color:#49104F}
 <button type="button" id="btnMqttTest">Test MQTT connection</button>
 </div>
 <p id="mqttTestResult" class="muted" aria-live="polite"></p></div>
-<div class="card"><h2>MQTT telemetry</h2>
-<p class="muted">Periodic publish to <code>…/telemetry</code>. Range 100&nbsp;ms – 2&nbsp;h (7&nbsp;200&nbsp;000&nbsp;ms). Examples: 1000 = 1&nbsp;s, 60000 = 1&nbsp;min, 180000 = 3&nbsp;min, 3600000 = 1&nbsp;h.</p>
-<label>Report interval (ms) <input id="mqttReportMs" type="number" min="100" max="7200000" step="100" value="180000"></label>
-<label><input type="checkbox" id="mqttReportOnException" checked> Report on exception (also publish when tag values, runtime, or alarms change)</label>
-<label><input type="checkbox" id="mqttTelemetryDisable"> Disable MQTT telemetry publish</label>
-<p class="muted" id="mqttTelemetryHint"></p></div>
+<div class="card"><h2>Device to host scan rate</h2>
+<p class="muted">How often this Opta publishes MQTT Parc telemetry to the host. MooreVIEW may temporarily speed this up while Remote is attached. Range 100 ms–600 s.</p>
+<label>Report interval (ms) <input id="reportMs" type="number" min="100" max="600000" step="100" placeholder="180000"></label>
+<p class="muted" id="reportMsHint"></p>
+</div>
+<div class="card"><h2>Report by exception (RBE)</h2>
+<p class="muted">Selected I/O publish immediately when they change, without waiting for the host report interval. Digital = any edge. Analog = change ≥ deadband. Leave unchecked to stay on the programmed rate only.</p>
+<label>Minimum RBE interval (ms) <input id="rbeMinMs" type="number" min="20" max="60000" step="10" placeholder="100"></label>
+<label>Analog deadband <input id="rbeDeadband" type="number" min="1" max="4000" step="1" placeholder="50"></label>
+<p class="muted">INT counts (I*_RAW). REAL uses deadband/1000 (50 = 0.05).</p>
+<div class="row">
+<button type="button" id="btnRbeDigital">Select digital</button>
+<button type="button" id="btnRbeNone">Clear all</button>
+</div>
+<div id="rbeGrid"></div>
+</div>
 <div class="card"><h2>Global site key</h2>
-<p class="muted">Shared 16-bit key for program tag MQTT (<code>mooreview/v1/g/{key}/{tag}</code>). Must match MooreVIEW System setup → MQTT Parc. Default <code>1</code> (addr key <code>0001</code>).</p>
+<p class="muted">This key decides which MooreVIEW Cloud organization can see this Opta. Copy the org key from Cloud Studio (same value as <code>0x0001</code> / <code>000001</code>). Default <code>1</code>.</p>
 <label>Site key (decimal or hex, e.g. 1 or 0x0001) <input id="globalSiteKey" placeholder="1"></label>
 <p class="muted" id="globalSiteKeyHint"></p></div>
-<div class="card"><h2>EZ Meter PQ</h2>
-<p class="muted">Low-voltage threshold for duplex lift + EZ Meter ST (<code>MECH_PQ_CFG_UV_V</code>). R4 station alarm: high level float, <code>MECH_PQ_ALM</code>, or motor fault DIs X1_I11/X1_I12.</p>
-<label>Nominal voltage (V) <input id="ezNomV" type="number" min="1" step="1" placeholder="120"></label>
-<label>Undervolt threshold (V) <input id="ezUvV" type="number" min="1" step="0.1" placeholder="108"></label>
-</div>
 <div class="card"><h2>Expansion modules (AFX00005 / AFX00007)</h2>
 <p class="muted">Slot 1 is closest to the Opta base. AFX00005 = D1608E (16 DI + 8 relays). AFX00007 = A0602 (8 analog ch + 4 PWM).</p>
 <div id="expSlots"></div>
@@ -140,6 +151,34 @@ function slotHtml(i){
   return `<label>Slot ${i+1} <select id="exp${i}">${expNames.map((n,j)=>`<option value="${j}">${n}</option>`).join('')}</select></label>`;
 }
 document.getElementById('expSlots').innerHTML=[0,1,2,3,4].map(slotHtml).join('');
+function renderRbe(rbe){
+  rbeMinMs.value=rbe.minMs!=null?rbe.minMs:100;
+  rbeDeadband.value=rbe.analogDeadband!=null?rbe.analogDeadband:50;
+  const pts=rbe.points||[];
+  const groups={digital:[],analog:[]};
+  pts.forEach(p=>{
+    const analog=p.type==='INT'||p.type==='REAL';
+    (analog?groups.analog:groups.digital).push(p);
+  });
+  function box(p){
+    return `<label><input type="checkbox" data-rbe-id="${p.id}" ${p.enabled?'checked':''}>${p.id}</label>`;
+  }
+  let html='';
+  if(groups.digital.length) html+='<div class="rbe-sec">Digital I/O</div><div class="rbe-grid">'+groups.digital.map(box).join('')+'</div>';
+  if(groups.analog.length) html+='<div class="rbe-sec">Analog I/O</div><div class="rbe-grid">'+groups.analog.map(box).join('')+'</div>';
+  if(!html) html='<p class="muted">No I/O points yet — Scan expansions if modules are fitted.</p>';
+  rbeGrid.innerHTML=html;
+}
+function selectedRbeIds(){
+  return [...document.querySelectorAll('#rbeGrid input[data-rbe-id]:checked')].map(el=>el.getAttribute('data-rbe-id'));
+}
+btnRbeDigital.onclick=()=>{
+  document.querySelectorAll('#rbeGrid input[data-rbe-id]').forEach(el=>{
+    const id=el.getAttribute('data-rbe-id')||'';
+    el.checked=!id.includes('_RAW')&&!id.includes('_AI');
+  });
+};
+btnRbeNone.onclick=()=>{document.querySelectorAll('#rbeGrid input[data-rbe-id]').forEach(el=>{el.checked=false;});};
 let mqttLanHost='192.168.1.233';
 let mqttCloudHost='mqtt.mooreview.io';
 function isCloudHost(h){
@@ -164,7 +203,8 @@ async function loadCfg(){
   ethDhcp.checked=!!c.ethUseDhcp; wifiAp.checked=!!c.wifiApEnable;
   ethIp.value=ip4(c.ethIp); ethGw.value=ip4(c.ethGw); ethMask.value=ip4(c.ethMask); ethDns.value=ip4(c.ethDns);
   wifiSsid.value=c.wifiApSsid||'';
-  wifiPass.value=c.wifiApPass||'';
+  wifiPass.value='';
+  wifiPass.placeholder=c.wifiApPassSet?'leave blank to keep saved':'mooreview (min 8 chars)';
   mqttCloudHost=c.mqttCloudHost||'mqtt.mooreview.io';
   mqttLanHost=c.mqttLanHost||'192.168.1.233';
   mqttBroker.value=c.mqttBrokerHost||'';
@@ -178,14 +218,17 @@ async function loadCfg(){
   const active=(c.mqttBrokerActive||mqttBroker.value||'?')+':'+(tls?'8883':'1883');
   const authHint=tls?(c.mqttPasswordSet?' cloud user+password in NV':' type cloud password once'):' local :1883 no TLS';
   if(c.mqttBrokerSet) mqttBrokerHint.textContent='NV saved — '+active+' — '+authHint+'.';
-  mqttReportMs.value=c.mqttReportMs!=null?c.mqttReportMs:180000;
-  mqttReportOnException.checked=c.mqttReportOnException!==false;
-  mqttTelemetryDisable.checked=!!c.mqttTelemetryDisable;
-  mqttTelemetryHint.textContent=c.mqttTelemetryDisable?'Telemetry publish disabled — MQTT commands still work.':('Report every '+(c.mqttReportMs||180000)+' ms'+(c.mqttReportOnException!==false?' + on exception':''));
+  reportMs.value=c.reportMs!=null?c.reportMs:180000;
+  function hintReport(){
+    const ms=+reportMs.value||180000;
+    const sec=Math.round(ms/1000);
+    reportMsHint.textContent=ms>=1000?(sec+' s to host'):(ms+' ms to host');
+  }
+  hintReport();
+  reportMs.oninput=hintReport;
+  renderRbe(c.rbe||{});
   globalSiteKey.value=c.globalSiteKey!=null?('0x'+Number(c.globalSiteKey).toString(16).padStart(4,'0')):'0x0001';
-  globalSiteKeyHint.textContent='Addr key: '+(c.globalAddrKey||'0001')+' — must match MooreVIEW mqttParc.globalSiteKey';
-  ezNomV.value=c.ezMeterNominalV!=null?c.ezMeterNominalV:120;
-  ezUvV.value=c.ezMeterUndervoltV!=null?c.ezMeterUndervoltV:108;
+  globalSiteKeyHint.textContent='Addr key: '+(c.globalAddrKey||'0001')+' — Cloud org with this site key sees the Opta';
   const apSsid=c.wifiApSsid||'MooreVIEW-Opta';
   const apPort=c.wifiApHttpPort||8080;
   wifiSsid.disabled=!c.wifiCapable;
@@ -265,17 +308,16 @@ btnSave.onclick=async()=>{
     mqttBrokerHost:mqttBroker.value.trim(),mqttBrokerPort:+mqttPort.value||1883,
     mqttUseTls:mqttTls.checked?1:0,
     mqttUsername:mqttUser.value.trim(),mqttPassword:mqttPass.value,
-    mqttReportMs:+mqttReportMs.value||180000,
-    mqttReportOnException:mqttReportOnException.checked?1:0,
-    mqttTelemetryDisable:mqttTelemetryDisable.checked?1:0,
     globalSiteKey:globalSiteKey.value.trim(),
-    ezMeterNominalV:+ezNomV.value||120,
-    ezMeterUndervoltV:+ezUvV.value||108,
+    reportMs:+reportMs.value||180000,
+    rbeEnabled:selectedRbeIds(),
+    rbeMinMs:+rbeMinMs.value||100,
+    rbeAnalogDeadband:+rbeDeadband.value||50,
     ethIp:parseIp(ethIp.value),ethGw:parseIp(ethGw.value),ethMask:parseIp(ethMask.value),ethDns:parseIp(ethDns.value),
     expSlotType:[0,1,2,3,4].map(i=>+document.getElementById('exp'+i).value),
     a0602RtdEnable:a0602RtdEnable.checked?1:0};
   const r=await fetch('/api/setup/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  const j=await r.json(); msg.textContent=j.ok?'Saved to NV. MQTT host/TLS/user/password persist across reboot. Ethernet IP applies on reboot.':(j.error||'Save failed');
+  const j=await r.json(); msg.textContent=j.ok?(mqttTls.checked?'Saved. Connecting to mqtt.mooreview.io:8883. Site key selects the Cloud org that can see this Opta. Ethernet IP changes need Reboot.':'Saved. Connecting to local :1883. Ethernet IP changes need Reboot.'):(j.error||'Save failed');
   if(j.ok) loadCfg();
 };
 btnReboot.onclick=async()=>{await fetch('/api/setup/reboot',{method:'POST'}); msg.textContent='Rebooting…';};
@@ -359,6 +401,16 @@ async function loadStatus(){
     stBytecode.textContent=ps.bc;
     stCodeData.textContent=ps.cd;
     stScan.textContent=s.running?(`${s.scanMs||'?'} ms · ${s.cycles||0} cycles`):'—';
+    const reportEl=document.getElementById('stReport');
+    if(reportEl){
+      const rms=Number(s.reportMs)||0;
+      reportEl.textContent=rms?(rms>=1000?`${Math.round(rms/1000)} s (${rms} ms)`:`${rms} ms`):'—';
+    }
+    const rbeEl=document.getElementById('stRbe');
+    if(rbeEl){
+      const n=Number(s.rbeEnabled)||0;
+      rbeEl.textContent=n?(n+' I/O'+(s.rbeLastTag?' · last '+s.rbeLastTag:'')):'off';
+    }
     stMqtt.innerHTML=fmtMqtt(s);
     stFirmware.textContent=`v${s.firmwareVersion||'?'} · protocol ${s.protocolVersion??'?'}`;
     stEthIp.textContent=s.ethIp||'?';
@@ -441,18 +493,18 @@ void mvEthLogStatus(const MvDeviceConfig* cfg) {
 }
 
 static uint16_t parseGlobalSiteKey(JsonVariant v) {
-  if (v.is<uint16_t>() || v.is<int>() || v.is<long>()) {
+  if (v.isNull()) return 1;
+  if (v.is<uint16_t>() || v.is<int>() || v.is<unsigned int>() || v.is<long>() || v.is<unsigned long>()) {
     uint32_t n = v.as<uint32_t>();
     if (n >= 1 && n <= 65535) return (uint16_t)n;
     return 1;
   }
-  if (v.is<const char*>()) {
-    const char* s = v.as<const char*>();
-    if (!s || !s[0]) return 1;
+  const char* s = v.as<const char*>();
+  if (s && s[0]) {
+    while (*s == ' ' || *s == '\t') s++;
     char* end = nullptr;
     unsigned long n = strtoul(s, &end, 0);
-    if (n >= 1 && n <= 65535) return (uint16_t)n;
-    return 1;
+    if (end != s && n >= 1 && n <= 65535) return (uint16_t)n;
   }
   return 1;
 }
@@ -464,7 +516,7 @@ static void fillConfigJson(JsonObject root) {
   root["ethUseDhcp"] = cfg->ethUseDhcp;
   root["wifiApEnable"] = cfg->wifiApEnable;
   root["wifiApSsid"] = cfg->wifiApSsid;
-  root["wifiApPass"] = cfg->wifiApPass;
+  root["wifiApPassSet"] = (cfg->wifiApPass[0] != '\0');
   JsonArray ethIp = root.createNestedArray("ethIp");
   JsonArray ethGw = root.createNestedArray("ethGw");
   JsonArray ethMask = root.createNestedArray("ethMask");
@@ -488,9 +540,6 @@ static void fillConfigJson(JsonObject root) {
   root["mqttBrokerDefault"] = MV_MQTT_SKETCH_BROKER_DEFAULT;
   root["mqttCloudHost"] = MV_MQTT_SKETCH_BROKER_DEFAULT;
   root["mqttLanHost"] = MV_MQTT_LAN_BROKER_DEFAULT;
-  root["mqttReportMs"] = cfg->mqttReportMs ? cfg->mqttReportMs : MV_MQTT_REPORT_MS_DEFAULT;
-  root["mqttReportOnException"] = cfg->mqttReportOnException != 0;
-  root["mqttTelemetryDisable"] = cfg->mqttTelemetryDisable != 0;
   {
     char activeHost[64];
     uint16_t activePort = 1883;
@@ -502,8 +551,13 @@ static void fillConfigJson(JsonObject root) {
   char addrKey[5];
   mvGlobalAddrKey(addrKey);
   root["globalAddrKey"] = addrKey;
-  root["ezMeterNominalV"] = mvEzmeterNominalV();
-  root["ezMeterUndervoltV"] = mvEzmeterUndervoltV();
+  {
+    uint32_t ms = cfg->reportMs;
+    if (ms < MV_REPORT_MS_MIN || ms > MV_REPORT_MS_MAX) ms = MV_REPORT_MS_DEFAULT;
+    root["reportMs"] = ms;
+    root["reportMsLive"] = mvMqttReportMs();
+  }
+  mvRbeFillConfig(root);
   IPAddress cur = Ethernet.localIP();
   root["ethIpCurrent"] = cur.toString();
   root["wifiApActive"] = mvWifiApActive();
@@ -536,12 +590,23 @@ static bool mvMqttHostIsCloud(const char* h) {
 }
 
 static bool applyConfigJson(JsonObject root, String& err) {
-  MvDeviceConfig cfg;
-  mvStoreLoad(&cfg);
+  MvDeviceConfig cfg = *mvStoreActive();
   if (root.containsKey("ethUseDhcp")) cfg.ethUseDhcp = root["ethUseDhcp"].as<uint8_t>() ? 1 : 0;
   if (root.containsKey("wifiApEnable")) cfg.wifiApEnable = root["wifiApEnable"].as<uint8_t>() ? 1 : 0;
-  if (root["wifiApSsid"].is<const char*>()) strncpy(cfg.wifiApSsid, root["wifiApSsid"], sizeof(cfg.wifiApSsid) - 1);
-  if (root["wifiApPass"].is<const char*>()) strncpy(cfg.wifiApPass, root["wifiApPass"], sizeof(cfg.wifiApPass) - 1);
+  if (root["wifiApSsid"].is<const char*>()) {
+    const char* ssid = root["wifiApSsid"].as<const char*>();
+    if (ssid && ssid[0]) {
+      strncpy(cfg.wifiApSsid, ssid, sizeof(cfg.wifiApSsid) - 1);
+      cfg.wifiApSsid[sizeof(cfg.wifiApSsid) - 1] = '\0';
+    }
+  }
+  if (root["wifiApPass"].is<const char*>()) {
+    const char* wp = root["wifiApPass"].as<const char*>();
+    if (wp && wp[0]) {
+      strncpy(cfg.wifiApPass, wp, sizeof(cfg.wifiApPass) - 1);
+      cfg.wifiApPass[sizeof(cfg.wifiApPass) - 1] = '\0';
+    }
+  }
   if (cfg.wifiApEnable) {
     if (!mvWifiCapable()) {
       err = mvWifiLastError()[0] ? mvWifiLastError() : "No WiFi module on this Opta";
@@ -647,31 +712,23 @@ static bool applyConfigJson(JsonObject root, String& err) {
   if (root.containsKey("globalSiteKey")) {
     cfg.globalSiteKey = parseGlobalSiteKey(root["globalSiteKey"]);
   }
-  if (root.containsKey("mqttReportMs")) {
-    uint32_t ms = root["mqttReportMs"].as<uint32_t>();
-    if (ms < MV_MQTT_REPORT_MS_MIN || ms > MV_MQTT_REPORT_MS_MAX) {
-      err = "MQTT report interval must be 100 ms – 2 h";
+  if (root.containsKey("reportMs")) {
+    const uint32_t ms = root["reportMs"].as<uint32_t>();
+    if (ms < MV_REPORT_MS_MIN || ms > MV_REPORT_MS_MAX) {
+      err = "Device to host scan rate must be 100–600000 ms";
       return false;
     }
-    cfg.mqttReportMs = ms;
-  }
-  if (root.containsKey("mqttReportOnException")) {
-    cfg.mqttReportOnException = root["mqttReportOnException"].as<uint8_t>() ? 1 : 0;
-  }
-  if (root.containsKey("mqttTelemetryDisable")) {
-    cfg.mqttTelemetryDisable = root["mqttTelemetryDisable"].as<uint8_t>() ? 1 : 0;
-  }
-  if (root.containsKey("ezMeterNominalV")) {
-    const float v = root["ezMeterNominalV"].as<float>();
-    if (v >= 1.0f && v <= 1000.0f && !mvEzmeterSetNominalV(v)) {
-      err = "Invalid EZ Meter nominal voltage";
+    cfg.reportMs = ms;
+    if (!mvMqttSetReportMs(ms)) {
+      err = "Invalid device to host scan rate";
       return false;
     }
   }
-  if (root.containsKey("ezMeterUndervoltV")) {
-    const float v = root["ezMeterUndervoltV"].as<float>();
-    if (v >= 1.0f && v <= 1000.0f && !mvEzmeterSetUndervoltV(v)) {
-      err = "Invalid EZ Meter undervolt threshold";
+  {
+    char rbeErr[80];
+    rbeErr[0] = '\0';
+    if (!mvRbeApplyJson(root, rbeErr, sizeof(rbeErr))) {
+      err = rbeErr[0] ? rbeErr : "Invalid RBE settings";
       return false;
     }
   }
@@ -679,6 +736,7 @@ static bool applyConfigJson(JsonObject root, String& err) {
   mvMqttApplyDeviceConfig(&cfg);
   mvExpApplyConfig(&cfg);
   mvExpEnsureTags();
+  mvRbeApplyConfig();
   if (cfg.wifiApEnable) {
     if (!mvWifiApplyConfig(&cfg)) {
       const char* wifiErr = mvWifiLastError();
@@ -707,7 +765,7 @@ static void handleSetupConfigGet(Stream& client, const String& method, const Str
   (void)path;
   (void)body;
   (void)headerBlock;
-  StaticJsonDocument<1536> doc;
+  StaticJsonDocument<4096> doc;
   fillConfigJson(doc.to<JsonObject>());
   String out;
   serializeJson(doc, out);
@@ -723,7 +781,7 @@ static void handleSetupConfigPut(Stream& client, const String& method, const Str
     mvHttpSendResponseCStr(client, 400, "application/json", "{\"error\":\"missing body\"}");
     return;
   }
-  StaticJsonDocument<1024> doc;
+  StaticJsonDocument<4096> doc;
   if (deserializeJson(doc, body)) {
     mvHttpSendResponseCStr(client, 400, "application/json", "{\"error\":\"invalid json\"}");
     return;
@@ -744,6 +802,7 @@ static void handleSetupScan(Stream& client, const String& method, const String& 
   (void)headerBlock;
   mvExpRescan();
   mvExpEnsureTags();
+  mvRbeApplyConfig();
   handleSetupConfigGet(client, method, path, body, headerBlock);
 }
 

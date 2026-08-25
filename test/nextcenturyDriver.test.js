@@ -8,7 +8,11 @@ const {
   NextcenturyDriver,
   parseRt4510Row,
   leakIsActive,
+  freezerProbeTempF,
+  isFreezerProbeDoc,
   reportDateStr,
+  fileStamp,
+  REPORT_DUMP_DIR,
 } = require('../src/drivers/nextcenturyDriver');
 const { QUALITY } = require('../src/tags/constants');
 const {
@@ -33,12 +37,61 @@ describe('nextcenturyDriver', () => {  it('parseRt4510Row maps 14 columns', () =
     assert.equal(leakIsActive('Dry'), false);
     assert.equal(leakIsActive('No Leak'), false);
     assert.equal(leakIsActive('Leak'), true);
+    assert.equal(leakIsActive('Light Leak'), true);
     assert.equal(leakIsActive('Wet'), true);
+  });
+
+  it('leakIsActive treats monitoring-disabled states as no leak', () => {
+    assert.equal(leakIsActive('Leak Monitoring Not Enabled'), false);
+    assert.equal(leakIsActive('Leak Monitoring Disabled'), false);
+    assert.equal(leakIsActive('Not Monitored'), false);
+    assert.equal(leakIsActive(''), false);
   });
 
   it('reportDateStr uses M-D-YYYY', () => {
     const s = reportDateStr(new Date(2026, 5, 14));
     assert.equal(s, '6-14-2026');
+  });
+
+  it('fileStamp is filesystem-safe YYYY-MM-DD_HH-mm-ss', () => {
+    const s = fileStamp(new Date(2026, 6, 3, 8, 5, 9));
+    assert.equal(s, '2026-07-03_08-05-09');
+  });
+
+  it('_writeReportDump writes <REPORT_ID>_<stamp>.json with parsed rows', () => {
+    const driver = new NextcenturyDriver({ reportId: 'rt_4510' });
+    driver._deviceCache = new Map([['FA003195', { deviceId: 'FA003195' }]]);
+    driver._lastParsedReport = {
+      reportId: 'rt_4510',
+      deviceCount: 1,
+      properties: [{ propertyId: 39990, rowCount: 1, rows: [{ deviceId: 'FA003195' }] }],
+    };
+    const file = driver._writeReportDump();
+    try {
+      assert.ok(file, 'returns a path');
+      assert.ok(file.startsWith(REPORT_DUMP_DIR), 'writes into the report dump dir');
+      assert.match(path.basename(file), /^RT_4510_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.json$/);
+      const written = JSON.parse(fs.readFileSync(file, 'utf8'));
+      assert.equal(written.properties[0].rows[0].deviceId, 'FA003195');
+    } finally {
+      if (file) fs.rmSync(file, { force: true });
+    }
+  });
+
+  it('freezerProbeTempF decodes rt_4510 outdoor transceiver probe rows', () => {
+    const encoded = parseRt4510Row(
+      ['', '', '', '', '-', 'Outdoor Transceiver', '5', 'BC0077DF', 'Generic', '0', 3, 3, '1', 'Freezer'],
+      39990,
+    );
+    assert.equal(isFreezerProbeDoc(encoded), true);
+    assert.equal(freezerProbeTempF(encoded), -22.2);
+    const live = { ...encoded, currentReading: -22.2, temperature: 5 };
+    assert.equal(freezerProbeTempF(live), -22.2);
+    const reefer = parseRt4510Row(
+      ['', '', '', '', '-', 'Outdoor Transceiver', '41', 'BC00776F', 'Generic', '0', 2, 2, '1', 'fridge'],
+      39990,
+    );
+    assert.equal(isFreezerProbeDoc(reefer), false);
   });
 
   it('readBatch polls API and maps tags by deviceId', async () => {
@@ -133,6 +186,8 @@ describe('nextcenturyDriver', () => {  it('parseRt4510Row maps 14 columns', () =
     assert.equal(store.get('NC_FA0032A8_LEAK').value, true);
     assert.equal(store.get('NC_FA0032A8_USAGE').value, 5264.8);
     assert.equal(store.get('NC_11F01BBC_USAGE').value, 28020.84);
+    assert.equal(store.get('NC_11F01BBC_INTERVAL').value, 117);
+    assert.equal(store.get('NC_BC0077DF_TEMP').value, -22.2);
 
     for (const tag of tags) {
       if (tag.driverAddress?.field === '_lastCollectEpoch') continue;

@@ -3,7 +3,6 @@
 const mqtt = require('mqtt');
 const { QUALITY } = require('../tags/constants');
 const { parsePayload, formatPayloadForWrite, tagValueFromParsed } = require('./payloadTemplate');
-const mqttSimHub = require('./mqttSimHub');
 
 class MqttDriver {
   constructor(cfg) {
@@ -24,15 +23,8 @@ class MqttDriver {
   }
 
   async connect(cfg) {
-    this.cfg = { ...this.cfg, ...(cfg || {}) };
+    this.cfg = cfg || this.cfg;
     this._subscribed.clear();
-    this._simHub = false;
-    if (mqttSimHub.coversBroker(this._brokerUrl())) {
-      this.connected = true;
-      this._simHub = true;
-      this._lastError = '';
-      return;
-    }
     return new Promise((resolve, reject) => {
       this.client = mqtt.connect(this._brokerUrl(), {
         clientId: this.cfg.clientId || 'mooreview',
@@ -102,7 +94,7 @@ class MqttDriver {
     for (const t of tags) {
       const a = t.driverAddress || {};
       if (!a.topic) continue;
-      const raw = mqttSimHub.peek(a.topic, this._brokerUrl()) ?? this._cache.get(a.topic);
+      const raw = this._cache.get(a.topic);
       if (raw === undefined) {
         store.setValue(t.id, store.get(t.id)?.value ?? t.default, QUALITY.STALE);
         continue;

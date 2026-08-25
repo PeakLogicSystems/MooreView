@@ -11,15 +11,15 @@ const {
 } = require('../src/hmi/hmiViewMode');
 
 describe('hmiViewMode', () => {
-  it('uses 2s HTTP fallback poll for normal operator view', () => {
+  it('uses 60s poll for normal operator view', () => {
     assert.equal(hmiPollMsFromSettings({ userLevel: 'operator', hmi: {} }), HMI_POLL_MS_NORMAL);
-    assert.equal(HMI_POLL_MS_NORMAL, 2_000);
+    assert.equal(HMI_POLL_MS_NORMAL, 60_000);
   });
 
-  it('uses 500ms poll when technician test mode is on', () => {
+  it('uses 10s poll when technician test mode is on', () => {
     const settings = { userLevel: 'technician', hmi: { testMode: true } };
     assert.equal(hmiPollMsFromSettings(settings), HMI_POLL_MS_TEST);
-    assert.equal(HMI_POLL_MS_TEST, 500);
+    assert.equal(HMI_POLL_MS_TEST, 10_000);
   });
 
   it('allows demo projects to enable test mode toggle', () => {

@@ -1,6 +1,6 @@
 'use strict';
 
-/** Shared DOM / string helpers for MooreVIEW client modules */
+/** Shared DOM / string helpers for MooreView client modules */
 window.MooreviewCore = {
   $(id) {
     return document.getElementById(id);

@@ -62,33 +62,6 @@ describe('applianceAuthStore', () => {
     assert.equal(feats.program, true);
     assert.equal(userHasFeature(admin, 'setup'), true);
   });
-
-  it('creates technician with field-tech defaults', () => {
-    const user = applianceAuthStore.createUser({
-      email: `tech-${Date.now()}@test.local`,
-      password: 'demo',
-      role: 'technician',
-      name: 'Field Tech',
-    });
-    assert.equal(user.role, 'technician');
-    assert.equal(user.features.drivers, true);
-    assert.equal(user.features.users, false);
-    assert.equal(userHasFeature(user, 'setup'), true);
-  });
-
-  it('homeowner role is read-only on HMI controls', () => {
-    const user = applianceAuthStore.createUser({
-      email: 'pool-home@test.local',
-      password: 'demo',
-      role: 'homeowner',
-      name: 'Pool Homeowner',
-    });
-    assert.equal(user.role, 'homeowner');
-    assert.equal(user.features.hmi, true);
-    assert.equal(user.features.hmiControl, false);
-    assert.equal(userHasFeature(user, 'alarms'), true);
-    assert.equal(userHasFeature(user, 'program'), false);
-  });
 });
 
 describe('auth audit logging', () => {

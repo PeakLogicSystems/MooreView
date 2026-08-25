@@ -24,7 +24,6 @@ const DEFAULT_REGISTRY = {
   },
   platformDefaults: {
     'arduino-opta-mqtt-st': 'lift-submersible-v3',
-    'arduino-uno-q-mcsa': 'lift-submersible-v3',
     'mcxn947-hvac': 'hvac-comp-v1',
     'mcxn947-lift-mcsa': 'lift-submersible-v3',
     'lilygo-t-eth-elite-parc-st': 'lift-submersible-v3',
@@ -86,45 +85,14 @@ function resolveInferenceTargets(body) {
   const modelId = resolveModelId(platform, body?.hostModelId);
   const targets = [];
 
-  if (platform === 'arduino-uno-q-mcsa' || /^unoq_/i.test(deviceId)) {
-    if (mcsa.length >= 6) {
-      const groups = [
-        { assetId: 'pump-1', channels: mcsa.filter((c) => [0, 1, 2].includes(Number(c.ch))) },
-        { assetId: 'pump-2', channels: mcsa.filter((c) => [3, 4, 5].includes(Number(c.ch))) },
-      ];
-      for (const g of groups) {
-        if (!g.channels.length) continue;
-        targets.push({
-          assetId: g.assetId,
-          modelId: modelId || 'lift-submersible-v3',
-          profile: 'lift-pump',
-          channels: g.channels,
-        });
-      }
-      return targets;
-    }
-    for (const channel of mcsa) {
-      const n = Number(channel?.ch);
-      if (!Number.isFinite(n)) continue;
-      targets.push({
-        assetId: `pump-${n + 1}`,
-        modelId: modelId || 'lift-submersible-v3',
-        profile: 'lift-pump',
-        channels: [channel],
-      });
-    }
-    return targets;
-  }
-
-  if (platform === 'mcxn947-hvac' || /^hvac_mcsa_/i.test(deviceId)
-      || (String(body?.app || '') === 'mcsa-monitor' && body?.env && (body.env.COMP_FLT != null || body.env.FAN_FLT != null))) {
+  if (platform === 'mcxn947-hvac' || /^hvac_mcsa_/i.test(deviceId)) {
     const floorMatch = /fl(\d+)/i.exec(deviceId);
     const floor = floorMatch ? floorMatch[1] : '1';
     const ch0 = mcsa.find((c) => Number(c.ch) === 0) || mcsa[0];
     const ch1 = mcsa.find((c) => Number(c.ch) === 1) || mcsa[1];
     if (ch0) {
       targets.push({
-        assetId: platform === 'arduino-opta-mqtt-st' || body?.app === 'mcsa-monitor' ? 'compressor' : `comp-fl${floor}`,
+        assetId: `comp-fl${floor}`,
         modelId: modelId || 'hvac-comp-v1',
         profile: 'hvac-compressor',
         channels: [ch0],
@@ -132,7 +100,7 @@ function resolveInferenceTargets(body) {
     }
     if (ch1) {
       targets.push({
-        assetId: platform === 'arduino-opta-mqtt-st' || body?.app === 'mcsa-monitor' ? 'fan' : `fan-fl${floor}`,
+        assetId: `fan-fl${floor}`,
         modelId: 'hvac-fan-v1',
         profile: 'hvac-fan',
         channels: [ch1],

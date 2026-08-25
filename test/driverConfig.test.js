@@ -37,4 +37,30 @@ describe('driverConfig', () => {
     assert.equal(driverUsesSerialPort('modbus_rtu'), true);
     assert.equal(driverUsesSerialPort('nextcentury'), false);
   });
+
+  it('mergeDriverSecrets keeps nextcentury password when client sends blank', () => {
+    const { mergeDriverSecrets } = require('../src/drivers/driverConfig');
+    const merged = mergeDriverSecrets(
+      [{ id: 'nc1', type: 'nextcentury', email: 'a@b.com', password: '' }],
+      [{ id: 'nc1', type: 'nextcentury', email: 'old@b.com', password: 'secret' }],
+    );
+    assert.equal(merged[0].email, 'a@b.com');
+    assert.equal(merged[0].password, 'secret');
+  });
+
+  it('mergeDriverSecrets accepts new nextcentury password from client', () => {
+    const { mergeDriverSecrets } = require('../src/drivers/driverConfig');
+    const merged = mergeDriverSecrets(
+      [{ id: 'nc1', type: 'nextcentury', email: 'a@b.com', password: 'new-secret' }],
+      [{ id: 'nc1', type: 'nextcentury', email: 'old@b.com', password: 'old-secret' }],
+    );
+    assert.equal(merged[0].password, 'new-secret');
+  });
+
+  it('publicDriverList redacts nextcentury password and sets hasPassword', () => {
+    const { publicDriverList } = require('../src/drivers/driverConfig');
+    const out = publicDriverList([{ id: 'nc1', type: 'nextcentury', email: 'a@b.com', password: 'secret' }]);
+    assert.equal(out[0].hasPassword, true);
+    assert.equal(out[0].password, undefined);
+  });
 });

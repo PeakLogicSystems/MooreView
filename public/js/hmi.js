@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * MooreVIEW HMI — load SVG/GIF/PNG screens, layout, and tag bindings.
+ * MooreView HMI — load SVG/GIF/PNG screens, layout, and tag bindings.
  */
 (function (global) {
   // User zoom for the live display viewport (mobile readability / tap targets).
@@ -9,10 +9,6 @@
   // layout (crisp text, accurate hit areas) while the viewport scrolls/pans.
   let liveDisplayZoom = 1;
   let liveDisplayCtx = null;
-
-  function hmiControlAllowed() {
-    return global.MOOREVIEW_AUTH?.hmiControl !== false;
-  }
 
   function isLiveDisplayViewport(container) {
     return !!(container && container.classList
@@ -49,10 +45,6 @@
     return /alternator-faceplates|\/alternator\.svg|@composite\/alternator/i.test(String(assetPath || ''));
   }
 
-  function isLiftStationFaceplateAssetPath(assetPath) {
-    return /lift-station-faceplates|\/duplexls\.svg|\/triplexls\.svg|@composite\/(?:duplex|triplex)ls/i.test(String(assetPath || ''));
-  }
-
   function isAlarmListAssetPath(assetPath) {
     return /\/composites\/alarm_list(?:\.svg|\.json)?|@composite\/alarm_list/i.test(String(assetPath || ''));
   }
@@ -62,8 +54,7 @@
       || isMotorFaceplateAssetPath(assetPath)
       || isTpoFaceplateAssetPath(assetPath)
       || isPoolFaceplateAssetPath(assetPath)
-      || isAlternatorFaceplateAssetPath(assetPath)
-      || isLiftStationFaceplateAssetPath(assetPath);
+      || isAlternatorFaceplateAssetPath(assetPath);
   }
 
   function effectiveLiveValue(entry) {
@@ -147,16 +138,7 @@
         const text = String(e.label ?? '').trim();
         return text || e.tagId || tagId || '';
       }
-      if (field === 'activeUnit') {
-        const fromVal = Math.trunc(Number(effectiveLiveValue(e)));
-        if (Number.isFinite(fromVal) && fromVal > 0) return fromVal;
-        const fromFb = Math.trunc(Number(fb.activeUnit));
-        if (Number.isFinite(fromFb) && fromFb > 0) return fromFb;
-        if (Number.isInteger(fb.leadIndex) && fb.leadIndex >= 0) return fb.leadIndex + 1;
-        return 0;
-      }
-      if (field === 'leadIndex') return Number.isInteger(fb.leadIndex) ? fb.leadIndex : -1;
-      if (field === 'lagIndex') return Number.isInteger(fb.lagIndex) ? fb.lagIndex : -1;
+      if (field === 'activeUnit') return fb.activeUnit ?? 0;
       if (field === 'fault') return !!fb.fault;
       if (field === 'offActive') return !!fb.offActive;
       if (field === 'highActive') return !!fb.highActive;
@@ -169,17 +151,7 @@
     return e;
   }
 
-  /** Hand HOA: START/STOP faceplate fills are momentary — never latch from START/STOP telemetry. */
-  function resolveHandModePumpDisplayValue(binding, liveMap) {
-    if (!binding?.tagId || binding?.interaction !== 'pulse') return undefined;
-    const pulseTags = new Set(['MOTOR1_START', 'MOTOR1_STOP', 'MOTOR2_START', 'MOTOR2_STOP']);
-    if (!pulseTags.has(binding.tagId)) return undefined;
-    return false;
-  }
-
   function bindingTagValue(binding, liveMap) {
-    const handDisp = resolveHandModePumpDisplayValue(binding, liveMap);
-    if (handDisp !== undefined) return handDisp;
     const field = binding?.tagField || (liveMap?.[binding?.tagId]?.type === 'PID'
       ? inferPidTagField(binding?.elementId)
       : '');
@@ -999,14 +971,15 @@
 
   const STATE3_TEXT_LABELS = ['Auto', 'Off', 'Hand'];
 
+  const STATION_STA_LABELS = ['ONLINE', 'FAULT', 'WARNING', 'OFFLINE'];
+  const STATION_STA_COLORS = ['#22c55e', '#ef4444', '#fbed20', '#64748b'];
+
   const STATE5_TEXT_LABELS = ['STOP', 'RUN', 'FAULT', 'WARN', 'OFFLINE'];
   const STATE5_TEXT_COLORS = ['#334155', '#334155', '#ef4444', '#ca8a04', '#94a3b8'];
 
   const TPO_STA_LABELS = ['IDLE', 'OFFLINE', 'APPLY', 'WAIT', 'OUTSIDE'];
   const TPO_STA_COLORS = ['#64748b', '#64748b', '#16a34a', '#f59e0b', '#94a3b8'];
   const POOL_BW_STA_LABELS = ['IDLE', 'BACKWASH', 'RINSE', 'RETURN', 'DONE'];
-  const STATION_STA_LABELS = ['ONLINE', 'FAULT', 'WARNING', 'OFFLINE'];
-  const STATION_STA_COLORS = ['#22c55e', '#ef4444', '#fbed20', '#64748b'];
   const POOL_LIGHT_OP_LABELS = ['OFF', 'ALL ON', 'ZONE SEL', 'COLOR SET', 'SCHEDULE'];
   const POOL_LIGHT_COLOR_LABELS = ['1', '2', '3', '4', '5', '6', '7', '8'];
   const POOL_BW_STA_COLORS = ['#64748b', '#2563eb', '#06b6d4', '#f59e0b', '#22c55e'];
@@ -1023,17 +996,6 @@
   function altStageTextLabel(v) {
     const key = String(v ?? '').trim().toLowerCase();
     return ALT_STAGE_LABELS[key] || ALT_STAGE_LABELS.normal;
-  }
-
-  function applyLiftStationLampFill(lampEl, color, on) {
-    if (!lampEl || !color) return;
-    setPaintOnTarget(lampEl, 'fill', color);
-    setPaintOnTarget(lampEl, 'stroke', color);
-    if (!on) {
-      try { lampEl.style.opacity = '0.45'; } catch { /* ignore */ }
-    } else {
-      try { lampEl.style.opacity = '1'; } catch { /* ignore */ }
-    }
   }
 
   function hhmmFromMinutes(v) {
@@ -1080,11 +1042,6 @@
     return POOL_BW_STA_LABELS[idx] || String(idx);
   }
 
-  function stationStaTextLabel(v, binding) {
-    const idx = drumIndex(v, binding);
-    return STATION_STA_LABELS[idx] || String(idx);
-  }
-
   function poolLightOpTextLabel(v, binding) {
     const idx = drumIndex(v, binding);
     return POOL_LIGHT_OP_LABELS[idx] || String(idx);
@@ -1100,6 +1057,19 @@
     return STATE3_TEXT_LABELS[idx] || String(idx);
   }
 
+  function stationStaIndex(v, binding) {
+    const n = scaledNumeric(v, binding) ?? Number(v);
+    const min = Number.isFinite(Number(binding?.min)) ? Number(binding.min) : 0;
+    const max = Number.isFinite(Number(binding?.max)) ? Number(binding.max) : 3;
+    if (!Number.isFinite(n)) return min;
+    return Math.max(min, Math.min(max, Math.trunc(n)));
+  }
+
+  function stationStaTextLabel(v, binding) {
+    const idx = stationStaIndex(v, binding);
+    return STATION_STA_LABELS[idx] || String(idx);
+  }
+
   function state5TextLabel(v, binding) {
     const idx = state5Index(v, binding);
     return STATE5_TEXT_LABELS[idx] || String(idx);
@@ -1109,10 +1079,10 @@
     const n = scaledNumeric(v, binding) ?? Number(v);
     if (!Number.isFinite(n)) return String(v ?? '');
     if (binding.format === 'state3') return state3TextLabel(v, binding);
+    if (binding.format === 'stationSta') return stationStaTextLabel(v, binding);
     if (binding.format === 'state5') return state5TextLabel(v, binding);
     if (binding.format === 'tpoSta') return tpoStaTextLabel(v, binding);
     if (binding.format === 'poolBwSta') return poolBwStaTextLabel(v, binding);
-    if (binding.format === 'stationSta') return stationStaTextLabel(v, binding);
     if (binding.format === 'poolLightOp') return poolLightOpTextLabel(v, binding);
     if (binding.format === 'poolLightColor') return poolLightColorTextLabel(v, binding);
     if (binding.format === 'altStage') return altStageTextLabel(v);
@@ -1175,7 +1145,6 @@
   }
 
   function normalizeFlashStates(raw) {
-    if (Array.isArray(raw) && raw.length === 0) return [];
     const src = Array.isArray(raw) ? raw : FILL5_DEFAULT_FLASH;
     const out = [...new Set(src.map((n) => Math.trunc(Number(n))).filter((n) => n >= 0 && n <= 4))];
     if (!out.length) return [...FILL5_DEFAULT_FLASH];
@@ -1859,17 +1828,9 @@
 
   function applyPilotFlash(el, binding, stateIndex) {
     const layer = pilotFlashLayer(el);
-    if (layer?.classList) layer.classList.remove('hmi-lamp-flash');
-    if (!el?.classList) return;
+    if (!layer?.classList) return;
     const flashStates = normalizeFlashStates(binding?.flashStates);
-    const shouldFlash = flashStates.length > 0 && flashStates.includes(stateIndex);
-    el.classList.toggle('hmi-lamp-flash-target', shouldFlash);
-    if (el.tagName?.toLowerCase() !== 'g') {
-      const scope = el.closest?.('g[id*="status_lamp"], g[id*="__status_lamp"], g[id*="lamp"]');
-      if (scope?.classList && scope !== el) {
-        scope.classList.toggle('hmi-lamp-flash-target', shouldFlash);
-      }
-    }
+    layer.classList.toggle('hmi-lamp-flash', flashStates.includes(stateIndex));
   }
 
   function isCaptionTextBindingTarget(el, binding) {
@@ -1927,7 +1888,9 @@
   function applyBinding(el, binding, liveMap) {
     if (!el || !binding?.tagId) return;
     if (isCaptionTextBindingTarget(el, binding)) return;
-    const v = bindingTagValue(binding, liveMap);
+    let v = bindingTagValue(binding, liveMap);
+    const pulseDisplay = resolveHandModePumpDisplayValue(binding, liveMap);
+    if (pulseDisplay != null) v = pulseDisplay;
     const on = isTruthy(v);
     switch (binding.property) {
       case 'visibility':
@@ -1953,10 +1916,6 @@
         const layerEl = el.closest('.hmi-tile-layer');
         const cellEl = el.closest('.hmi-tile-cell');
         const elSuffix = bindingElementSuffix(el.id || binding?.elementId || '');
-        if (/^lamp_/i.test(elSuffix) && isLiftStationFaceplateAssetPath(svg?.dataset?.hmiAssetPath)) {
-          applyLiftStationLampFill(el, color, on);
-          break;
-        }
         if (isFaceplateFillControlSuffix(elSuffix)) {
           if (/status_lamp/i.test(elSuffix)) {
             paintFaceplateStatusLamp(el, color, binding, on ? 1 : 0);
@@ -1970,6 +1929,11 @@
         if (/btn_offline/i.test(elSuffix)) {
           applyFillOrStroke(el, binding, on);
           paintFaceplateOfflineButton(el, on);
+          break;
+        }
+        if (/lamp/i.test(elSuffix) && color) {
+          setPaintOnTarget(el, 'fill', color);
+          setPaintOnTarget(el, 'stroke', color);
           break;
         }
         if (svg && isPilotLightSvg(svg) && color) {
@@ -2090,6 +2054,19 @@
           }
           break;
         }
+        if (binding.format === 'stationSta') {
+          const idx = stationStaIndex(v, binding);
+          setBoundText(el, STATION_STA_LABELS[idx] || String(idx));
+          const palette = Array.isArray(binding.colors) && binding.colors.length
+            ? binding.colors
+            : STATION_STA_COLORS;
+          const color = palette[idx] || STATION_STA_COLORS[idx];
+          if (color) {
+            el.setAttribute('fill', color);
+            try { el.style.fill = color; } catch { /* ignore */ }
+          }
+          break;
+        }
         if (binding.format === 'state5') {
           const idx = state5Index(v, binding);
           setBoundText(el, STATE5_TEXT_LABELS[idx] || String(idx));
@@ -2119,19 +2096,6 @@
           setBoundText(el, POOL_BW_STA_LABELS[idx] || String(idx));
           const palette = normalizeFill5Colors(binding.colors);
           const color = palette[idx] || POOL_BW_STA_COLORS[idx];
-          if (color) {
-            el.setAttribute('fill', color);
-            try { el.style.fill = color; } catch { /* ignore */ }
-          } else {
-            lockFaceplateReadoutTextStyle(el, '#334155');
-          }
-          break;
-        }
-        if (binding.format === 'stationSta') {
-          const idx = drumIndex(v, binding);
-          setBoundText(el, STATION_STA_LABELS[idx] || String(idx));
-          const palette = normalizeFill5Colors(binding.colors);
-          const color = palette[idx] || STATION_STA_COLORS[idx];
           if (color) {
             el.setAttribute('fill', color);
             try { el.style.fill = color; } catch { /* ignore */ }
@@ -2213,22 +2177,11 @@
     return stage;
   }
 
-  function isAreaPopupMainViewport(container) {
-    return !!(container?.classList?.contains('hmi-room-popup-main')
-      && container?.closest?.('.hmi-room-popup.hmi-area-popup-mode'));
-  }
-
-  function areaPopupScreenScale(screen, container) {
-    if (!isAreaPopupMainViewport(container)) return 1;
-    return Math.max(0.1, Math.min(4, (Number(screen?.scale) || 100) / 100));
-  }
-
   function isTileGridViewport(container) {
     return !!container?.classList?.contains('hmi-display-viewport')
       || !!container?.classList?.contains('hmi-workspace-viewport')
       || !!container?.classList?.contains('hmi-setup-preview')
-      || !!container?.classList?.contains('hmi-tile-composer')
-      || isAreaPopupMainViewport(container);
+      || !!container?.classList?.contains('hmi-tile-composer');
   }
 
   function getLiveDisplayZoom() {
@@ -2260,24 +2213,6 @@
     if (!Number.isFinite(limitH) || limitH < 100) limitH = logicalH;
     limitW = Math.max(100, Math.min(4096, Math.round(limitW)));
     limitH = Math.max(100, Math.min(4096, Math.round(limitH)));
-    const popupScale = areaPopupScreenScale(screen, container);
-    if (isAreaPopupMainViewport(container)) {
-      const layoutW = popupScale !== 1
-        ? Math.max(100, Math.round(limitW / popupScale))
-        : limitW;
-      const layoutH = popupScale !== 1
-        ? Math.max(100, Math.round(limitH / popupScale))
-        : limitH;
-      return {
-        limitW,
-        limitH,
-        maxW: layoutW,
-        maxH: layoutH,
-        logicalW,
-        logicalH,
-        popupScale,
-      };
-    }
     const pad = isTileGridViewport(container) ? 24 : 16;
     // Live viewport honours the user zoom: inflating the available space makes
     // the fitted screen physically larger. maxW/maxH stay clamped to the logical
@@ -2292,7 +2227,6 @@
       maxH: Math.min(limitH, availH),
       logicalW,
       logicalH,
-      popupScale: 1,
     };
   }
 
@@ -2413,7 +2347,6 @@
       container.classList.contains('hmi-display-viewport')
       || container.classList.contains('hmi-workspace-viewport')
       || container.classList.contains('hmi-tile-composer')
-      || isAreaPopupMainViewport(container)
     );
 
     container.classList.remove('hmi-fit-native', 'hmi-fit-contain', 'hmi-fit-cover', 'hmi-fit-stretch');
@@ -2422,7 +2355,6 @@
 
     if (isSquareWorkspace) {
       const limits = getDisplayLimits(screen, container);
-      const popupScale = limits.popupScale || 1;
       stage.style.display = 'block';
       stage.style.alignItems = fit === 'stretch' ? 'stretch' : '';
       stage.style.justifyContent = '';
@@ -2430,15 +2362,9 @@
       stage.style.height = 'auto';
       stage.style.maxWidth = `${limits.maxW}px`;
       stage.style.aspectRatio = fit === 'stretch' ? '' : `${limits.logicalW} / ${limits.logicalH}`;
-      if (popupScale !== 1 && isAreaPopupMainViewport(container)) {
-        stage.style.transform = `scale(${popupScale})`;
-        stage.style.transformOrigin = 'top center';
-        stage.style.margin = '0 auto';
-      } else {
-        stage.style.transform = '';
-        stage.style.transformOrigin = '';
-        stage.style.margin = '0 auto';
-      }
+      stage.style.transform = '';
+      stage.style.transformOrigin = '';
+      stage.style.margin = '0 auto';
       stage.style.overflow = 'visible';
       stage.style.minHeight = '0';
       if (rootEl?.classList?.contains('hmi-tile-grid')) {
@@ -2608,11 +2534,6 @@
     return !!level && level !== 'normal';
   }
 
-  function formatHmiAlarmAckUser(user) {
-    if (!user || typeof user !== 'object') return null;
-    return user.name || user.email || user.id || null;
-  }
-
   function collectHmiActiveAlarms(tags, liveList) {
     const liveMap = liveMapFromList(liveList);
     const rows = [];
@@ -2626,7 +2547,6 @@
         live: le,
         level,
         acked: !!(le?.alarmAcked),
-        ackedBy: le?.alarmAckedBy || null,
         since: le?.alarmSince || null,
       });
     }
@@ -2681,22 +2601,18 @@
         : 'No unacknowledged alarms';
       return `<p class="hmi-alarm-list-empty muted">${emptyMsg}</p>`;
     }
-    const trs = filtered.map(({ tag: t, live, level, acked, ackedBy, since }) => {
+    const trs = filtered.map(({ tag: t, live, level, acked, since }) => {
       const label = String(t.label || '').trim() || t.id;
       const rowCls = acked ? 'alarm-row-acked' : `alarm-row-active alarm-row-${level}`;
-      const sinceStr = since ? new Date(since).toLocaleString() : '—';
+      const sinceStr = since
+        ? (window.MooreviewTime?.formatFriendly?.(since)
+          || new Date(since).toLocaleString(undefined, window.MooreviewTime?.localeOpts?.() || {}))
+        : '—';
       const levelLabel = HMI_ALARM_LABELS[level] || level;
-      const ackWho = formatHmiAlarmAckUser(ackedBy);
       const ackCell = editable
-        ? (acked
-          ? (ackWho
-            ? `<span class="muted" title="Acknowledged by ${escHmiHtml(ackWho)}">Acked · ${escHmiHtml(ackWho)}</span>`
-            : '<span class="muted">Acked</span>')
-          : '<span class="muted">—</span>')
+        ? (acked ? '<span class="muted">Acked</span>' : '<span class="muted">—</span>')
         : (acked
-          ? (ackWho
-            ? `<span class="muted" title="Acknowledged by ${escHmiHtml(ackWho)}">Acked · ${escHmiHtml(ackWho)}</span>`
-            : '<span class="muted">Acked</span>')
+          ? '<span class="muted">Acked</span>'
           : `<button type="button" class="btn btn-sm btn-alarm-ack" data-hmi-alarm-ack="${escHmiHtml(t.id)}">Ack</button>`);
       return `<tr class="${rowCls}">
         <td class="alarm-tag"><strong>${escHmiHtml(t.id)}</strong></td>
@@ -2752,21 +2668,13 @@
     if (!Number.isFinite(cellHeight) || cellHeight < 8) cellHeight = Math.round(height / rows);
     cellWidth = Math.max(8, Math.min(512, Math.round(cellWidth)));
     cellHeight = Math.max(8, Math.min(512, Math.round(cellHeight)));
-    const gridW = cols * cellWidth;
-    const gridH = rows * cellHeight;
-    const explicitW = Number(screen?.width);
-    const explicitH = Number(screen?.height);
     return {
       cols,
       rows,
       cellWidth,
       cellHeight,
-      width: Math.max(200, Math.min(4096, Math.round(
-        Number.isFinite(explicitW) && explicitW >= 200 ? explicitW : gridW
-      ))),
-      height: Math.max(150, Math.min(4096, Math.round(
-        Number.isFinite(explicitH) && explicitH >= 150 ? explicitH : gridH
-      ))),
+      width: cols * cellWidth,
+      height: rows * cellHeight,
     };
   }
 
@@ -3175,42 +3083,27 @@
     return grid?._hmiHoaTagByCell?.get(key) || '';
   }
 
-  function isComposerTileGrid(grid) {
-    return !!grid?.classList?.contains('hmi-tile-grid-editable');
-  }
-
   function markHoaSwitchCellsInteractive(grid) {
     if (!grid) return;
-    const composer = isComposerTileGrid(grid);
     grid.querySelectorAll('.hmi-tile-cell').forEach((cell) => {
       const isHoa = cellHasHoaSwitchLayers(cell);
       if (!isHoa) {
         cell.classList.remove('hmi-hoa-switch', 'hmi-hoa-switch-interactive');
         return;
       }
-      cell.classList.add('hmi-hoa-switch');
-      if (composer) {
-        cell.classList.remove('hmi-hoa-switch-interactive');
-        return;
-      }
-      cell.classList.add('hmi-hoa-switch-interactive');
+      cell.classList.add('hmi-hoa-switch', 'hmi-hoa-switch-interactive');
       if (!cell.title) cell.title = 'HOA switch — click to cycle Auto → Off → Hand';
     });
   }
 
   function wireHoaSwitches(grid, onCycle) {
-    if (!grid || typeof onCycle !== 'function' || !hmiControlAllowed()) return;
+    if (!grid || typeof onCycle !== 'function') return;
     if (grid._hmiHoaClick) {
       grid.removeEventListener('click', grid._hmiHoaClick, true);
       grid.removeEventListener('pointerup', grid._hmiHoaClick, true);
     }
-    markHoaSwitchCellsInteractive(grid);
-    if (isComposerTileGrid(grid)) {
-      grid._hmiHoaClick = null;
-      return;
-    }
     grid._hmiHoaClick = (e) => {
-      if (e.target.closest('.hmi-nav-cell-btn, .hmi-page-hotspot-btn, .hmi-hoa-mode-btn')) return;
+      if (e.target.closest('.hmi-nav-cell-btn, .hmi-page-hotspot-btn')) return;
       if (e.type === 'pointerup' && e.button !== 0 && e.pointerType === 'mouse') return;
       const cell = findHoaSwitchCell(e.target, grid);
       if (!cell || !grid.contains(cell)) return;
@@ -3227,11 +3120,13 @@
     };
     grid.addEventListener('click', grid._hmiHoaClick, true);
     grid.addEventListener('pointerup', grid._hmiHoaClick, true);
+    markHoaSwitchCellsInteractive(grid);
   }
 
   function isBoolToggleBinding(binding, tagType) {
     if (!binding?.tagId || !binding.elementId) return false;
-    if (String(tagType || '').toUpperCase() !== 'BOOL') return false;
+    const ty = String(tagType || '').toUpperCase();
+    if (ty && ty !== 'BOOL') return false;
     if (binding.property !== 'fill' && binding.property !== 'stroke') return false;
     if (binding.interaction === 'toggle') return true;
     if (binding.interaction === 'pulse' || binding.interaction === 'command') return false;
@@ -3240,7 +3135,8 @@
 
   function isBoolCommandBinding(binding, tagType) {
     if (!binding?.tagId || !binding.elementId) return false;
-    if (String(tagType || '').toUpperCase() !== 'BOOL') return false;
+    const ty = String(tagType || '').toUpperCase();
+    if (ty && ty !== 'BOOL') return false;
     if (binding.property !== 'fill' && binding.property !== 'stroke') return false;
     if (isBoolToggleBinding(binding, tagType)) return false;
     if (binding.interaction === 'pulse' || binding.interaction === 'command') return true;
@@ -3249,164 +3145,81 @@
     return /^btn_/i.test(suf);
   }
 
-  function hoaModeValueFromBinding(binding) {
-    if (Number.isFinite(Number(binding?.hoaValue))) {
+  function resolveBoolCommandFromEvent(e, grid) {
+    if (!e?.target || !grid) return null;
+    const fromBtn = e.target.classList?.contains('hmi-bool-cmd-btn')
+      ? e.target
+      : e.target.closest?.('.hmi-bool-cmd-btn');
+    if (fromBtn && grid.contains(fromBtn) && fromBtn.dataset.boolCmdTagId) {
+      return { tagId: fromBtn.dataset.boolCmdTagId, el: fromBtn };
+    }
+    let node = e.target;
+    for (let i = 0; i < 3 && node; i += 1) {
+      const sib = node.previousElementSibling;
+      if (sib?.classList?.contains('hmi-bool-cmd-btn') && sib.dataset.boolCmdTagId && grid.contains(sib)) {
+        return { tagId: sib.dataset.boolCmdTagId, el: sib };
+      }
+      node = node.parentElement;
+    }
+    return null;
+  }
+
+  function motorCommandParts(tagId) {
+    const m = /^MOTOR(\d+)_(START|STOP)$/i.exec(String(tagId || ''));
+    if (!m) return null;
+    return { n: m[1], action: m[2].toUpperCase() };
+  }
+
+  function resolveHandModePumpWrite(tagId, pressed, hoaState) {
+    const parts = motorCommandParts(tagId);
+    if (!parts) return null;
+    if (Math.trunc(Number(hoaState)) !== 2) return null;
+    if (!pressed) return { skip: true };
+    return {
+      tagId: `MOTOR${parts.n}_HAND`,
+      value: parts.action === 'START',
+      hoaTag: `MOTOR${parts.n}_HOA`,
+    };
+  }
+
+  /** One Opta write_memory: HOA=Hand + START/STOP pulse + HAND latch. */
+  function resolvePumpCommandWrites(tagId, pressed, hoaState) {
+    const parts = motorCommandParts(tagId);
+    if (!parts) return [{ tagId, value: !!pressed }];
+    if (!pressed) return [{ tagId, value: false }];
+    if (Math.trunc(Number(hoaState)) !== 2) {
+      return [{ tagId, value: true }];
+    }
+    return [
+      { tagId: `MOTOR${parts.n}_HOA`, value: 2 },
+      { tagId, value: true },
+      { tagId: `MOTOR${parts.n}_HAND`, value: parts.action === 'START' },
+    ];
+  }
+
+  function resolveHandModePumpDisplayValue(binding) {
+    if (!binding || String(binding.interaction || '') !== 'pulse') return null;
+    if (!motorCommandParts(binding.tagId)) return null;
+    return false;
+  }
+
+  function hoaValueForBinding(binding) {
+    if (binding?.hoaValue != null && Number.isFinite(Number(binding.hoaValue))) {
       return Math.max(0, Math.min(2, Math.trunc(Number(binding.hoaValue))));
     }
     const suf = bindingElementSuffix(binding?.elementId);
-    const m = String(suf || '').match(/^btn_p[12]_(auto|off|hand)$/i);
-    if (!m) return null;
-    const mode = m[1].toLowerCase();
-    if (mode === 'auto') return 0;
-    if (mode === 'off') return 1;
-    if (mode === 'hand') return 2;
-    return null;
+    if (/_hand$/i.test(suf)) return 2;
+    if (/_off$/i.test(suf)) return 1;
+    return 0;
   }
 
   function isHoaModeButtonBinding(binding, tagType) {
     if (!binding?.tagId || !binding.elementId) return false;
-    if (binding.interaction === 'hoaMode') return true;
-    if (String(tagType || '').toUpperCase() !== 'INT') return false;
-    if (binding.property !== 'fill5') return false;
-    return hoaModeValueFromBinding(binding) != null;
-  }
-
-  function isHoaModeElementSuffix(suffix) {
-    return /^btn_p[12]_(auto|off|hand)$/i.test(String(suffix || ''));
-  }
-
-  function hoaBindingForElementSuffix(bindings, suffix, tagTypeFor) {
-    const want = String(suffix || '').toLowerCase();
-    for (const b of bindings || []) {
-      const tagType = typeof tagTypeFor === 'function' ? tagTypeFor(b.tagId) : '';
-      if (!isHoaModeButtonBinding(b, tagType)) continue;
-      if (String(bindingElementSuffix(b.elementId)).toLowerCase() === want) return b;
-    }
-    return null;
-  }
-
-  /** HOA faceplate rects have a text label on top — resolve clicks on either. */
-  function resolveHoaModeButtonFromEvent(e, grid, bindings, tagTypeFor) {
-    if (!grid || !e?.target) return null;
-    let el = e.target;
-    while (el && el !== grid) {
-      if (el.classList?.contains('hmi-hoa-mode-btn') && el.dataset?.hoaModeTagId) {
-        return {
-          el,
-          tagId: el.dataset.hoaModeTagId,
-          value: Number(el.dataset.hoaModeValue),
-        };
-      }
-      const suf = bindingElementSuffix(el.id);
-      if (isHoaModeElementSuffix(suf)) {
-        const b = hoaBindingForElementSuffix(bindings, suf, tagTypeFor);
-        if (b) {
-          return { el, tagId: b.tagId, value: hoaModeValueFromBinding(b) };
-        }
-      }
-      el = el.parentElement;
-    }
-    const label = e.target?.closest?.('text') || (
-      String(e.target?.tagName || '').toLowerCase() === 'text' ? e.target : null
-    );
-    if (label) {
-      let sib = label.previousElementSibling;
-      while (sib) {
-        const suf = bindingElementSuffix(sib.id);
-        if (isHoaModeElementSuffix(suf)) {
-          const b = hoaBindingForElementSuffix(bindings, suf, tagTypeFor);
-          if (b) return { el: sib, tagId: b.tagId, value: hoaModeValueFromBinding(b) };
-        }
-        sib = sib.previousElementSibling;
-      }
-    }
-    return null;
-  }
-
-  function isBoolCommandElementSuffix(suffix) {
-    return /^btn_p[12]_(start|stop)$/i.test(String(suffix || '')) ||
-      /^btn_/i.test(String(suffix || ''));
-  }
-
-  function boolCommandBindingForElementSuffix(bindings, suffix, tagTypeFor) {
-    const want = String(suffix || '').toLowerCase();
-    for (const b of bindings || []) {
-      const tagType = typeof tagTypeFor === 'function' ? tagTypeFor(b.tagId) : '';
-      if (!isBoolCommandBinding(b, tagType)) continue;
-      if (String(bindingElementSuffix(b.elementId)).toLowerCase() === want) return b;
-    }
-    return null;
-  }
-
-  function resolveBoolCommandFromEvent(e, grid, bindings, tagTypeFor) {
-    if (!grid || !e?.target) return null;
-    let el = e.target;
-    while (el && el !== grid) {
-      if (el.classList?.contains('hmi-bool-cmd-btn') && el.dataset?.boolCmdTagId) {
-        return { el, tagId: el.dataset.boolCmdTagId };
-      }
-      const suf = bindingElementSuffix(el.id);
-      if (isBoolCommandElementSuffix(suf)) {
-        const b = boolCommandBindingForElementSuffix(bindings, suf, tagTypeFor);
-        if (b) return { el, tagId: b.tagId };
-      }
-      el = el.parentElement;
-    }
-    const label = e.target?.closest?.('text') || (
-      String(e.target?.tagName || '').toLowerCase() === 'text' ? e.target : null
-    );
-    if (label) {
-      let sib = label.previousElementSibling;
-      while (sib) {
-        const suf = bindingElementSuffix(sib.id);
-        if (isBoolCommandElementSuffix(suf)) {
-          const b = boolCommandBindingForElementSuffix(bindings, suf, tagTypeFor);
-          if (b) return { el: sib, tagId: b.tagId };
-        }
-        sib = sib.previousElementSibling;
-      }
-    }
-    return null;
-  }
-
-  /** In Hand HOA, START/STOP latch MOTORx_HAND (runs pump) instead of momentary START/STOP pulses. */
-  function resolveHandModePumpWrite(pulseTagId, pressed, hoaValue) {
-    const map = {
-      MOTOR1_START: { handTag: 'MOTOR1_HAND', value: true, hoaTag: 'MOTOR1_HOA' },
-      MOTOR1_STOP: { handTag: 'MOTOR1_HAND', value: false, hoaTag: 'MOTOR1_HOA' },
-      MOTOR2_START: { handTag: 'MOTOR2_HAND', value: true, hoaTag: 'MOTOR2_HOA' },
-      MOTOR2_STOP: { handTag: 'MOTOR2_HAND', value: false, hoaTag: 'MOTOR2_HOA' },
-    };
-    const cmd = map[String(pulseTagId || '')];
-    if (!cmd) return null;
-    if (Math.trunc(Number(hoaValue) || 0) !== 2) return null;
-    if (!pressed) return { skip: true };
-    return { tagId: cmd.handTag, value: cmd.value, hoaTag: cmd.hoaTag };
-  }
-
-  function passThroughFaceplateButtonLabel(rectEl) {
-    const label = rectEl?.nextElementSibling;
-    if (label && String(label.tagName || '').toLowerCase() === 'text') {
-      label.style.pointerEvents = 'none';
-    }
-  }
-
-  function passThroughCompositeFaceplateLabels(svg) {
-    if (!svg?.querySelectorAll) return;
-    svg.querySelectorAll('text.btn-text, text[class*="btn-text"]').forEach((label) => {
-      label.style.pointerEvents = 'none';
-    });
-  }
-
-  function enableFaceplateButtonHitLayer(el) {
-    const layer = el?.closest?.('.hmi-tile-layer');
-    const svg = el?.ownerSVGElement || el?.closest?.('svg.hmi-tile-asset, svg');
-    if (layer) layer.style.pointerEvents = 'auto';
-    if (svg) {
-      svg.style.pointerEvents = 'auto';
-      passThroughCompositeFaceplateLabels(svg);
-    }
-    layer?.querySelector?.('.hmi-tile-asset-wrap')?.style.setProperty('pointer-events', 'auto');
+    const ty = String(tagType || '').toUpperCase();
+    if (ty && ty !== 'INT' && !ty.includes('INT')) return false;
+    if (String(binding.interaction || '') === 'hoaMode') return true;
+    if (binding.property !== 'fill5' && binding.property !== 'fill') return false;
+    return /^btn_p\d+_(auto|off|hand)$/i.test(bindingElementSuffix(binding.elementId));
   }
 
   function isState3ReadoutBinding(binding, tagType) {
@@ -3436,101 +3249,9 @@
 
   function clearPushButtonOverlayHits(svg) {
     if (!svg?.querySelectorAll) return;
-    for (const el of svg.querySelectorAll('[id$="__button_text"], #button_text, [id$="__button_bezel"], #button_bezel')) {
+    for (const el of svg.querySelectorAll('text, tspan, [id$="__button_text"], #button_text, [id$="__button_bezel"], #button_bezel, .btn-text')) {
       el.style.pointerEvents = 'none';
     }
-  }
-
-  /** Resolve a binding to DOM nodes within its tile cell only (avoids cross-faceplate bleed). */
-  function findBindingElementsForCell(grid, binding) {
-    if (!grid || !binding?.elementId) return [];
-    const parsed = parseCellElementId(binding.elementId);
-    if (!parsed || parsed.col == null || parsed.row == null) {
-      return findBindingElements(grid, binding.elementId);
-    }
-    const cell = grid.querySelector(
-      `.hmi-tile-cell[data-col="${parsed.col}"][data-row="${parsed.row}"]`
-    );
-    if (!cell) return [];
-    const zN = parsed.z != null ? parsed.z : 0;
-    ensureCellBindingIds(cell, parsed.col, parsed.row, zN);
-    const suffix = parsed.suffix || bindingElementSuffix(binding.elementId);
-    const wanted = `${layerPrefix(parsed.col, parsed.row, zN)}__${suffix}`;
-    const svg = cell.querySelector('.hmi-tile-layer svg.hmi-tile-asset, svg');
-    if (!svg) return [];
-    let hit = null;
-    try {
-      hit = svg.querySelector(`#${CSS.escape(wanted)}`);
-    } catch { /* ignore */ }
-    if (!hit) {
-      hit = [...svg.querySelectorAll('[id]')].find((n) => n.id === wanted) || null;
-    }
-    return hit ? [hit] : [];
-  }
-
-  function markHoaModeButtonsInteractive(grid, bindings, tagTypeFor) {
-    if (!grid) return;
-    grid.querySelectorAll('.hmi-hoa-mode-btn').forEach((el) => {
-      el.classList.remove('hmi-hoa-mode-btn');
-      el.style.pointerEvents = '';
-      el.style.cursor = '';
-      if (el.removeAttribute) el.removeAttribute('pointer-events');
-      delete el.dataset.hoaModeTagId;
-      delete el.dataset.hoaModeValue;
-    });
-    grid.querySelectorAll('.hmi-hoa-mode-cell').forEach((el) => el.classList.remove('hmi-hoa-mode-cell'));
-    if (isComposerTileGrid(grid)) return;
-    for (const b of bindings || []) {
-      const tagType = typeof tagTypeFor === 'function' ? tagTypeFor(b.tagId) : '';
-      if (!isHoaModeButtonBinding(b, tagType)) continue;
-      const modeValue = hoaModeValueFromBinding(b);
-      if (modeValue == null) continue;
-      for (const el of findBindingElementsForCell(grid, b)) {
-        el.classList.add('hmi-hoa-mode-btn');
-        el.style.pointerEvents = 'auto';
-        el.style.cursor = 'pointer';
-        if (el.setAttribute) el.setAttribute('pointer-events', 'all');
-        el.dataset.hoaModeTagId = b.tagId;
-        el.dataset.hoaModeValue = String(modeValue);
-        const svg = el.ownerSVGElement || el.closest('svg');
-        clearPushButtonOverlayHits(svg);
-        passThroughFaceplateButtonLabel(el);
-        enableFaceplateButtonHitLayer(el);
-        const cell = el.closest?.('.hmi-tile-cell');
-        if (cell) cell.classList.add('hmi-hoa-mode-cell');
-      }
-    }
-  }
-
-  function fireHoaModeButtonSelect(e, grid, bindings, tagTypeFor, onSelect) {
-    if (e.target.closest('.hmi-nav-cell-btn, .hmi-page-hotspot-btn, .hmi-bool-cmd-btn')) return;
-    if (e.type === 'pointerup' && e.button !== 0 && e.pointerType === 'mouse') return;
-    const hit = resolveHoaModeButtonFromEvent(e, grid, bindings, tagTypeFor);
-    if (!hit || !grid.contains(hit.el)) return;
-    const { tagId, value, el } = hit;
-    if (!tagId || !Number.isFinite(value)) return;
-    const now = Date.now();
-    if (now - (grid._hmiHoaModeLastFire || 0) < 350) return;
-    grid._hmiHoaModeLastFire = now;
-    e.preventDefault();
-    e.stopPropagation();
-    onSelect(tagId, value, el);
-  }
-
-  function wireHoaModeButtons(grid, bindings, tagTypeFor, onSelect) {
-    if (!grid || typeof onSelect !== 'function' || !hmiControlAllowed()) return;
-    markHoaModeButtonsInteractive(grid, bindings, tagTypeFor);
-    if (grid._hmiHoaModeClick) {
-      grid.removeEventListener('click', grid._hmiHoaModeClick, true);
-      grid.removeEventListener('pointerup', grid._hmiHoaModeClick, true);
-    }
-    if (isComposerTileGrid(grid)) {
-      grid._hmiHoaModeClick = null;
-      return;
-    }
-    grid._hmiHoaModeClick = (e) => fireHoaModeButtonSelect(e, grid, bindings, tagTypeFor, onSelect);
-    grid.addEventListener('click', grid._hmiHoaModeClick, true);
-    grid.addEventListener('pointerup', grid._hmiHoaModeClick, true);
   }
 
   function markBoolCommandElementsInteractive(grid, bindings, tagTypeFor) {
@@ -3541,20 +3262,17 @@
       delete el.dataset.boolCmdTagId;
     });
     grid.querySelectorAll('.hmi-bool-cmd-cell').forEach((el) => el.classList.remove('hmi-bool-cmd-cell'));
-    if (isComposerTileGrid(grid)) return;
     for (const b of bindings || []) {
       const tagType = typeof tagTypeFor === 'function' ? tagTypeFor(b.tagId) : '';
       if (!isBoolCommandBinding(b, tagType)) continue;
-      for (const el of findBindingElementsForCell(grid, b)) {
+      for (const el of findBindingElements(grid, b.elementId)) {
         el.classList.add('hmi-bool-cmd-btn');
         el.style.pointerEvents = 'auto';
-        el.style.cursor = 'pointer';
-        if (el.setAttribute) el.setAttribute('pointer-events', 'all');
         el.dataset.boolCmdTagId = b.tagId;
         const svg = el.ownerSVGElement || el.closest('svg');
+        if (svg?.style) svg.style.pointerEvents = 'auto';
+        svg?.closest?.('.hmi-tile-asset-wrap')?.style.setProperty('pointer-events', 'auto');
         clearPushButtonOverlayHits(svg);
-        passThroughFaceplateButtonLabel(el);
-        enableFaceplateButtonHitLayer(el);
         const cell = el.closest?.('.hmi-tile-cell');
         if (cell) cell.classList.add('hmi-bool-cmd-cell');
       }
@@ -3569,11 +3287,10 @@
       delete el.dataset.boolToggleTagId;
     });
     grid.querySelectorAll('.hmi-bool-toggle-cell').forEach((el) => el.classList.remove('hmi-bool-toggle-cell'));
-    if (isComposerTileGrid(grid)) return;
     for (const b of bindings || []) {
       const tagType = typeof tagTypeFor === 'function' ? tagTypeFor(b.tagId) : '';
       if (!isBoolToggleBinding(b, tagType)) continue;
-      for (const el of findBindingElementsForCell(grid, b)) {
+      for (const el of findBindingElements(grid, b.elementId)) {
         el.classList.add('hmi-bool-toggle-btn');
         el.style.pointerEvents = 'auto';
         el.dataset.boolToggleTagId = b.tagId;
@@ -3586,17 +3303,13 @@
   }
 
   function wireBoolToggleButtons(grid, bindings, tagTypeFor, onToggle) {
-    if (!grid || typeof onToggle !== 'function' || !hmiControlAllowed()) return;
+    if (!grid || typeof onToggle !== 'function') return;
     markBoolToggleElementsInteractive(grid, bindings, tagTypeFor);
     if (grid._hmiBoolToggleClick) {
       grid.removeEventListener('click', grid._hmiBoolToggleClick, true);
     }
-    if (isComposerTileGrid(grid)) {
-      grid._hmiBoolToggleClick = null;
-      return;
-    }
     grid._hmiBoolToggleClick = (e) => {
-      if (e.target.closest('.hmi-nav-cell-btn, .hmi-page-hotspot-btn, .hmi-bool-cmd-btn')) return;
+      if (e.target.closest('.hmi-nav-cell-btn, .hmi-page-hotspot-btn, .hmi-bool-cmd-btn, .hmi-hoa-mode-btn')) return;
       const btn = e.target.closest('.hmi-bool-toggle-btn');
       if (!btn || !grid.contains(btn)) return;
       const tagId = btn.dataset.boolToggleTagId;
@@ -3620,24 +3333,8 @@
     return btn ? { tagId: wasActive.tagId, pointerId: wasActive.pointerId, el: btn } : null;
   }
 
-  function fireBoolCommandPulse(e, grid, bindings, tagTypeFor, onPulse) {
-    if (e.type === 'click' && grid._hmiBoolActive) return;
-    if (e.target.closest('.hmi-nav-cell-btn, .hmi-page-hotspot-btn, .hmi-hoa-mode-btn')) return;
-    const hit = resolveBoolCommandFromEvent(e, grid, bindings, tagTypeFor);
-    if (!hit || !grid.contains(hit.el)) return;
-    const { tagId, el } = hit;
-    if (!tagId) return;
-    const now = Date.now();
-    if (now - (grid._hmiBoolCmdLastClick || 0) < 350) return;
-    grid._hmiBoolCmdLastClick = now;
-    e.preventDefault();
-    e.stopPropagation();
-    onPulse(tagId, true, el);
-    onPulse(tagId, false, el);
-  }
-
   function wireBoolCommandButtons(grid, bindings, tagTypeFor, onPulse) {
-    if (!grid || typeof onPulse !== 'function' || !hmiControlAllowed()) return;
+    if (!grid || typeof onPulse !== 'function') return;
     const wasActive = grid._hmiBoolActive;
     markBoolCommandElementsInteractive(grid, bindings, tagTypeFor);
     if (grid._hmiBoolCmdDown) {
@@ -3645,42 +3342,81 @@
       grid.removeEventListener('pointerup', grid._hmiBoolCmdUp, true);
       grid.removeEventListener('pointercancel', grid._hmiBoolCmdUp, true);
     }
-    if (grid._hmiBoolCmdClick) {
-      grid.removeEventListener('click', grid._hmiBoolCmdClick, true);
-    }
-    if (isComposerTileGrid(grid)) {
-      grid._hmiBoolActive = null;
-      grid._hmiBoolCmdDown = null;
-      grid._hmiBoolCmdUp = null;
-      grid._hmiBoolCmdClick = null;
-      return;
-    }
     grid._hmiBoolActive = restoreBoolCommandActive(grid, wasActive);
     grid._hmiBoolCmdDown = (e) => {
       if (e.button !== 0 && e.pointerType === 'mouse') return;
-      if (e.target.closest('.hmi-nav-cell-btn, .hmi-page-hotspot-btn, .hmi-hoa-mode-btn')) return;
-      const hit = resolveBoolCommandFromEvent(e, grid, bindings, tagTypeFor);
-      if (!hit || !grid.contains(hit.el)) return;
-      const { tagId, el: btn } = hit;
-      if (!tagId) return;
+      if (e.target.closest('.hmi-nav-cell-btn, .hmi-page-hotspot-btn')) return;
+      const hit = resolveBoolCommandFromEvent(e, grid);
+      if (!hit?.tagId) return;
       e.preventDefault();
       e.stopPropagation();
-      grid._hmiBoolActive = { tagId, pointerId: e.pointerId, el: btn };
-      try { btn.setPointerCapture(e.pointerId); } catch { /* ignore */ }
-      onPulse(tagId, true, btn);
+      hit.el.classList?.add?.('hmi-bool-cmd-pressed');
+      grid._hmiBoolActive = { tagId: hit.tagId, pointerId: e.pointerId, el: hit.el };
+      try { hit.el.setPointerCapture?.(e.pointerId); } catch { /* ignore */ }
+      onPulse(hit.tagId, true, hit.el);
     };
     grid._hmiBoolCmdUp = (e) => {
       const active = grid._hmiBoolActive;
       if (!active || e.pointerId !== active.pointerId) return;
       try { active.el?.releasePointerCapture?.(e.pointerId); } catch { /* ignore */ }
+      active.el?.classList?.remove?.('hmi-bool-cmd-pressed');
       grid._hmiBoolActive = null;
       onPulse(active.tagId, false, active.el);
     };
-    grid._hmiBoolCmdClick = (e) => fireBoolCommandPulse(e, grid, bindings, tagTypeFor, onPulse);
     grid.addEventListener('pointerdown', grid._hmiBoolCmdDown, true);
     grid.addEventListener('pointerup', grid._hmiBoolCmdUp, true);
     grid.addEventListener('pointercancel', grid._hmiBoolCmdUp, true);
-    grid.addEventListener('click', grid._hmiBoolCmdClick, true);
+  }
+
+  function markHoaModeElementsInteractive(grid, bindings, tagTypeFor) {
+    if (!grid) return;
+    grid.querySelectorAll('.hmi-hoa-mode-btn').forEach((el) => {
+      el.classList.remove('hmi-hoa-mode-btn');
+      el.style.pointerEvents = '';
+      delete el.dataset.hoaModeTagId;
+      delete el.dataset.hoaModeValue;
+    });
+    grid.querySelectorAll('.hmi-hoa-mode-cell').forEach((el) => el.classList.remove('hmi-hoa-mode-cell'));
+    for (const b of bindings || []) {
+      const tagType = typeof tagTypeFor === 'function' ? tagTypeFor(b.tagId) : '';
+      if (!isHoaModeButtonBinding(b, tagType)) continue;
+      const hoaValue = hoaValueForBinding(b);
+      for (const el of findBindingElements(grid, b.elementId)) {
+        el.classList.add('hmi-hoa-mode-btn');
+        el.style.pointerEvents = 'auto';
+        el.dataset.hoaModeTagId = b.tagId;
+        el.dataset.hoaModeValue = String(hoaValue);
+        const svg = el.ownerSVGElement || el.closest('svg');
+        if (svg?.style) svg.style.pointerEvents = 'auto';
+        svg?.closest?.('.hmi-tile-asset-wrap')?.style.setProperty('pointer-events', 'auto');
+        clearPushButtonOverlayHits(svg);
+        const cell = el.closest?.('.hmi-tile-cell');
+        if (cell) cell.classList.add('hmi-hoa-mode-cell');
+      }
+    }
+  }
+
+  function wireHoaModeButtons(grid, bindings, tagTypeFor, onSelect) {
+    if (!grid || typeof onSelect !== 'function') return;
+    markHoaModeElementsInteractive(grid, bindings, tagTypeFor);
+    if (grid._hmiHoaModeClick) {
+      grid.removeEventListener('click', grid._hmiHoaModeClick, true);
+    }
+    grid._hmiHoaModeClick = (e) => {
+      if (e.target.closest('.hmi-nav-cell-btn, .hmi-page-hotspot-btn, .hmi-bool-cmd-btn')) return;
+      const btn = e.target.closest('.hmi-hoa-mode-btn');
+      if (!btn || !grid.contains(btn)) return;
+      const tagId = btn.dataset.hoaModeTagId;
+      if (!tagId) return;
+      const now = Date.now();
+      if (now - (grid._hmiHoaModeLastFire || 0) < 250) return;
+      grid._hmiHoaModeLastFire = now;
+      e.preventDefault();
+      e.stopPropagation();
+      const next = Math.max(0, Math.min(2, Math.trunc(Number(btn.dataset.hoaModeValue) || 0)));
+      onSelect(tagId, next, btn);
+    };
+    grid.addEventListener('click', grid._hmiHoaModeClick, true);
   }
 
   function markState3ReadoutsInteractive(grid, bindings, tagTypeFor) {
@@ -3691,11 +3427,10 @@
       delete el.dataset.state3TagId;
     });
     grid.querySelectorAll('.hmi-state3-readout-cell').forEach((el) => el.classList.remove('hmi-state3-readout-cell'));
-    if (isComposerTileGrid(grid)) return;
     for (const b of bindings || []) {
       const tagType = typeof tagTypeFor === 'function' ? tagTypeFor(b.tagId) : '';
       if (!isState3ReadoutBinding(b, tagType)) continue;
-      for (const el of findBindingElementsForCell(grid, b)) {
+      for (const el of findBindingElements(grid, b.elementId)) {
         el.classList.add('hmi-state3-readout-interactive');
         el.style.pointerEvents = 'auto';
         el.dataset.state3TagId = b.tagId;
@@ -3706,18 +3441,14 @@
   }
 
   function wireState3Readouts(grid, bindings, tagTypeFor, onCycle) {
-    if (!grid || typeof onCycle !== 'function' || !hmiControlAllowed()) return;
+    if (!grid || typeof onCycle !== 'function') return;
     markState3ReadoutsInteractive(grid, bindings, tagTypeFor);
     if (grid._hmiState3Click) {
       grid.removeEventListener('click', grid._hmiState3Click, true);
       grid.removeEventListener('pointerup', grid._hmiState3Click, true);
     }
-    if (isComposerTileGrid(grid)) {
-      grid._hmiState3Click = null;
-      return;
-    }
     grid._hmiState3Click = (e) => {
-      if (e.target.closest('.hmi-nav-cell-btn, .hmi-page-hotspot-btn, .hmi-bool-cmd-btn')) return;
+      if (e.target.closest('.hmi-nav-cell-btn, .hmi-page-hotspot-btn, .hmi-bool-cmd-btn, .hmi-hoa-mode-btn')) return;
       if (e.type === 'pointerup' && e.button !== 0 && e.pointerType === 'mouse') return;
       const el = e.target.closest('.hmi-state3-readout-interactive');
       if (!el || !grid.contains(el)) return;
@@ -3757,7 +3488,6 @@
       delete el.title;
     });
     grid.querySelectorAll('.hmi-param-edit-cell').forEach((el) => el.classList.remove('hmi-param-edit-cell'));
-    if (isComposerTileGrid(grid)) return;
     for (const b of bindings || []) {
       const tagType = typeof tagTypeFor === 'function' ? tagTypeFor(b.tagId) : '';
       if (!isParamEditBinding(b, tagType)) continue;
@@ -3790,14 +3520,10 @@
   }
 
   function wireParamEditFields(grid, bindings, tagTypeFor, onEdit) {
-    if (!grid || typeof onEdit !== 'function' || !hmiControlAllowed()) return;
+    if (!grid || typeof onEdit !== 'function') return;
     markParamEditElementsInteractive(grid, bindings, tagTypeFor);
     if (grid._hmiParamEditClick) {
       grid.removeEventListener('click', grid._hmiParamEditClick, true);
-    }
-    if (isComposerTileGrid(grid)) {
-      grid._hmiParamEditClick = null;
-      return;
     }
     grid._hmiParamEditClick = (e) => {
       if (e.target.closest('.hmi-nav-cell-btn, .hmi-page-hotspot-btn, .hmi-bool-cmd-btn, .hmi-bool-toggle-btn')) return;
@@ -3873,9 +3599,6 @@
     if (!svg) return false;
     const path = String(assetPath || svg.dataset?.hmiAssetPath || '').toLowerCase();
     if (/assisted-living\/(kitchen_room|mechanical_room|pool_room|conference_room|room_interior|room_detail|support_restroom|nurse_bath|nurse_sink|kitchen_freezer|kitchen_reefer|kitchen_sink|pool_detail)/.test(path)) {
-      return true;
-    }
-    if (/lift-station-faceplates|\/duplexls\.svg|\/triplexls\.svg|@composite\/(?:duplex|triplex)ls/i.test(path)) {
       return true;
     }
     if ([...svg.querySelectorAll('[id]')].some((el) => /val_/.test(el.id))) return true;
@@ -4310,8 +4033,7 @@
     layerEl.dataset.kind = kind;
     layerEl.style.zIndex = String(z);
     if (layer.kind !== 'pageHotspot' && layer.kind !== 'roomHotspot' && layer.kind !== 'flashOverlay'
-      && layer.kind !== 'alarmList' && layer.kind !== 'navButton'
-      && layer.kind !== 'cameraButton' && layer.kind !== 'cameraStill' && layer.kind !== 'cameraOverlay') {
+      && layer.kind !== 'alarmList' && layer.kind !== 'navButton') {
       layerEl.style.width = '100%';
       layerEl.style.height = '100%';
     }
@@ -4380,8 +4102,8 @@
       btn.dataset.hmiRoomNum = String(roomNum);
       const composerLabel = String(layer.label || '').trim();
       const roomLabel = composerLabel || `Room ${String(roomNum).padStart(3, '0')}`;
-      btn.textContent = '';
       if (editable) {
+        btn.textContent = composerLabel || '';
         btn.title = `${roomLabel} → room popup`;
       } else {
         btn.title = `Open ${roomLabel}`;
@@ -4407,46 +4129,6 @@
       layerEl.appendChild(overlay);
       cell.classList.add('has-tile');
       return overlay;
-    }
-    if (layer.kind === 'cameraButton') {
-      const camId = String(layer.cameraId || '').trim();
-      const camUrl = String(layer.cameraUrl || '').trim();
-      const siteId = String(layer.siteId || '').trim();
-      if (!camId && !camUrl) return null;
-      layerEl.style.pointerEvents = 'auto';
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'hmi-camera-cell-btn hmi-nav-cell-btn';
-      btn.textContent = String(layer.label || 'Camera').trim() || 'Camera';
-      if (camId) btn.dataset.hmiCameraId = camId;
-      if (camUrl) btn.dataset.hmiCameraUrl = camUrl;
-      if (siteId) btn.dataset.hmiSiteId = siteId;
-      btn.title = siteId && camId
-        ? `Open cloud camera: ${siteId}/${camId}`
-        : (camId ? `Open camera: ${camId}` : `Open camera: ${camUrl}`);
-      btn.setAttribute('aria-label', `Open camera ${btn.textContent}`);
-      layerEl.appendChild(btn);
-      cell.classList.add('has-tile', 'hmi-tile-has-camera');
-      return btn;
-    }
-    if (layer.kind === 'cameraStill' || layer.kind === 'cameraOverlay') {
-      layerEl.classList.add('hmi-camera-still-layer');
-      const wrap = document.createElement('div');
-      wrap.className = 'hmi-camera-still-wrap';
-      const camId = String(layer.cameraId || '').trim();
-      const camUrl = String(layer.cameraUrl || '').trim();
-      const siteId = String(layer.siteId || '').trim();
-      if (camId) wrap.dataset.hmiCameraId = camId;
-      if (siteId) wrap.dataset.hmiSiteId = siteId;
-      const iframe = document.createElement('iframe');
-      iframe.className = 'hmi-camera-still-frame';
-      iframe.title = String(layer.label || 'Camera').trim() || 'Camera live view';
-      iframe.setAttribute('allow', 'autoplay; encrypted-media; fullscreen');
-      wrap.appendChild(iframe);
-      layerEl.appendChild(wrap);
-      cell.classList.add('has-tile', 'hmi-tile-has-camera-still');
-      initCameraStillCell(wrap, { cameraId: camId, cameraUrl: camUrl, siteId }).catch(() => {});
-      return iframe;
     }
     if (layer.kind === 'alarmList') {
       layerEl.classList.add('hmi-alarm-list-layer');
@@ -4598,6 +4280,16 @@
 
   async function loadTileGridInto(container, screen, options = {}) {
     if (!container) return { grid: null, roots: [] };
+    if (screenUsesSvgBackground(screen)) {
+      const svgUrl = resolveScreenAssetUrl(screen.svg);
+      const root = await loadScreenInto(container, svgUrl, screen);
+      wireNavButtons(root, options.onNavigate, options.onOpenRoom);
+      wirePageHotspotGridHits(root, screen, options.onPageHotspotNavigate || options.onNavigate);
+      wireRoomHotspotGridHits(root, screen, options.onOpenRoom);
+      wireHoaSwitches(root, options.onHoaCycle);
+      markPageHotspotBackgroundsPassThrough(root);
+      return { grid: root, roots: root ? [root] : [] };
+    }
     const g = getScreenGrid(screen);
     const { cols, rows } = g;
     const showGridChrome = options.showGridChrome ?? !!options.editable;
@@ -4663,7 +4355,6 @@
     wirePageHotspotGridHits(grid, screen, options.onPageHotspotNavigate || options.onNavigate);
     wireRoomHotspotGridHits(grid, screen, options.onOpenRoom);
     wireNavButtons(grid, options.onNavigate, options.onOpenRoom);
-    wireCameraButtons(grid, options.onCamera || resolveCameraOpen);
     wireHoaSwitches(grid, options.onHoaCycle);
     const prevStage = container.querySelector('.hmi-screen-stage');
     if (swap && prevStage) container.replaceChild(stage, prevStage);
@@ -4697,6 +4388,19 @@
 
   function screenUsesTiles(screen) {
     return Array.isArray(screen?.tiles) && screen.tiles.length > 0;
+  }
+
+  function screenUsesSvgBackground(screen) {
+    return !!String(screen?.svg || '').trim() && !screenUsesTiles(screen);
+  }
+
+  function resolveScreenAssetUrl(url) {
+    const p = String(url || '').trim();
+    if (!p) return p;
+    if (typeof window !== 'undefined' && window.HmiAssetPaths?.resolveHmiAssetUrl) {
+      return window.HmiAssetPaths.resolveHmiAssetUrl(p);
+    }
+    return p;
   }
 
   function listElementIds(root) {
@@ -4920,12 +4624,6 @@
     if (!svgRoot) return;
     const live = liveMap || {};
     const scope = bindingSearchScope(svgRoot) || svgRoot;
-    scope.querySelectorAll?.('.hmi-tile-layer.hmi-lamp-flash').forEach((layer) => {
-      layer.classList.remove('hmi-lamp-flash');
-    });
-    scope.querySelectorAll?.('.hmi-lamp-flash-target').forEach((node) => {
-      node.classList.remove('hmi-lamp-flash-target');
-    });
     if (bindings?.length) {
       for (const b of bindings) {
         if (b.property === 'state3') {
@@ -4936,29 +4634,15 @@
           applyScreenBackgroundBinding(svgRoot, b, live);
           continue;
         }
-        let els = [];
+        let els = findBindingElements(svgRoot, b.elementId);
         const parsed = parseCellElementId(b.elementId);
-        const gridRoot = svgRoot?.classList?.contains('hmi-tile-grid')
-          ? svgRoot
-          : (svgRoot?.querySelector?.('.hmi-tile-grid') || svgRoot);
-        if (parsed && gridRoot) {
-          els = findBindingElementsForCell(gridRoot, b);
-        }
-        if (!els.length) {
-          els = findBindingElements(svgRoot, b.elementId);
-        }
         if (parsed) {
           const cell = scope.querySelector(
             `.hmi-tile-cell[data-col="${parsed.col}"][data-row="${parsed.row}"]`
           );
           if (cell) {
             ensureCellBindingIds(cell, parsed.col, parsed.row, parsed.z ?? 0);
-            if (!els.length) {
-              els = findBindingElementsForCell(gridRoot || svgRoot, b);
-            }
-            if (!els.length) {
-              els = findBindingElements(svgRoot, b.elementId);
-            }
+            els = findBindingElements(svgRoot, b.elementId);
           }
         }
         if (b.property === 'text' && parsed) {
@@ -5044,177 +4728,6 @@
     return m;
   }
 
-  let cameraPopupBound = false;
-
-  function normalizeCameraUrl(url) {
-    const raw = String(url || '').trim();
-    if (!raw) return '';
-    if (/^(https?:)?\/\//i.test(raw) || raw.startsWith('/')) return raw;
-    return `/${raw}`;
-  }
-
-  async function initCameraStillCell(wrap, opts = {}) {
-    if (!wrap) return;
-    const cameraId = String(opts.cameraId || wrap.dataset.hmiCameraId || '').trim();
-    const siteId = String(opts.siteId || wrap.dataset.hmiSiteId || '').trim();
-    let url = String(opts.cameraUrl || '').trim();
-    if (siteId && cameraId) {
-      url = `/api/sites/${encodeURIComponent(siteId)}/cameras/${encodeURIComponent(cameraId)}/player`;
-      if (global.api?.siteCameraViewer) {
-        try {
-          const data = await global.api.siteCameraViewer(siteId, cameraId);
-          if (data?.viewerUrl) url = String(data.viewerUrl).trim();
-        } catch { /* fall back to constructed URL */ }
-      }
-    } else if (cameraId && global.api?.cameraViewer) {
-      try {
-        const data = await global.api.cameraViewer(cameraId);
-        if (data?.viewerUrl) url = String(data.viewerUrl).trim();
-      } catch { /* fall back to constructed URL */ }
-    }
-    if (!url && cameraId) {
-      url = `/api/cameras/${encodeURIComponent(cameraId)}/player`;
-    }
-    url = normalizeCameraUrl(url);
-    const iframe = wrap.querySelector('.hmi-camera-still-frame');
-    if (iframe && url) iframe.src = url;
-  }
-
-  function ensureCameraPopupElements() {
-    let popup = document.getElementById('hmi-camera-popup');
-    if (!popup) {
-      popup = document.createElement('div');
-      popup.id = 'hmi-camera-popup';
-      popup.className = 'hmi-camera-popup view-hidden';
-      popup.setAttribute('role', 'dialog');
-      popup.setAttribute('aria-modal', 'true');
-      popup.setAttribute('aria-labelledby', 'hmi-camera-popup-title');
-      popup.innerHTML = [
-        '<div class="hmi-camera-popup-backdrop" data-hmi-camera-close></div>',
-        '<div class="hmi-camera-popup-panel">',
-        '  <header class="hmi-camera-popup-header">',
-        '    <h2 id="hmi-camera-popup-title" class="hmi-camera-popup-title">Camera</h2>',
-        '    <button type="button" class="btn btn-sm hmi-camera-popup-close" data-hmi-camera-close title="Close camera view">Close</button>',
-        '  </header>',
-        '  <div class="hmi-camera-popup-body">',
-        '    <iframe id="hmi-camera-popup-frame" class="hmi-camera-popup-frame" title="Camera live view" allow="autoplay; fullscreen"></iframe>',
-        '  </div>',
-        '</div>',
-      ].join('');
-      document.body.appendChild(popup);
-    }
-    if (!cameraPopupBound) {
-      cameraPopupBound = true;
-      popup.addEventListener('click', (e) => {
-        if (e.target.closest('[data-hmi-camera-close]')) closeCameraPopup();
-      });
-      document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && popup && !popup.classList.contains('view-hidden')) closeCameraPopup();
-      });
-    }
-    return {
-      popup,
-      title: document.getElementById('hmi-camera-popup-title'),
-      frame: document.getElementById('hmi-camera-popup-frame'),
-    };
-  }
-
-  function closeCameraPopup() {
-    const { popup, frame } = ensureCameraPopupElements();
-    popup.classList.add('view-hidden');
-    popup.setAttribute('aria-hidden', 'true');
-    document.body.classList.remove('hmi-camera-popup-open');
-    if (frame) {
-      frame.removeAttribute('src');
-      frame.src = 'about:blank';
-    }
-  }
-
-  function openCameraPopup(url, opts = {}) {
-    const raw = normalizeCameraUrl(url);
-    if (!raw) return;
-    const { popup, title, frame } = ensureCameraPopupElements();
-    const label = String(opts.title || 'Camera').trim() || 'Camera';
-    if (title) title.textContent = label;
-    popup.classList.toggle('hmi-camera-popup--anchor-top', opts.anchor === 'top');
-    popup.classList.remove('view-hidden');
-    popup.setAttribute('aria-hidden', 'false');
-    document.body.classList.add('hmi-camera-popup-open');
-    if (frame) {
-      frame.title = `${label} live view`;
-      frame.src = raw;
-    }
-    global.MvWindowStack?.onOpen?.(popup);
-  }
-
-  async function resolveCameraOpen(info) {
-    if (!info) return;
-    let url = String(info.url || '').trim();
-    const cameraId = String(info.cameraId || '').trim();
-    const siteId = String(info.siteId || '').trim();
-    let title = info.title || cameraId || 'Camera';
-    if (siteId && cameraId) {
-      url = `/api/sites/${encodeURIComponent(siteId)}/cameras/${encodeURIComponent(cameraId)}/player`;
-      const apiRef = global.api;
-      if (apiRef?.siteCameraViewer) {
-        try {
-          const data = await apiRef.siteCameraViewer(siteId, cameraId);
-          url = String(data?.viewerUrl || url).trim();
-          if (data?.offline) {
-            console.warn('[hmi] site agent offline for camera', siteId, cameraId);
-          }
-          if (data?.name) title = data.name;
-        } catch { /* use constructed URL */ }
-      }
-      openCameraPopup(url, { title, anchor: info.anchor });
-      return;
-    }
-    if (url) {
-      openCameraPopup(url, { title, anchor: info.anchor });
-      return;
-    }
-    if (!cameraId) return;
-    const apiRef = global.api;
-    const playerFallback = `/api/cameras/${encodeURIComponent(cameraId)}/player`;
-    if (!apiRef?.cameraViewer) {
-      openCameraPopup(playerFallback, { title, anchor: info.anchor });
-      return;
-    }
-    try {
-      const data = await apiRef.cameraViewer(cameraId);
-      const resolved = String(data?.viewerUrl || '').trim() || playerFallback;
-      openCameraPopup(resolved, { title: data.name || title, anchor: info.anchor });
-    } catch (err) {
-      console.error('[camera]', err);
-      openCameraPopup(playerFallback, { title, anchor: info.anchor });
-    }
-  }
-
-  function wireCameraButtons(container, onOpen) {
-    if (!container) return;
-    if (container._hmiCameraClick) {
-      container.removeEventListener('click', container._hmiCameraClick, true);
-    }
-    container._hmiCameraClick = (e) => {
-      const btn = e.target.closest?.('.hmi-camera-cell-btn');
-      if (!btn || !container.contains(btn)) return;
-      const setupGrid = container.classList.contains('hmi-tile-grid-editable');
-      if (setupGrid && !e.altKey) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const info = {
-        url: btn.dataset.hmiCameraUrl || '',
-        cameraId: btn.dataset.hmiCameraId || '',
-        siteId: btn.dataset.hmiSiteId || '',
-        title: btn.textContent?.trim() || btn.getAttribute('aria-label') || 'Camera',
-        anchor: btn.dataset.hmiCameraAnchor || '',
-      };
-      if (typeof onOpen === 'function') onOpen(info);
-      else resolveCameraOpen(info);
-    };
-    container.addEventListener('click', container._hmiCameraClick, true);
-  }
-
   function bindPan(container, getScreen, onOffsetChange) {
     if (!container || container.dataset.hmiPanBound === '1') return;
     container.dataset.hmiPanBound = '1';
@@ -5290,7 +4803,14 @@
     wireHoaModeButtons,
     wireBoolCommandButtons,
     wireBoolToggleButtons,
+    resolveBoolCommandFromEvent,
     isBoolToggleBinding,
+    isHoaModeButtonBinding,
+    hoaValueForBinding,
+    resolveHandModePumpWrite,
+    resolvePumpCommandWrites,
+    resolveHandModePumpDisplayValue,
+    motorCommandParts,
     wireState3Readouts,
     isParamEditBinding,
     wireParamEditFields,
@@ -5300,10 +4820,6 @@
     hoursFromMinutes,
     cellHasHoaSwitchLayers,
     isBoolCommandBinding,
-    resolveBoolCommandFromEvent,
-    resolveHandModePumpWrite,
-    resolveHandModePumpDisplayValue,
-    isHoaModeButtonBinding,
     isState3ReadoutBinding,
     markHoaSwitchCellsInteractive,
     isHoaSwitchAssetPath,
@@ -5348,6 +4864,7 @@
     fitTileSvg,
     labelTextElement,
     screenUsesTiles,
+    screenUsesSvgBackground,
     applyBindings,
     liveMapFromList,
     applyBinding,
@@ -5369,16 +4886,11 @@
     isPoolFaceplateAssetPath,
     poolCompositeIdFromAssetPath,
     isAlternatorFaceplateAssetPath,
-    isLiftStationFaceplateAssetPath,
     isAlarmListAssetPath,
     isCompositeFaceplateAssetPath,
     applyAlarmListLayers,
     refreshAlarmListLayers,
     collectHmiActiveAlarms,
     renderHmiAlarmListHtml,
-    openCameraPopup,
-    closeCameraPopup,
-    resolveCameraOpen,
-    wireCameraButtons,
   };
 })(window);

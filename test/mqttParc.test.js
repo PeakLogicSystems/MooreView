@@ -2,7 +2,7 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { topics, deviceIdFromTopic, normalizeDeviceId } = require('../src/parc/mqttProtocol');
+const { topics, deviceIdFromTopic, onlineTopicInfo, telemetryTopicInfo, normalizeDeviceId } = require('../src/parc/mqttProtocol');
 
 describe('mqttProtocol', () => {
   it('builds topics for device', () => {
@@ -19,7 +19,27 @@ describe('mqttProtocol', () => {
       deviceIdFromTopic('mooreview/v1/rpi-02/telemetry', cfg),
       'rpi-02'
     );
+    assert.equal(
+      deviceIdFromTopic('mooreview/v1/mv_f2e689fd60d96bab/cmd/response', cfg),
+      'mv_f2e689fd60d96bab',
+    );
+    assert.equal(
+      deviceIdFromTopic('mooreview/v1/mv_f2e689fd60d96bab/online', cfg),
+      'mv_f2e689fd60d96bab',
+    );
     assert.equal(deviceIdFromTopic('other/rpi-02/telemetry', cfg), null);
+  });
+
+  it('parses tenant-scoped online and telemetry topics', () => {
+    const cfg = { topicPrefix: 'mooreview/v1' };
+    assert.deepEqual(
+      onlineTopicInfo('mooreview/v1/acme-corp/mv_opta01/online', cfg),
+      { tenantId: 'acme-corp', deviceId: 'mv_opta01' },
+    );
+    assert.equal(
+      deviceIdFromTopic('mooreview/v1/acme-corp/mv_opta01/online', cfg),
+      'mv_opta01',
+    );
   });
 
   it('rejects bad device ids', () => {

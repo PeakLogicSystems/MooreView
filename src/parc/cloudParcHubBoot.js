@@ -1,39 +1,15 @@
 'use strict';
 
 const {
-  applyCloudMqttParcEnv,
-  defaultMqttParcSettings,
+  cloudHubMqttParcSettings,
   startMqttParcHubFromSettings,
 } = require('./mqttParcBootstrap');
 const { getMqttCentralHub } = require('./mqttCentralHub');
 const { isFieldParcDeviceId } = require('./optaSerial');
-const { isParcRegistryNoiseId } = require('../devices/bulkAddParcOpta');
 
 /** Build mqttParc settings for cloud SaaS from env (mv-mqtt broker creds). */
 function cloudMqttParcSettingsFromEnv() {
-  let settings = {
-    mqttParc: defaultMqttParcSettings({
-      enabled: true,
-      cloudTenantIngest: true,
-    }),
-  };
-  const patched = applyCloudMqttParcEnv(settings);
-  settings = patched.settings;
-  const mp = settings.mqttParc || {};
-  const brokerUrl = String(process.env.MOOREVIEW_MQTT_BROKER || mp.brokerUrl || '').trim();
-  if (brokerUrl) {
-    const user = String(process.env.MOSQUITTO_USER || process.env.MOOREVIEW_MQTT_USER || mp.username || '').trim();
-    const pass = String(process.env.MOSQUITTO_PASS || process.env.MOOREVIEW_MQTT_PASS || mp.password || '');
-    settings.mqttParc = {
-      ...mp,
-      enabled: mp.enabled !== false,
-      brokerUrl,
-      username: user || mp.username || '',
-      password: pass || mp.password || '',
-      cloudTenantIngest: true,
-    };
-  }
-  return settings.mqttParc;
+  return cloudHubMqttParcSettings({});
 }
 
 /**

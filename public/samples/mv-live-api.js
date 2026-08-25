@@ -1,8 +1,8 @@
 'use strict';
 /**
  * Resolve MooreVIEW REST root for facility / sample 3D pages.
- * Appliance: /api · Cloud Studio: /api/studio
- * Override: ?mvApi=… · window.MV_API_BASE · parent.MOOREVIEW_API_BASE
+ * Appliance and cloud SaaS both mount studio routes at `/api` (e.g. `/api/dashboard`).
+ * Override: ?mvApi=… · window.MV_API_BASE · parent.MOOREVIEW_API_BASE · postMessage apiBase
  */
 (function initMvLiveApiRoot(global) {
   function fromQuery() {
@@ -21,20 +21,75 @@
     } catch { /* cross-origin */ }
     return '';
   }
-  let root = String(global.MV_API_BASE || '').trim() || fromQuery() || fromParent();
-  if (!root) {
-    // Cloud Studio paths usually include /studio
-    const path = String(global.location.pathname || '');
-    root = (/\/studio\b/i.test(path) || /mooreview\.io/i.test(global.location.host || ''))
-      ? '/api/studio'
-      : '/api';
+  function applyApiBase(next) {
+    const clean = String(next || '').trim().replace(/\/$/, '');
+    if (clean) global.MV_API_BASE = clean;
   }
-  global.MV_API_BASE = root.replace(/\/$/, '');
+  let root = String(global.MV_API_BASE || '').trim() || fromQuery() || fromParent();
+  if (!root) root = '/api';
+  applyApiBase(root);
   global.addEventListener('message', (ev) => {
     const data = ev?.data;
     if (!data || typeof data !== 'object') return;
-    if (data.type === 'mooreview-api-base' && typeof data.apiBase === 'string' && data.apiBase.trim()) {
-      global.MV_API_BASE = data.apiBase.trim().replace(/\/$/, '');
+    if (data.type === 'mooreview-api-base' && typeof data.apiBase === 'string') {
+      applyApiBase(data.apiBase);
+    }
+    if (data.type === 'mv-hmi-poll-config' && typeof data.apiBase === 'string') {
+      applyApiBase(data.apiBase);
     }
   });
+
+  /** Poll /dashboard and expose tag map — used by fleet 3D sample pages. */
+  class MvLiveApi {
+    constructor(opts = {}) {
+      this.pollMs = Math.max(2000, Number(opts.pollMs) || 60000);
+      this._timer = null;
+      this._onTags = null;
+      this._onError = null;
+      this._onData = null;
+    }
+
+    onTags(fn) { this._onTags = fn; return this; }
+    onError(fn) { this._onError = fn; return this; }
+    onData(fn) { this._onData = fn; return this; }
+
+    apiRoot() {
+      return String(global.MV_API_BASE || '/api').replace(/\/$/, '');
+    }
+
+    async poll() {
+      const root = this.apiRoot();
+      try {
+        const res = await fetch(`${root}/dashboard`, { credentials: 'same-origin' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const tags = {};
+        for (const t of (data.tags || data.tagSnapshot || [])) {
+          if (t?.id) tags[t.id] = t.value ?? t.val;
+        }
+        this._onTags?.(tags, data);
+        this._onData?.(data);
+        return { tags, data };
+      } catch (e) {
+        this._onError?.(e);
+        throw e;
+      }
+    }
+
+    start() {
+      this.stop();
+      this.poll().catch(() => {});
+      this._timer = setInterval(() => { this.poll().catch(() => {}); }, this.pollMs);
+      return this;
+    }
+
+    stop() {
+      if (this._timer) {
+        clearInterval(this._timer);
+        this._timer = null;
+      }
+    }
+  }
+
+  global.MvLiveApi = MvLiveApi;
 }(typeof window !== 'undefined' ? window : globalThis));

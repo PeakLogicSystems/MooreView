@@ -4,38 +4,104 @@ const fs = require('fs');
 const path = require('path');
 const persistence = require('../../persistence');
 const { ST_DIR } = require('../../config');
+const programStore = require('../../programs/programStore');
 const { listPresets, buildFromPreset, getPreset } = require('../../devices/devicePresets');
 const { nextSlaveId, offsetTagsForDriver, concubeApplyOptions } = require('../../devices/applyPresetUtils');
-const { applyTagsOnlyPreset } = require('../../devices/applyDerivedPreset');
 const { MAX_TAGS, DEFAULT_MQTT_PARC_BROKER } = require('../../config');
-const { sanitizeDriverConfig } = require('../../drivers/driverConfig');
+const { sanitizeDriverConfig, mergeDriverSecrets, isBlankSecret, publicDriverList } = require('../../drivers/driverConfig');
 const { bootstrapMqttParc } = require('../../parc/mqttParcBootstrap');
-const { patchWorkspaceDrivers } = require('../../project/estFile');
+const { patchWorkspaceDrivers, patchActiveProjectDrivers } = require('../../project/estFile');
+const { resolveParcRegistry } = require('../../parc/deviceRegistry');
+const {
+  bindTemplateDriverToRegistry,
+} = require('../../parc/parcDriverSync');
+
+async function persistDrivers(deps, drivers) {
+  const { driverManager, scanEngine } = deps;
+  driverManager.save(drivers);
+  patchWorkspaceDrivers(drivers);
+  try {
+    await patchActiveProjectDrivers(drivers);
+  } catch (e) {
+    console.warn('[drivers] patch project snapshot:', e.message || e);
+  }
+  await persistence.flushConfig();
+  await driverManager.rebuild();
+  if (scanEngine) scanEngine.loadSettings();
+}
 const { resolveCredentials, loginNextcentury } = require('../../drivers/nextcenturyAuth');
 const { createPortalSession } = require('../../drivers/nextcenturyPortalSession');
-const { discoverDevices, browseDeviceObjects } = require('../../drivers/bacnetDiscovery');
-const { mergeBacnetTagsIntoStore } = require('../../drivers/bacnetTagSync');
-const bacnetProfileStore = require('../../drivers/bacnetProfileStore');
 const {
-  normalizeProfile,
-  profileFromBrowsePoints,
-} = require('../../drivers/bacnetDeviceBuilder');
-const {
-  previewProfileApply,
-  applyProfileToFleet,
-  mergeApplyIntoStore,
-} = require('../../drivers/bacnetApplyProfile');
+  estimateNextcenturyDeploy,
+  estimateFromDriverInstance,
+} = require('../../drivers/nextcenturyDeployEstimate');
 
 function createDriverRoutes(deps) {
   const { tagStore, driverManager, scanEngine } = deps;
   const router = require('express').Router();
 
   router.get('/drivers', (req, res) => {
-    res.json({ drivers: driverManager.list(), health: driverManager.health() });
+    res.json({
+      drivers: publicDriverList(driverManager.list()),
+      health: driverManager.health(),
+    });
+  });
+
+  router.put('/drivers/nextcentury/setup', async (req, res) => {
+    try {
+      const body = req.body || {};
+      const driverId = String(body.id || body.driverId || 'nextcentury1').trim() || 'nextcentury1';
+      const list = driverManager.list();
+      const prev = list.find((d) => d.id === driverId && d.type === 'nextcentury')
+        || list.find((d) => d.type === 'nextcentury');
+      const propertyIds = body.propertyIds != null
+        ? (Array.isArray(body.propertyIds)
+          ? body.propertyIds
+          : String(body.propertyIds).split(/[,\s]+/).map((n) => parseInt(n, 10)).filter((n) => Number.isFinite(n)))
+        : prev?.propertyIds;
+      const incoming = sanitizeDriverConfig({
+        ...(prev || { id: driverId, type: 'nextcentury', enabled: true }),
+        id: driverId,
+        type: 'nextcentury',
+        enabled: body.enabled !== false,
+        email: body.email != null ? String(body.email).trim() : (prev?.email || ''),
+        password: body.password != null ? String(body.password) : (prev?.password || ''),
+        reportId: body.reportId != null ? String(body.reportId).trim() : (prev?.reportId || 'rt_4510'),
+        pollIntervalMs: body.pollIntervalMs != null ? Number(body.pollIntervalMs) : prev?.pollIntervalMs,
+        propertyIds,
+        propertyDelayMs: body.propertyDelayMs != null ? Number(body.propertyDelayMs) : (prev?.propertyDelayMs || 600),
+        autoSyncTags: body.autoSyncTags != null ? body.autoSyncTags !== false : prev?.autoSyncTags !== false,
+        devicesPerSite: body.devicesPerSite != null ? Number(body.devicesPerSite) : prev?.devicesPerSite,
+        timeoutMs: body.timeoutMs != null ? Number(body.timeoutMs) : (prev?.timeoutMs || 20000),
+      });
+      const merged = mergeDriverSecrets([incoming], list)[0];
+      const drivers = prev
+        ? list.map((d) => (d.id === merged.id ? merged : d))
+        : [...list, merged];
+      const passwordUpdated = !isBlankSecret(body.password);
+      await persistDrivers({ driverManager, scanEngine }, drivers);
+      if (body.connect) {
+        await driverManager.connectDriver(merged.id);
+      }
+      res.json({
+        ok: true,
+        driverId: merged.id,
+        hasPassword: Boolean(merged.password),
+        passwordUpdated,
+        email: merged.email || '',
+        drivers: publicDriverList(driverManager.list()),
+        health: driverManager.health(),
+      });
+    } catch (e) {
+      res.status(400).json({ error: e.message || String(e) });
+    }
   });
 
   router.put('/drivers', async (req, res) => {
-    const drivers = [...(req.body.drivers || [])].map(sanitizeDriverConfig);
+    const drivers = mergeDriverSecrets(
+      [...(req.body.drivers || [])].map(sanitizeDriverConfig),
+      driverManager.list(),
+    );
     const warnings = [];
     const rtuPorts = new Map();
     for (const d of drivers) {
@@ -64,12 +130,16 @@ function createDriverRoutes(deps) {
     }
     driverManager.save(drivers);
     patchWorkspaceDrivers(drivers);
+    patchActiveProjectDrivers(drivers).catch((e) => {
+      console.warn('[drivers] patch project snapshot:', e.message || e);
+    });
+    await persistence.flushConfig();
     const hasRemoteOpta = drivers.some(
       (d) => (d.type === 'opta_remote' || d.type === 'mqtt_parc') && d.enabled !== false
     );
     let boot;
     if (hasRemoteOpta) {
-      boot = await bootstrapMqttParc({ drivers });
+      boot = await bootstrapMqttParc({ drivers, driverManager, tagStore });
       if (boot.changed) {
         if (scanEngine) scanEngine.loadSettings();
       }
@@ -79,21 +149,19 @@ function createDriverRoutes(deps) {
         console.warn('[mqtt-parc] hub start:', boot.hub.error);
       }
     }
-    void driverManager.rebuild()
-      .then(async () => {
-        if (hasRemoteOpta && boot?.hub?.started && typeof driverManager.linkMqttParcDriversIfHubLive === 'function') {
-          await driverManager.linkMqttParcDriversIfHubLive();
-        }
-      })
-      .catch((e) => {
-        console.warn('[drivers] rebuild:', e.message || String(e));
-      });
-    res.json({ ok: true, warnings, health: driverManager.health() });
+    await driverManager.rebuild();
+    if (hasRemoteOpta && boot?.hub?.started) {
+      await driverManager.linkMqttParcDriversIfHubLive();
+    }
+    res.json({ ok: true, warnings, health: driverManager.health(), drivers: publicDriverList(driverManager.list()) });
   });
 
   router.post('/drivers/test', async (req, res) => {
     try {
-      const cfg = sanitizeDriverConfig(req.body);
+      const cfg = mergeDriverSecrets(
+        [sanitizeDriverConfig(req.body)],
+        driverManager.list(),
+      )[0];
       res.json({ result: await driverManager.testConnection(cfg) });
     } catch (e) {
       res.status(400).json({ error: e.message || String(e) });
@@ -158,34 +226,7 @@ function createDriverRoutes(deps) {
       password: req.body.password,
       deviceId: req.body.deviceId,
       topicPrefix: req.body.topicPrefix,
-      nominalVoltage: req.body.nominalVoltage,
-      undervoltV: req.body.undervoltV,
-      overvoltV: req.body.overvoltV,
-      lowPf: req.body.lowPf,
-      freqMinHz: req.body.freqMinHz,
-      freqMaxHz: req.body.freqMaxHz,
-      vImbalancePct: req.body.vImbalancePct,
-      loadedCurrentA: req.body.loadedCurrentA,
     };
-
-    if (presetMeta.tagsOnly) {
-      const result = applyTagsOnlyPreset({
-        presetMeta,
-        tagList,
-        driverList,
-        buildOpts,
-        replaceTags,
-        tagStore,
-        persistence,
-        loadProgram: req.body.loadProgram !== false,
-      });
-      if (result.error) {
-        return res.status(result.status || 400).json({ error: result.error });
-      }
-      if (scanEngine) scanEngine.loadSettings();
-      return res.json(result);
-    }
-
     if (presetMeta.concube) {
       const cubeOpts = concubeApplyOptions(
         presetMeta,
@@ -200,6 +241,9 @@ function createDriverRoutes(deps) {
       Object.assign(buildOpts, cubeOpts);
     }
     const built = buildFromPreset(req.body.presetId, buildOpts);
+    if (built.driver?.type === 'mqtt_parc') {
+      built.driver = bindTemplateDriverToRegistry(built.driver, resolveParcRegistry(), driverList);
+    }
     const driverIdx = driverList.findIndex((d) => d.id === built.driver.id);
     const driverExists = driverIdx >= 0;
     const driverListOut = driverExists
@@ -241,12 +285,29 @@ function createDriverRoutes(deps) {
       settings.remoteExecution = true;
       persistence.writeJson('settings.json', settings);
     }
+    // The device's ST program "lives in" the device: activate it so the runtime
+    // deploys it (locally, or to the remote Opta) and exposes its tags.
+    let activeProgram;
+    const stProgram = built.stProgram || presetMeta.stProgram || presetMeta.defaultProgram;
+    if (stProgram && programStore.programExists(stProgram)) {
+      activeProgram = programStore.setActive(stProgram);
+    }
     const hasRemoteOpta = driverListOut.some(
       (d) => (d.type === 'mqtt_parc' || d.type === 'opta_remote') && d.enabled !== false,
     );
     let boot;
+    let registryDriversAdded = [];
     if (hasRemoteOpta) {
-      boot = await bootstrapMqttParc({ drivers: driverListOut });
+      boot = await bootstrapMqttParc({
+        drivers: driverListOut,
+        driverManager,
+        tagStore,
+        syncRegistryTags: presetMeta.tagsFromDevice === true,
+      });
+      registryDriversAdded = boot.registryLinked?.added || [];
+      if (boot.registryLinked?.changed) {
+        driverListOut = boot.registryLinked.drivers || driverManager.list();
+      }
       if (boot.changed && scanEngine) scanEngine.loadSettings();
     }
     void driverManager.rebuild()
@@ -258,35 +319,16 @@ function createDriverRoutes(deps) {
       .catch((e) => {
         console.warn('[devices/apply] rebuild:', e.message || String(e));
       });
-    if (scanEngine) scanEngine.loadSettings();
-
-    let pdmSeed = null;
-    if (req.body.seedPdm !== false) {
-      const { seedPdmFromPreset } = require('../../pdm/pdmAssetSeedFromTemplate');
-      const settings = persistence.readJson('settings.json', {});
-      const deviceId = req.body.deviceId || built.driver.deviceId || presetMeta.defaults?.deviceId || '';
-      const seedResult = seedPdmFromPreset(presetMeta, settings, {
-        deviceId,
-        siteId: req.body.siteId || deviceId,
-        siteName: req.body.siteName || presetMeta.label,
-        locationClass: req.body.locationClass,
-        installDate: req.body.installDate,
-        overwrite: req.body.replacePdmAssets === true,
-      });
-      if (seedResult.changed) {
-        persistence.writeJson('settings.json', seedResult.settings);
-        pdmSeed = {
-          seeded: seedResult.seeded,
-          skipped: seedResult.skipped,
-          assets: seedResult.seeded.map((id) => ({
-            assetId: id,
-            installDate: seedResult.assetContext[id]?.installDate,
-            serviceHistory: seedResult.assetContext[id]?.serviceHistory,
-          })),
-        };
+    if (scanEngine) {
+      scanEngine.loadSettings();
+      if (activeProgram && typeof scanEngine.loadProgram === 'function') {
+        try {
+          scanEngine.loadProgram();
+        } catch (e) {
+          console.warn('[devices/apply] loadProgram:', e.message || String(e));
+        }
       }
     }
-
     res.json({
       ok: true,
       preset: built.preset,
@@ -296,10 +338,11 @@ function createDriverRoutes(deps) {
       merged: driverExists && !replaceTags,
       slaveId: assignedSlave,
       tagsFromDevice: !!presetMeta.tagsFromDevice,
-      pdmSeed,
+      activeProgram: activeProgram || undefined,
       nextStep: presetMeta.tagsFromDevice
-        ? 'On Opta /setup → Scan expansions, then Drivers → Sync tags from Parc device'
+        ? 'Parc registry devices are linked as drivers automatically. Sync tags or Download & Start the on-device ST program.'
         : undefined,
+      registryDriversAdded: registryDriversAdded,
     });
   });
 
@@ -405,9 +448,66 @@ function createDriverRoutes(deps) {
     });
   });
 
+  router.post('/drivers/nextcentury/deploy-estimate', (req, res) => {
+    const body = req.body || {};
+    const driverId = String(body.driverId || body.id || '').trim();
+    let cfg = null;
+    if (driverId) {
+      cfg = driverManager.list().find((d) => d.id === driverId && d.type === 'nextcentury');
+    }
+    if (!cfg && body.driver && body.driver.type === 'nextcentury') {
+      cfg = sanitizeDriverConfig(body.driver);
+    }
+    if (!cfg) {
+      cfg = sanitizeDriverConfig({
+        type: 'nextcentury',
+        pollIntervalMs: body.pollIntervalMs,
+        propertyIds: body.propertyIds,
+        propertyDelayMs: body.propertyDelayMs,
+        autoSyncTags: body.autoSyncTags,
+        devicesPerSite: body.devicesPerSite,
+      });
+    } else {
+      cfg = {
+        ...cfg,
+        pollIntervalMs: body.pollIntervalMs ?? cfg.pollIntervalMs,
+        propertyIds: body.propertyIds ?? cfg.propertyIds,
+        propertyDelayMs: body.propertyDelayMs ?? cfg.propertyDelayMs,
+        autoSyncTags: body.autoSyncTags ?? cfg.autoSyncTags,
+        devicesPerSite: body.devicesPerSite ?? cfg.devicesPerSite,
+      };
+    }
+
+    const settings = persistence.readJson('settings.json', {});
+    const opts = {
+      scanMs: settings.scanMs,
+      maxTags: MAX_TAGS,
+      devicesPerSite: body.devicesPerSite,
+      siteCount: body.siteCount,
+      tagsPerDevice: body.tagsPerDevice,
+      apiLatencyMs: body.apiLatencyMs,
+      manualTagCount: body.manualTagCount,
+    };
+    if (body.useLive !== false && driverId) {
+      const instance = driverManager.instances?.get(driverId);
+      const est = instance?.deployEstimate
+        ? instance.deployEstimate(opts)
+        : estimateFromDriverInstance(cfg, instance, opts);
+      return res.json({
+        ...est,
+        driverId: driverId || cfg.id || '',
+        deploymentMode: est.deploymentMode,
+      });
+    }
+    res.json({
+      ...estimateNextcenturyDeploy(cfg, opts),
+      driverId: driverId || cfg.id || '',
+    });
+  });
+
   router.post('/drivers/parc-opta/bulk', async (req, res) => {
     const body = req.body || {};
-    const { registry } = require('../../parc/deviceRegistry');
+    const parcRegistry = resolveParcRegistry();
     const { mergeParcTagsIntoStore } = require('../../parc/parcTagSync');
     const { bulkAddParcOptaDrivers } = require('../../devices/bulkAddParcOpta');
     const hardwareHistoryStore = require('../../hardware/hardwareHistoryStore');
@@ -417,7 +517,7 @@ function createDriverRoutes(deps) {
       result = bulkAddParcOptaDrivers({
         driverList: driverManager.list(),
         body,
-        registry,
+        registry: parcRegistry,
       });
     } catch (e) {
       return res.status(e.status || 400).json({ error: e.message });
@@ -439,7 +539,7 @@ function createDriverRoutes(deps) {
     driverManager.save(drivers);
     patchWorkspaceDrivers(drivers);
 
-    const boot = await bootstrapMqttParc({ drivers });
+    const boot = await bootstrapMqttParc({ drivers, driverManager, tagStore });
     if (boot.changed && scanEngine) scanEngine.loadSettings();
 
     await driverManager.rebuild();
@@ -450,7 +550,7 @@ function createDriverRoutes(deps) {
       let tagList = tagStore.list();
       for (const entry of result.addedEntries || []) {
         const positionId = entry.positionId || entry;
-        const dev = registry.getDevice(entry.deviceId || entry);
+        const dev = parcRegistry.getDevice(entry.deviceId || entry);
         if (!dev) {
           syncResults.push({ driverId: positionId, ok: false, error: 'no telemetry' });
           continue;
@@ -480,7 +580,7 @@ function createDriverRoutes(deps) {
 
     for (const entry of result.addedEntries || []) {
       const positionId = entry.positionId;
-      const dev = registry.getDevice(entry.deviceId);
+      const dev = parcRegistry.getDevice(entry.deviceId);
       const drv = drivers.find((d) => d.id === positionId);
       if (!positionId || !dev || !drv) continue;
       try {
@@ -516,14 +616,14 @@ function createDriverRoutes(deps) {
     if (!positionId) return res.status(400).json({ error: 'driverId (position) required' });
     if (!newDeviceId) return res.status(400).json({ error: 'newDeviceId required' });
 
-    const { registry } = require('../../parc/deviceRegistry');
+    const parcRegistry = resolveParcRegistry();
     const { mergeParcTagsIntoStore } = require('../../parc/parcTagSync');
     const { replaceParcOptaHardware } = require('../../devices/bulkAddParcOpta');
     const hardwareHistoryStore = require('../../hardware/hardwareHistoryStore');
     const mongoSysLog = require('../../logger/mongoSysLog');
 
     const cfg = driverManager.list().find((d) => d.id === positionId);
-    const outgoingRegistryDev = cfg ? registry.getDevice(String(cfg.deviceId || '').trim()) : null;
+    const outgoingRegistryDev = cfg ? parcRegistry.getDevice(String(cfg.deviceId || '').trim()) : null;
 
     let replaced;
     try {
@@ -531,7 +631,7 @@ function createDriverRoutes(deps) {
         driverList: driverManager.list(),
         positionId,
         newDeviceId,
-        registry,
+        registry: parcRegistry,
         note: req.body?.note,
         swapType: req.body?.swapType,
         vendor: req.body?.vendor,
@@ -548,7 +648,7 @@ function createDriverRoutes(deps) {
 
     let syncResult = null;
     if (req.body?.syncTags !== false) {
-      const dev = registry.getDevice(replaced.newDeviceId);
+      const dev = parcRegistry.getDevice(replaced.newDeviceId);
       if (dev && !dev.stale) {
         const merged = mergeParcTagsIntoStore(tagStore.list(), dev.tags, positionId, {
           reassign: req.body?.reassign !== false,
@@ -569,7 +669,7 @@ function createDriverRoutes(deps) {
 
     if (scanEngine) scanEngine.loadSettings();
     const { getMqttCentralHub } = require('../../parc/mqttCentralHub');
-    if (getMqttCentralHub(registry).isLive()) {
+    if (getMqttCentralHub(parcRegistry).isLive()) {
       await driverManager.linkMqttParcDriversIfHubLive();
     }
 
@@ -581,7 +681,7 @@ function createDriverRoutes(deps) {
         positionName: newCfg?.name,
         outgoingDriver: cfg,
         outgoingRegistryDev,
-        incomingRegistryDev: registry.getDevice(replaced.newDeviceId),
+        incomingRegistryDev: parcRegistry.getDevice(replaced.newDeviceId),
         incomingDriver: newCfg,
         swapType: req.body?.swapType,
         note: req.body?.note,
@@ -653,21 +753,54 @@ function createDriverRoutes(deps) {
     if (!cfg || cfg.type !== 'mqtt_parc') {
       return res.status(400).json({ error: 'mqtt_parc driver required' });
     }
-    const deviceId = String(cfg.deviceId || cfg.id || '').trim();
-    const { registry } = require('../../parc/deviceRegistry');
+    const parcRegistry = resolveParcRegistry();
     const { mergeParcTagsIntoStore } = require('../../parc/parcTagSync');
-    const dev = registry.getDevice(deviceId);
+    const {
+      findRegistryDeviceForDriver,
+      fetchOptaIoMap,
+      ioMapPointsToParcTags,
+      resolveOptaHost,
+    } = require('../../parc/optaIoMapSync');
+
+    const { device: dev, deviceId, resolvedId } = findRegistryDeviceForDriver(parcRegistry, cfg);
     if (!dev) {
       return res.status(404).json({
-        error: `No Parc report for ${deviceId} — connect Opta to MQTT and scan expansions on /setup`,
+        error: `No Parc report for ${resolvedId || cfg.deviceId} — connect Opta to MQTT and scan expansions on /setup`,
       });
     }
-    if (dev.stale) {
-      return res.status(409).json({
-        error: `Telemetry stale for ${deviceId} (last ${dev.ageSec ?? '?'}s ago)`,
-      });
+
+    let parcTags = Array.isArray(dev.tags) ? dev.tags : [];
+    let source = 'registry';
+    const staleWarning = dev.stale
+      ? `Telemetry stale for ${deviceId} (last ${dev.ageSec ?? '?'}s ago)`
+      : null;
+
+    if (parcTags.length > 0) {
+      source = dev.stale ? 'registry-stale' : 'registry';
+    } else {
+      const host = resolveOptaHost(parcRegistry, cfg, dev);
+      if (!host) {
+        return res.status(404).json({
+          error: `No tags in Parc registry for ${deviceId} and no Opta IP — open /setup on device or wait for telemetry`,
+        });
+      }
+      try {
+        const ioMap = await fetchOptaIoMap(host, { port: cfg.port, timeoutMs: cfg.commandTimeoutMs });
+        parcTags = ioMapPointsToParcTags(ioMap.points);
+        source = 'http';
+      } catch (e) {
+        return res.status(e.status || 502).json({
+          error: e.message || String(e),
+        });
+      }
+      if (!parcTags.length) {
+        return res.status(404).json({
+          error: `Opta at ${host} returned no input/output points — scan expansions on /setup`,
+        });
+      }
     }
-    const merged = mergeParcTagsIntoStore(tagStore.list(), dev.tags, driverId, {
+
+    const merged = mergeParcTagsIntoStore(tagStore.list(), parcTags, driverId, {
       reassign: req.body?.reassign !== false,
     });
     if (!merged.ok) return res.status(400).json({ error: merged.error, conflicts: merged.conflicts });
@@ -681,250 +814,14 @@ function createDriverRoutes(deps) {
       ok: true,
       driverId,
       deviceId,
+      resolvedId,
+      source,
+      stale: !!dev.stale,
+      warning: staleWarning,
       tagsReplaced: merged.count,
       reassigned: merged.reassigned || 0,
       tagCount: tagStore.count(),
       expansionModules: dev.meta?.expansionModules || [],
-    });
-  });
-
-  router.post('/drivers/bacnet/discover', async (req, res) => {
-    try {
-      const driverCfg = req.body?.driverId
-        ? driverManager.list().find((d) => d.id === req.body.driverId)
-        : null;
-      const cfg = { ...(driverCfg || {}), ...(req.body || {}) };
-      const result = await discoverDevices(cfg);
-      res.json({ ok: true, ...result });
-    } catch (e) {
-      res.status(400).json({ error: e.message || String(e) });
-    }
-  });
-
-  router.post('/drivers/bacnet/browse', async (req, res) => {
-    try {
-      const driverCfg = req.body?.driverId
-        ? driverManager.list().find((d) => d.id === req.body.driverId)
-        : null;
-      const cfg = { ...(driverCfg || {}), ...(req.body || {}) };
-      const result = await browseDeviceObjects(cfg);
-      res.json({ ok: true, ...result });
-    } catch (e) {
-      res.status(400).json({ error: e.message || String(e) });
-    }
-  });
-
-  router.post('/drivers/bacnet/import-tags', async (req, res) => {
-    const driverId = req.body?.driverId;
-    const points = req.body?.points;
-    if (!driverId) return res.status(400).json({ error: 'driverId required' });
-    const cfg = driverManager.list().find((d) => d.id === driverId);
-    if (!cfg || cfg.type !== 'bacnet') {
-      return res.status(400).json({ error: 'bacnet driver required' });
-    }
-    const merged = mergeBacnetTagsIntoStore(tagStore.list(), points, driverId, {
-      reassign: req.body?.reassign !== false,
-      role: req.body?.role || 'input',
-    });
-    if (!merged.ok) {
-      return res.status(400).json({ error: merged.error, conflicts: merged.conflicts });
-    }
-    if (merged.tags.length > MAX_TAGS) {
-      return res.status(413).json({ error: `Tag limit ${MAX_TAGS} exceeded (${merged.tags.length})` });
-    }
-    tagStore.replaceAll(merged.tags);
-    await driverManager.rebuild();
-    if (scanEngine) scanEngine.loadSettings();
-    res.json({
-      ok: true,
-      driverId,
-      added: merged.added,
-      updated: merged.updated,
-      tagCount: tagStore.count(),
-    });
-  });
-
-  router.get('/drivers/bacnet/profiles', (req, res) => {
-    res.json({ ok: true, profiles: bacnetProfileStore.listProfiles() });
-  });
-
-  router.put('/drivers/bacnet/profiles', (req, res) => {
-    try {
-      const raw = req.body?.profiles;
-      if (!Array.isArray(raw)) {
-        return res.status(400).json({ error: 'profiles array required' });
-      }
-      const profiles = raw.map((p) => normalizeProfile(p));
-      bacnetProfileStore.saveProfiles(profiles);
-      res.json({ ok: true, count: profiles.length, profiles });
-    } catch (e) {
-      res.status(400).json({ error: e.message || String(e) });
-    }
-  });
-
-  router.post('/drivers/bacnet/profiles/save', (req, res) => {
-    try {
-      const profile = normalizeProfile(req.body?.profile || req.body);
-      const saved = bacnetProfileStore.upsertProfile(profile);
-      res.json({ ok: true, profile: saved });
-    } catch (e) {
-      res.status(400).json({ error: e.message || String(e) });
-    }
-  });
-
-  router.delete('/drivers/bacnet/profiles/:id', (req, res) => {
-    const id = String(req.params.id || '').trim();
-    if (!id) return res.status(400).json({ error: 'profile id required' });
-    const result = bacnetProfileStore.deleteProfile(id);
-    res.json({ ok: true, ...result });
-  });
-
-  router.post('/drivers/bacnet/profiles/from-browse', (req, res) => {
-    try {
-      const profile = profileFromBrowsePoints({
-        id: req.body?.id,
-        label: req.body?.label,
-        description: req.body?.description,
-        tagPrefixPattern: req.body?.tagPrefixPattern,
-        deviceNamePattern: req.body?.deviceNamePattern,
-        points: req.body?.points,
-        selectedSlotIds: req.body?.selectedSlotIds,
-      });
-      if (req.body?.save !== false) {
-        bacnetProfileStore.upsertProfile(profile);
-      }
-      res.json({ ok: true, profile });
-    } catch (e) {
-      res.status(400).json({ error: e.message || String(e) });
-    }
-  });
-
-  router.post('/drivers/bacnet/profiles/preview', async (req, res) => {
-    try {
-      const driverId = req.body?.driverId;
-      if (!driverId) return res.status(400).json({ error: 'driverId required' });
-      const driverCfg = driverManager.list().find((d) => d.id === driverId);
-      if (!driverCfg || driverCfg.type !== 'bacnet') {
-        return res.status(400).json({ error: 'bacnet driver required' });
-      }
-      const cfg = { ...driverCfg, ...(req.body || {}) };
-      const result = await previewProfileApply(cfg, {
-        driverId,
-        profileId: req.body?.profileId,
-        mode: req.body?.mode,
-        devices: req.body?.devices,
-        discover: req.body?.discover,
-        maxObjects: req.body?.maxObjects,
-      });
-      res.json(result);
-    } catch (e) {
-      res.status(400).json({ error: e.message || String(e) });
-    }
-  });
-
-  router.post('/drivers/bacnet/profiles/apply', async (req, res) => {
-    const driverId = req.body?.driverId;
-    if (!driverId) return res.status(400).json({ error: 'driverId required' });
-    const driverCfg = driverManager.list().find((d) => d.id === driverId);
-    if (!driverCfg || driverCfg.type !== 'bacnet') {
-      return res.status(400).json({ error: 'bacnet driver required' });
-    }
-    try {
-      const cfg = { ...driverCfg, ...(req.body || {}) };
-      const built = await applyProfileToFleet(cfg, {
-        driverId,
-        profileId: req.body?.profileId,
-        mode: req.body?.mode || 'discover',
-        devices: req.body?.devices,
-        discover: req.body?.discover,
-        maxObjects: req.body?.maxObjects,
-        allowPartial: req.body?.allowPartial !== false,
-        reassign: req.body?.reassign === true,
-      });
-      if (!built.ok) {
-        return res.status(400).json(built);
-      }
-      if (req.body?.importTags === false) {
-        return res.json({ ok: true, ...built, imported: false });
-      }
-      const merged = mergeApplyIntoStore(tagStore, built, req.body || {});
-      if (!merged.ok) {
-        return res.status(400).json({ error: merged.error, conflicts: merged.conflicts });
-      }
-      if (merged.tags.length > MAX_TAGS) {
-        return res.status(413).json({ error: `Tag limit ${MAX_TAGS} exceeded (${merged.tags.length})` });
-      }
-      tagStore.replaceAll(merged.tags);
-      await driverManager.rebuild();
-      if (scanEngine) scanEngine.loadSettings();
-      res.json({
-        ok: true,
-        driverId,
-        profileId: built.profileId,
-        matchedDevices: built.matchedDevices,
-        added: merged.added,
-        updated: merged.updated,
-        tagCount: tagStore.count(),
-        devices: built.devices,
-        browseErrors: built.browseErrors,
-        imported: true,
-      });
-    } catch (e) {
-      res.status(400).json({ error: e.message || String(e) });
-    }
-  });
-
-  router.get('/drivers/bacnet/profiles/example', (req, res) => {
-    const fp = path.join(ST_DIR, 'fixtures', 'bacnet-profiles.example.json');
-    if (!fs.existsSync(fp)) {
-      return res.status(404).json({ error: 'bacnet-profiles.example.json not found' });
-    }
-    try {
-      const profiles = JSON.parse(fs.readFileSync(fp, 'utf8'));
-      res.json({ ok: true, profiles });
-    } catch (e) {
-      res.status(500).json({ error: e.message || 'Failed to read example profiles' });
-    }
-  });
-
-  router.post('/drivers/bacnet/load-example-tags', async (req, res) => {
-    const driverId = String(req.body?.driverId || 'bacnet1').trim();
-    if (!driverId) return res.status(400).json({ error: 'driverId required' });
-    const fp = path.join(ST_DIR, 'fixtures', 'tags.bacnet.json');
-    if (!fs.existsSync(fp)) {
-      return res.status(404).json({ error: 'tags.bacnet.json fixture not found' });
-    }
-    let fixtureTags;
-    try {
-      fixtureTags = JSON.parse(fs.readFileSync(fp, 'utf8'));
-    } catch (e) {
-      return res.status(500).json({ error: e.message || 'Failed to read tags fixture' });
-    }
-    if (!Array.isArray(fixtureTags)) {
-      return res.status(500).json({ error: 'Invalid tags fixture' });
-    }
-    const remapped = fixtureTags.map((t) => ({ ...t, driverId }));
-    const tagList = tagStore.list();
-    const stripped = tagList.filter((t) => t.driverId !== driverId);
-    const existingIds = new Set(stripped.map((t) => t.id));
-    const conflicts = remapped.filter((t) => existingIds.has(t.id));
-    if (conflicts.length) {
-      return res.status(409).json({
-        error: `Tag id already in use: ${conflicts.map((t) => t.id).join(', ')}`,
-      });
-    }
-    const merged = [...stripped, ...remapped];
-    if (merged.length > MAX_TAGS) {
-      return res.status(413).json({ error: `Tag limit ${MAX_TAGS} exceeded (${merged.length})` });
-    }
-    tagStore.replaceAll(merged);
-    await driverManager.rebuild();
-    if (scanEngine) scanEngine.loadSettings();
-    res.json({
-      ok: true,
-      driverId,
-      tagsAdded: remapped.length,
-      tagCount: tagStore.count(),
     });
   });
 

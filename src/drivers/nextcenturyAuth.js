@@ -22,12 +22,7 @@ async function loginNextcentury(credentials, timeoutMs = DEFAULT_TIMEOUT_MS) {
     body: JSON.stringify({ email, password }),
     signal: AbortSignal.timeout(timeoutMs),
   });
-  if (!res.ok) {
-    const gatewayHint = res.status === 502 || res.status === 503 || res.status === 504
-      ? ' — NextCentury API gateway error; retry later'
-      : '';
-    throw new Error(`NextCentury login HTTP ${res.status}${gatewayHint}`);
-  }
+  if (!res.ok) throw new Error(`NextCentury login HTTP ${res.status}`);
   const data = await res.json();
   const token = data.token || data.access_token;
   if (!token) throw new Error('NextCentury login: no token');

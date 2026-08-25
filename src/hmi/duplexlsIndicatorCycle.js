@@ -21,7 +21,6 @@ const DUPLEXLS_BOOL_INDICATOR_TAGS = [
   'LVL_LAG',
   'LVL_HIGH',
   'PHASE_FAULT',
-  'POWER_FAIL',
   'GEN_RUN',
   'GEN_FUEL_FAULT',
   'GEN_FAULT',
@@ -41,7 +40,7 @@ const DUPLEXLS_INDICATOR_GROUPS = [
   { id: 'floatLead', tags: ['LVL_LEAD'] },
   { id: 'floatLag', tags: ['LVL_LAG'] },
   { id: 'floatHigh', tags: ['LVL_HIGH'] },
-  { id: 'genStatus', tags: ['PHASE_FAULT', 'POWER_FAIL', 'GEN_RUN', 'GEN_FUEL_FAULT', 'GEN_FAULT'] },
+  { id: 'genStatus', tags: ['PHASE_FAULT', 'GEN_RUN', 'GEN_FUEL_FAULT', 'GEN_FAULT'] },
   { id: 'pumpRun', tags: ['MOTOR1_RUN', 'MOTOR2_RUN'] },
 ];
 

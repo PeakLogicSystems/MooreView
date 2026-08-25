@@ -11,7 +11,7 @@ const {
   isShippedSamplePath,
   pruneProgramsExcept,
   listProgramsInRoot,
-  normalizeProgramSource,
+  sanitizeRel,
 } = require('../src/programs/programStore');
 
 const FIXTURES = path.join(ST_DIR, 'fixtures');
@@ -46,6 +46,13 @@ const TAGS_BY_FILE = {
   'logic/22_motor_hoa.st': () => loadJson('tags.motor_hoa.json').map((t) => t.id),
   'logic/23_tpo_irrigation.st': () => loadJson('tags.tpo_irrigation.json').map((t) => t.id),
   'logic/24_motor_tpo_combined.st': () => loadJson('tags.motor_tpo_combined.json').map((t) => t.id),
+  'logic/25_badu_pro_vi_filter_pump.st': () => loadJson('tags.badu_pro_vi.json').map((t) => t.id),
+  'logic/26_alternator_pumps.st': () => loadJson('tags.alternator_pumps.json').map((t) => t.id),
+  'logic/27_alternator_2pump.st': () => loadJson('tags.alternator_2pump.json').map((t) => t.id),
+  'logic/28_alternator_triplex.st': () => loadJson('tags.alternator_triplex.json').map((t) => t.id),
+  'logic/29_reversing_motor.st': () => loadJson('tags.reversing_motor.json').map((t) => t.id),
+  'logic/30_pool_controller.st': () => loadJson('tags.pool_controller.json').map((t) => t.id),
+  'logic/31_pool_lighting.st': () => loadJson('tags.pool_lighting.json').map((t) => t.id),
   'logic/program.st': () => ['Q'],
   'opta/01_i1_to_r1.st': () => loadJson('tags.opta_eth.json').map((t) => t.id),
   'opta/02_analog_alarm_to_r2.st': () => loadJson('tags.opta_eth.json').map((t) => t.id),
@@ -53,19 +60,42 @@ const TAGS_BY_FILE = {
   'opta/04_timer_counter.st': () => loadJson('tags.opta_mqtt_st.json').map((t) => t.id),
   'opta/05_oneshot_init.st': () => loadJson('tags.opta_mqtt_st.json').map((t) => t.id),
   'opta/06_flow_gpm.st': () => loadJson('tags.opta_mqtt_st.json').map((t) => t.id),
-  'opta/07_leak_ct_thermistor.st': () => loadJson('tags.opta_leak_demo.json').map((t) => t.id),
-  'opta/09_moisture_ntc_ct.st': () => loadJson('tags.opta_sensor_test.json').map((t) => t.id),
+  'opta/07_alternator.st': () => loadJson('tags.alternator.json').map((t) => t.id),
+  'opta/08_triplex_floats.st': () => loadJson('tags.opta_triplex.json').map((t) => t.id),
   'modbus/08_waveshare_di1_q1.st': () => loadJson('tags.waveshare_rtu_8ch.json').map((t) => t.id),
-  'modbus/09_ul212nt_e_level.st': () => loadJson('tags.ul212nt_e.json').map((t) => t.id),
 };
 
-describe('programStore prune', () => {
-  it('normalizeProgramSource accepts strings and unwraps nested source', () => {
-    assert.equal(normalizeProgramSource('IF x THEN y; END_IF;'), 'IF x THEN y; END_IF;');
-    assert.equal(normalizeProgramSource({ source: 'TurnON(Q);' }), 'TurnON(Q);');
-    assert.throws(() => normalizeProgramSource({ ast: { type: 'program' } }), /ST text/);
+describe('programStore sanitizeRel', () => {
+  it('treats empty and dot paths as invalid', () => {
+    assert.equal(sanitizeRel(''), '');
+    assert.equal(sanitizeRel('.'), '');
+    assert.equal(sanitizeRel('./'), '');
+    assert.equal(sanitizeRel('logic/program.st'), 'logic/program.st');
   });
+});
 
+describe('programStore write guards', () => {
+  it('writeProgram does not open the st directory', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mv-st-write-'));
+    const stRoot = path.join(tmp, 'st');
+    fs.mkdirSync(stRoot, { recursive: true });
+    const prev = process.env.MOOREVIEW_ST;
+    process.env.MOOREVIEW_ST = stRoot;
+    delete require.cache[require.resolve('../src/config')];
+    delete require.cache[require.resolve('../src/programs/programStore')];
+    const ps = require('../src/programs/programStore');
+    assert.doesNotThrow(() => ps.writeProgram('', '(* empty rel *)'));
+    assert.doesNotThrow(() => ps.writeProgram('.', '(* dot rel *)'));
+    assert.doesNotThrow(() => ps.writeActive('(* no active *)'));
+    assert.ok(fs.statSync(stRoot).isDirectory());
+    if (prev === undefined) delete process.env.MOOREVIEW_ST;
+    else process.env.MOOREVIEW_ST = prev;
+    delete require.cache[require.resolve('../src/config')];
+    delete require.cache[require.resolve('../src/programs/programStore')];
+  });
+});
+
+describe('programStore prune', () => {
   it('recognizes shipped sample paths', () => {
     assert.equal(isShippedSamplePath('logic/01_ison_turn_on.st'), true);
     assert.equal(isShippedSamplePath('modbus/08_waveshare_di1_q1.st'), true);

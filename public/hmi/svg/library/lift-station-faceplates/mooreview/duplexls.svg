@@ -5,7 +5,7 @@
     .subtitle { font-size: 14px; fill: #a0a0a0; font-weight: bold; }
     .label { font-size: 12px; fill: #dddddd; }
     .value { font-size: 14px; font-weight: bold; fill: #00ff00; font-family: monospace; }
-    .btn-text { font-size: 12px; font-weight: bold; fill: #ffffff; text-anchor: middle; dominant-baseline: middle; }
+    .btn-text { font-size: 12px; font-weight: bold; fill: #ffffff; text-anchor: middle; dominant-baseline: middle; pointer-events: none; }
     .indicator-text { font-size: 11px; fill: #ffffff; text-anchor: middle; dominant-baseline: middle; font-weight: bold; }
     .panel-bg { fill: #2a2a2a; stroke: #444444; stroke-width: 2; rx: 5; }
     .nested-panel { fill: #222222; stroke: #333333; stroke-width: 1; rx: 4; }
@@ -134,5 +134,10 @@
   <g transform="translate(695, 425)">
     <circle id="lamp_gen_fault" cx="20" cy="20" r="14" fill="#222" stroke="#444" stroke-width="2" />
     <text x="55" y="24" class="label" style="font-weight:bold;">GEN FAULT</text>
+  </g>
+  <g transform="translate(695, 495)">
+    <rect id="btn_alt_off" x="0" y="6" width="170" height="36" rx="4" fill="#333" stroke="#aa0000" />
+    <circle id="lamp_alt_off" cx="20" cy="24" r="10" fill="#222" stroke="#aa0000" stroke-width="2" />
+    <text x="42" y="28" class="label" style="font-weight:bold; pointer-events:none;">ALT OFF</text>
   </g>
 </svg>

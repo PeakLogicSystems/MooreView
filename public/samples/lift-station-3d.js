@@ -15,21 +15,17 @@
 //   // pickables[].userData carries { label, description, alarmTag, detailTags, levelTag, levelFill }
 
 export const LS_COLORS = {
-  well: 0x64748b,
-  wellRing: 0x475569,
-  slab: 0x9ca3af,
+  well: 0x475569,
+  wellRing: 0x64748b,
+  slab: 0x94a3b8,
   water: 0x0ea5e9,
-  pump: 0x1e293b,
+  pump: 0x334155,
   motor: 0xf59e0b,
   pipe: 0x64748b,
-  discharge: 0x2563eb,
-  valve: 0xc2410c,
   cabinet: 0xcbd5e1,
   cabinetTrim: 0x475569,
   vent: 0x78716c,
-  hatch: 0x334155,
-  float: 0xfbbf24,
-  rail: 0x71717a,
+  hatch: 0x1e293b,
 };
 
 // Per-type metadata. Tag ids match the shipped tag fixtures so a station on the
@@ -44,13 +40,10 @@ export const LIFT_STATION_TYPES = {
     template: 'lift_station_simplex',
     alarmTag: 'SPX_ALM',
     levelTag: 'SPX_LEVEL',
-    description: 'Single-pump submersible wet-well with three level floats (off/stop, on/start, high). Buried force-main manifold with four-way connections; no above-grade piping.',
+    description: 'Single-pump submersible wet-well station with redundant level floats. ST runs on the device; alarm + status tags publish to SCADA.',
     detailTags: [
       ['Station alarm', 'SPX_ALM'],
       ['Wet well level %', 'SPX_LEVEL'],
-      ['Stop float (off)', 'LVL_STOP'],
-      ['Start float (on)', 'LVL_START'],
-      ['High level float', 'LVL_HIGH'],
       ['Pump 1 run', 'SPX_P1_RUN'],
       ['Pump 1 fault', 'SPX_P1_FAIL'],
       ['High level alarm', 'SPX_HI_ALM'],
@@ -66,17 +59,15 @@ export const LIFT_STATION_TYPES = {
     template: 'lift_station_dual_duplex',
     alarmTag: 'ALT_FAULT',
     levelTag: 'TANK_LVL',
-    description: 'Two-pump lead/lag alternating wet-well station (ALT2) with HOA faceplates and four level floats. Buried force-main manifold with four-way connections; no above-grade piping.',
+    description: 'Two-pump lead/lag alternating wet-well station (ALT2) with HOA faceplates and level floats. ST runs on the device; alarm + status tags publish to SCADA.',
     detailTags: [
       ['Alternator fault', 'ALT_FAULT'],
       ['Wet well level %', 'TANK_LVL'],
       ['Lead running', 'LEAD_RUN'],
       ['Pump 1 run', 'MOTOR1_RUN'],
       ['Pump 2 run', 'MOTOR2_RUN'],
-      ['Off float (pump-to-off)', 'LVL_OFF'],
-      ['Lead float', 'LVL_LEAD'],
-      ['Lag float', 'LVL_LAG'],
-      ['High level float', 'LVL_HIGH'],
+      ['High level', 'LVL_HIGH'],
+      ['Lag request', 'LVL_LAG'],
       ['System run', 'SYS_RUN'],
     ],
   },
@@ -89,7 +80,7 @@ export const LIFT_STATION_TYPES = {
     template: 'lift_station_triplex',
     alarmTag: 'TPX_ALM',
     levelTag: 'TPX_LEVEL',
-    description: 'Three-pump lead/lag/lag2 alternating wet-well station. Buried force-main manifold with four-way connections; no above-grade piping.',
+    description: 'Three-pump lead/lag/lag2 alternating wet-well station. ST runs on the device; alarm + status tags publish to SCADA.',
     detailTags: [
       ['Station alarm', 'TPX_ALM'],
       ['Alternator fault', 'TPX_FAULT'],
@@ -113,92 +104,6 @@ function stdMat(THREE, color, opts = {}) {
   });
   m.userData.baseColor = new THREE.Color(color);
   return m;
-}
-
-function addPipeSegment(THREE, group, from, to, radius = 0.085) {
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
-  const dz = to.z - from.z;
-  const len = Math.hypot(dx, dy, dz);
-  if (len < 0.05) return;
-  const pipe = new THREE.Mesh(
-    new THREE.CylinderGeometry(radius, radius, len, 12),
-    stdMat(THREE, LS_COLORS.pipe, { metalness: 0.35 }),
-  );
-  pipe.position.set((from.x + to.x) / 2, (from.y + to.y) / 2, (from.z + to.z) / 2);
-  const dir = new THREE.Vector3(dx, dy, dz).normalize();
-  pipe.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
-  group.add(pipe);
-}
-
-function addLevelFloats(THREE, group, bands, wellFloorY, waterH, offsetX, offsetZ) {
-  for (const band of bands) {
-    const fy = wellFloorY + waterH * band.pct;
-    const rod = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.015, 0.015, 0.35, 6),
-      stdMat(THREE, LS_COLORS.rail),
-    );
-    rod.position.set(offsetX, fy, offsetZ);
-    group.add(rod);
-    const fl = new THREE.Mesh(
-      new THREE.SphereGeometry(0.09, 10, 10),
-      stdMat(THREE, LS_COLORS.float, { metalness: 0.2 }),
-    );
-    fl.position.set(offsetX, fy + 0.2, offsetZ);
-    fl.userData.floatTag = band.tag;
-    group.add(fl);
-  }
-}
-
-/** Buried cross manifold — four cardinal stubs below grade (no above-ground piping). */
-function addBuriedFourWayPlumbing(THREE, group, opts) {
-  const {
-    pipeY, wellR, stubLen, headerSpan,
-  } = opts;
-  const pt = (x, y, z) => ({ x, y, z });
-
-  addPipeSegment(THREE, group, pt(-headerSpan / 2, pipeY, 0), pt(headerSpan / 2, pipeY, 0));
-  addPipeSegment(THREE, group, pt(0, pipeY, -headerSpan / 2), pt(0, pipeY, headerSpan / 2));
-
-  const dirs = [
-    { x: 1, z: 0 },
-    { x: -1, z: 0 },
-    { x: 0, z: 1 },
-    { x: 0, z: -1 },
-  ];
-  for (const d of dirs) {
-    const inner = wellR - 0.12;
-    const outer = wellR + stubLen;
-    addPipeSegment(
-      THREE,
-      group,
-      pt(d.x * inner, pipeY, d.z * inner),
-      pt(d.x * outer, pipeY, d.z * outer),
-    );
-    const collar = new THREE.Mesh(
-      new THREE.TorusGeometry(0.1, 0.028, 8, 16),
-      stdMat(THREE, LS_COLORS.wellRing, { metalness: 0.4 }),
-    );
-    collar.rotation.y = d.x !== 0 ? Math.PI / 2 : 0;
-    collar.rotation.x = Math.PI / 2;
-    collar.position.set(d.x * (wellR - 0.02), pipeY, d.z * (wellR - 0.02));
-    group.add(collar);
-    const coupling = new THREE.Mesh(
-      new THREE.TorusGeometry(0.11, 0.035, 8, 16),
-      stdMat(THREE, LS_COLORS.valve, { metalness: 0.3 }),
-    );
-    coupling.rotation.x = Math.PI / 2;
-    coupling.rotation.y = d.x !== 0 ? Math.PI / 2 : 0;
-    coupling.position.set(d.x * outer, pipeY, d.z * outer);
-    group.add(coupling);
-  }
-}
-
-function addUndergroundPumpDischarge(THREE, group, pumpX, pumpZ, pumpY, pipeY) {
-  addPipeSegment(THREE, group, { x: pumpX, y: pumpY, z: pumpZ }, { x: pumpX, y: pipeY, z: pumpZ });
-  if (Math.abs(pumpZ) > 0.05) {
-    addPipeSegment(THREE, group, { x: pumpX, y: pipeY, z: pumpZ }, { x: pumpX, y: pipeY, z: 0 });
-  }
 }
 
 /**
@@ -228,162 +133,120 @@ export function buildLiftStation(THREE, type, opts = {}) {
     detailScreen: opts.detailScreen || '',
   };
 
-  const WELL_R = 1.85;
-  const WELL_H = 3.6;
-  const gradeY = 0;
-  const wellCenterY = gradeY - WELL_H / 2 + 0.12;
-  const wellFloorY = wellCenterY - WELL_H / 2 + 0.2;
-  const deckY = gradeY + 0.22;
-  const slabW = WELL_R * 2.85;
+  const WELL_R = 1.7;
+  const WELL_H = 2.6;
 
-  // Buried wet-well — semi-transparent so pumps, rails, and floats are visible
-  const wellGeo = new THREE.CylinderGeometry(WELL_R, WELL_R, WELL_H, 48);
-  const well = new THREE.Mesh(wellGeo, stdMat(THREE, LS_COLORS.well, { opacity: 0.28, roughness: 0.85 }));
-  well.position.y = wellCenterY;
+  // Buried wet-well shell (top slightly above grade)
+  const wellGeo = new THREE.CylinderGeometry(WELL_R, WELL_R, WELL_H, 40);
+  const well = new THREE.Mesh(wellGeo, stdMat(THREE, LS_COLORS.well));
+  well.position.y = WELL_H / 2 - WELL_H * 0.55;
   well.castShadow = true;
   well.receiveShadow = true;
   Object.assign(well.userData, meta);
   group.add(well);
   pickables.push(well);
 
-  for (let ring = 0; ring < 4; ring += 1) {
-    const y = wellFloorY + 0.35 + ring * (WELL_H - 0.7) / 3;
-    const band = new THREE.Mesh(
-      new THREE.TorusGeometry(WELL_R - 0.04, 0.045, 8, 48),
-      stdMat(THREE, LS_COLORS.wellRing, { metalness: 0.35 }),
-    );
-    band.rotation.x = Math.PI / 2;
-    band.position.y = y;
-    group.add(band);
-  }
-
-  // Live water column inside the well
-  const waterH = WELL_H - 0.45;
-  const waterGeo = new THREE.CylinderGeometry(WELL_R - 0.16, WELL_R - 0.16, waterH, 36);
-  const water = new THREE.Mesh(waterGeo, stdMat(THREE, LS_COLORS.water, { opacity: 0.55, roughness: 0.25 }));
-  water.position.y = wellFloorY + waterH / 2;
+  // Wet-well water column (scaled live by level %)
+  const waterGeo = new THREE.CylinderGeometry(WELL_R - 0.18, WELL_R - 0.18, WELL_H - 0.3, 36);
+  const water = new THREE.Mesh(waterGeo, stdMat(THREE, LS_COLORS.water, { opacity: 0.6, roughness: 0.3 }));
+  water.position.y = well.position.y - 0.1;
   group.add(water);
   meta.levelFill = water;
   meta.levelFillBaseY = water.position.y;
-  meta.levelFillHeight = waterH;
+  meta.levelFillHeight = WELL_H - 0.3;
 
-  // Rectangular concrete pad (plan view matches field drawings)
-  const slab = new THREE.Mesh(
-    new THREE.BoxGeometry(slabW, 0.24, slabW),
-    stdMat(THREE, LS_COLORS.slab, { roughness: 0.95 }),
-  );
-  slab.position.y = gradeY + 0.12;
+  // Top slab / access deck
+  const slabGeo = new THREE.CylinderGeometry(WELL_R + 0.35, WELL_R + 0.35, 0.28, 40);
+  const slab = new THREE.Mesh(slabGeo, stdMat(THREE, LS_COLORS.slab));
+  slab.position.y = well.position.y + WELL_H / 2 + 0.14;
   slab.castShadow = true;
   slab.receiveShadow = true;
   group.add(slab);
+  const deckY = slab.position.y + 0.14;
 
-  // Center access hatch with metal frame
-  const hatchFrame = new THREE.Mesh(
-    new THREE.BoxGeometry(1.55, 0.1, 1.05),
-    stdMat(THREE, LS_COLORS.hatch, { metalness: 0.45 }),
+  // Access hatch
+  const hatch = new THREE.Mesh(
+    new THREE.BoxGeometry(0.9, 0.06, 0.7),
+    stdMat(THREE, LS_COLORS.hatch, { metalness: 0.3 }),
   );
-  hatchFrame.position.set(0, deckY, 0);
-  group.add(hatchFrame);
-  const hatchDoor = new THREE.Mesh(
-    new THREE.BoxGeometry(1.35, 0.04, 0.9),
-    stdMat(THREE, 0x475569, { metalness: 0.5 }),
-  );
-  hatchDoor.position.set(0, deckY + 0.05, 0);
-  group.add(hatchDoor);
+  hatch.position.set(0, deckY + 0.03, 0);
+  group.add(hatch);
 
-  // Guide rails (pump lift rails)
-  for (const rx of [-0.62, 0.62]) {
-    const rail = new THREE.Mesh(
-      new THREE.BoxGeometry(0.06, WELL_H - 0.5, 0.06),
-      stdMat(THREE, LS_COLORS.rail, { metalness: 0.55 }),
-    );
-    rail.position.set(rx, wellCenterY, 0);
-    group.add(rail);
-  }
-
-  // Level floats — simplex: 3 (off/stop, on/start, high); duplex+: 4-float ladder
-  const floatOffsetX = WELL_R - 0.35;
-  const floatOffsetZ = 0.25;
-  if (type === 'simplex') {
-    addLevelFloats(THREE, group, [
-      { pct: 0.22, tag: 'LVL_STOP' },
-      { pct: 0.42, tag: 'LVL_START' },
-      { pct: 0.72, tag: 'LVL_HIGH' },
-    ], wellFloorY, waterH, floatOffsetX, floatOffsetZ);
-  } else {
-    addLevelFloats(THREE, group, [
-      { pct: 0.16, tag: 'LVL_OFF' },
-      { pct: 0.36, tag: 'LVL_LEAD' },
-      { pct: 0.56, tag: 'LVL_LAG' },
-      { pct: 0.78, tag: 'LVL_HIGH' },
-    ], wellFloorY, waterH, floatOffsetX, floatOffsetZ);
-  }
-
-  const pipeY = gradeY - 0.38;
-  const stubLen = 1.65;
-  const headerSpan = slabW * 0.72;
-
-  function pumpSlot(i, count) {
-    if (count === 1) return { x: 0, z: 0 };
-    if (count === 2) return { x: i === 0 ? -0.62 : 0.62, z: 0 };
-    const ang = (i / count) * Math.PI * 2 - Math.PI / 2;
-    return { x: Math.cos(ang) * 0.55, z: Math.sin(ang) * 0.55 };
-  }
-
+  // Pumps around the wet well (submersible motors shown above deck for clarity)
   const pumpCount = spec.pumps;
-  const pumpMotors = [];
-  for (let i = 0; i < pumpCount; i += 1) {
-    const { x: px, z: pz } = pumpSlot(i, pumpCount);
-    const pumpY = wellFloorY + 0.42;
+  for (let i = 0; i < pumpCount; i++) {
+    const ang = pumpCount === 1 ? Math.PI : (i / pumpCount) * Math.PI * 2 + Math.PI / 4;
+    const r = pumpCount === 1 ? 0 : WELL_R * 0.55;
+    const px = Math.cos(ang) * r;
+    const pz = Math.sin(ang) * r;
 
     const pumpBody = new THREE.Mesh(
-      new THREE.SphereGeometry(0.32, 18, 14),
-      stdMat(THREE, LS_COLORS.pump, { metalness: 0.4, roughness: 0.45 }),
+      new THREE.CylinderGeometry(0.28, 0.32, 0.7, 20),
+      stdMat(THREE, LS_COLORS.pump, { metalness: 0.35, roughness: 0.5 }),
     );
-    pumpBody.position.set(px, pumpY, pz);
+    pumpBody.position.set(px, deckY + 0.35, pz);
     pumpBody.castShadow = true;
     group.add(pumpBody);
 
     const motor = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.16, 0.19, 0.38, 16),
-      stdMat(THREE, LS_COLORS.motor, { metalness: 0.45, roughness: 0.4 }),
+      new THREE.CylinderGeometry(0.18, 0.18, 0.4, 16),
+      stdMat(THREE, LS_COLORS.motor, { metalness: 0.4, roughness: 0.4 }),
     );
-    motor.position.set(px, pumpY + 0.42, pz);
+    motor.position.set(px, deckY + 0.9, pz);
     motor.castShadow = true;
     group.add(motor);
-    pumpMotors.push(motor);
-    addUndergroundPumpDischarge(THREE, group, px, pz, pumpY, pipeY);
+
+    // Discharge pipe up + over to header
+    const riser = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.09, 0.09, 1.2, 12),
+      stdMat(THREE, LS_COLORS.pipe, { metalness: 0.4 }),
+    );
+    riser.position.set(px, deckY + 0.9, pz);
+    group.add(riser);
   }
 
-  addBuriedFourWayPlumbing(THREE, group, { pipeY, wellR: WELL_R, stubLen, headerSpan });
-
-  // MCC / RTU cabinet on pedestal beside the hatch
-  const cabX = slabW / 2 - 0.55;
-  const pedestal = new THREE.Mesh(
-    new THREE.BoxGeometry(0.75, 0.35, 0.55),
-    stdMat(THREE, LS_COLORS.slab, { roughness: 0.9 }),
+  // Discharge header manifold across the deck
+  const header = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.12, 0.12, WELL_R * 2 + 1.4, 14),
+    stdMat(THREE, LS_COLORS.pipe, { metalness: 0.4 }),
   );
-  pedestal.position.set(cabX, gradeY + 0.35, 0);
-  group.add(pedestal);
+  header.rotation.z = Math.PI / 2;
+  header.position.set(0, deckY + 1.5, 0);
+  group.add(header);
 
+  // Control / RTU cabinet (where the ST program lives) beside the station
   const cabinet = new THREE.Mesh(
-    new THREE.BoxGeometry(0.85, 1.45, 0.5),
+    new THREE.BoxGeometry(0.9, 1.5, 0.55),
     stdMat(THREE, LS_COLORS.cabinet),
   );
-  cabinet.position.set(cabX, gradeY + 1.15, 0);
+  cabinet.position.set(WELL_R + 1.1, 0.75, WELL_R * 0.2);
   cabinet.castShadow = true;
   Object.assign(cabinet.userData, meta);
   group.add(cabinet);
   pickables.push(cabinet);
 
   const cabinetFace = new THREE.Mesh(
-    new THREE.BoxGeometry(0.65, 1.05, 0.04),
+    new THREE.BoxGeometry(0.7, 1.1, 0.04),
     stdMat(THREE, LS_COLORS.cabinetTrim, { metalness: 0.3 }),
   );
-  cabinetFace.position.set(cabX, gradeY + 1.2, 0.27);
+  cabinetFace.position.set(WELL_R + 1.1, 0.85, WELL_R * 0.2 + 0.29);
   group.add(cabinetFace);
 
-  meta.pumpMotors = pumpMotors;
+  // Antenna (cellular/MQTT uplink to cloud)
+  const antenna = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.02, 0.02, 1.1, 8),
+    stdMat(THREE, LS_COLORS.cabinetTrim, { metalness: 0.6 }),
+  );
+  antenna.position.set(WELL_R + 1.1, 2.05, WELL_R * 0.2);
+  group.add(antenna);
+
+  // Vent pipe
+  const vent = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.08, 0.08, 1.1, 12),
+    stdMat(THREE, LS_COLORS.vent),
+  );
+  vent.position.set(-WELL_R - 0.4, 0.55, -WELL_R * 0.3);
+  group.add(vent);
 
   group.scale.setScalar(scale);
 

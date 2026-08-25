@@ -12,10 +12,10 @@ const {
 
 describe('stProgramLimits', () => {
   it('exports Parc deploy cap only (PC has no line limit)', () => {
-    assert.equal(ST_PROGRAM_MAX_LINES_PARC, 1000);
+    assert.equal(ST_PROGRAM_MAX_LINES_PARC, 500);
     assert.equal(ST_PROGRAM_MAX_LINES_LOCAL, null);
     assert.deepEqual(stProgramLimitsMeta(), {
-      parcMaxLines: 1000,
+      parcMaxLines: 500,
       localMaxLines: null,
     });
   });
@@ -36,11 +36,11 @@ describe('stProgramLimits', () => {
   });
 
   it('rejects programs over Parc deploy limit', () => {
-    const src = Array.from({ length: 1001 }, (_, i) => `TurnOFF(T${i});`).join('\n');
+    const src = Array.from({ length: 501 }, (_, i) => `TurnOFF(T${i});`).join('\n');
     const r = assessStProgramLines(src, { forParc: true });
     assert.equal(r.overLimit, true);
-    assert.match(r.errors[0], /1001 lines/);
-    assert.match(r.errors[0], /1000/);
+    assert.match(r.errors[0], /501 lines/);
+    assert.match(r.errors[0], /500/);
     assert.match(r.errors[0], /Parc/);
   });
 });

@@ -6,6 +6,7 @@ const {
   normalizeMongoLogger,
   defaultMongoLogger,
   effectiveMongoLogger,
+  resolveMongoLoggerForDeployment,
   DEFAULT_MONGO_LOGGER,
 } = require('../src/settings/mongoLoggerSettings');
 
@@ -15,8 +16,7 @@ describe('normalizeMongoLogger', () => {
     assert.equal(ml.uri, 'mongodb://127.0.0.1:27017');
     assert.equal(ml.db, 'mooreview');
     assert.equal(ml.collection, 'tag_logs');
-    assert.equal(ml.samplesCollection, 'tag_samples_ts');
-    assert.equal(ml.edgeCollection, 'edge_inference_ts');
+    assert.equal(ml.edgeCollection, 'edge_inference');
     assert.equal(ml.sampleIntervalMs, 5000);
   });
 
@@ -52,5 +52,28 @@ describe('normalizeMongoLogger', () => {
     const ml = effectiveMongoLogger({});
     assert.equal(ml.uri, DEFAULT_MONGO_LOGGER.uri);
     assert.equal(ml.db, DEFAULT_MONGO_LOGGER.db);
+  });
+});
+
+describe('resolveMongoLoggerForDeployment', () => {
+  const prevUri = process.env.MONGODB_URI;
+  const prevDb = process.env.MONGODB_DB;
+
+  it('cloud replaces localhost tenant URI with platform env', () => {
+    process.env.MONGODB_URI = 'mongodb+srv://cloud.example/mooreview_cloud';
+    process.env.MONGODB_DB = 'mooreview_cloud';
+    try {
+      const ml = resolveMongoLoggerForDeployment(
+        { uri: 'mongodb://127.0.0.1:27017', db: 'mooreview' },
+        'cloud',
+      );
+      assert.equal(ml.uri, 'mongodb+srv://cloud.example/mooreview_cloud');
+      assert.equal(ml.db, 'mooreview_cloud');
+    } finally {
+      if (prevUri == null) delete process.env.MONGODB_URI;
+      else process.env.MONGODB_URI = prevUri;
+      if (prevDb == null) delete process.env.MONGODB_DB;
+      else process.env.MONGODB_DB = prevDb;
+    }
   });
 });

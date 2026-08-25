@@ -30,17 +30,16 @@
 #ifndef MV_MQTT_MIN_PACKET_SIZE
 #define MV_MQTT_MIN_PACKET_SIZE 2048
 #endif
-#ifndef MV_MQTT_REPORT_MS_DEFAULT
-#define MV_MQTT_REPORT_MS_DEFAULT 180000u
-#endif
-#ifndef MV_MQTT_REPORT_MS_MIN
-#define MV_MQTT_REPORT_MS_MIN 100u
-#endif
-#ifndef MV_MQTT_REPORT_MS_MAX
-#define MV_MQTT_REPORT_MS_MAX 7200000u
-#endif
-
 #define MV_SCAN_MS_DEFAULT 100
+#ifndef MV_REPORT_MS_DEFAULT
+#define MV_REPORT_MS_DEFAULT 180000
+#endif
+#ifndef MV_REPORT_MS_MIN
+#define MV_REPORT_MS_MIN 100
+#endif
+#ifndef MV_REPORT_MS_MAX
+#define MV_REPORT_MS_MAX 600000
+#endif
 
 // WiFi setup AP (Opta WiFi variant)
 #ifndef MV_WIFI_AP_SSID
@@ -116,11 +115,6 @@
 /** RS485 fieldbus master on Opta (edge poll → MQTT tags). Compile with -DMV_FIELDBUS=1 */
 #ifndef MV_FIELDBUS
 #define MV_FIELDBUS 0
-#endif
-
-/** Poll EZ Meter DDS-RGB on RS485 when MV_FIELDBUS=1. Compile with -DMV_EZMETER=1 */
-#ifndef MV_EZMETER
-#define MV_EZMETER 0
 #endif
 
 /** Opta M4 FFT MCSA: M7 ingests I1–I6 every MV_MCSA_INGEST_MS, M4 cooks spectra. */
